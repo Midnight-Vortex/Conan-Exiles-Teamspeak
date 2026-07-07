@@ -22,6 +22,12 @@ void nick_make_random(char* out, int outSize, int digitCount);
 /* 1 when the nickname is a plausible anonymized name (8-10 digits). Pure. */
 int nick_looks_anonymized(const char* nick);
 
+/* Capture the connect-time nickname as the hub-restore fallback (only when
+   it does not already look anonymized). Call on CONNECTION_ESTABLISHED /
+   tab switch, after the adapter knows the connection. Resets all state
+   first. TS callback thread ONLY. */
+void nick_on_connected(void);
+
 /* 12.2 rename to a random number BEFORE moving into the ingame channel.
    Saves the current name for the hub restore and checks the target channel
    for collisions. Safe to call repeatedly (no-op when already anonymized). */

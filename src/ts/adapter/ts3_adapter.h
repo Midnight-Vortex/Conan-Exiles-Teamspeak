@@ -40,6 +40,12 @@ int ts3_thread_is_callback(void);
 
 void ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus);
 
+/* User switched the active server tab. Updates the active connection and
+   the connected/local-client state to the new tab. Returns 1 when the
+   active connection actually changed (callers must then reset all
+   per-connection caches). TS callback thread ONLY. */
+int ts3_on_active_server_changed(uint64 serverConnectionHandlerID);
+
 int ts3_is_connected(void);                 /* any thread */
 uint64 ts3_get_active_connection(void);     /* any thread */
 anyID ts3_get_local_client_id(void);        /* any thread */

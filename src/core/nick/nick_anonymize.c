@@ -83,6 +83,25 @@ static int nick_taken_in_channel(uint64 channelID, const char* candidate) {
     return 0;
 }
 
+/* ---- connect: remember the real name ------------------------------------------ */
+
+void nick_on_connected(void) {
+    if (!ts3_thread_is_callback()) {
+        return;
+    }
+    nick_reset();
+
+    /* If the client connected with its real name, keep it as the restore
+       fallback. Covers the relog case where the plugin later only sees an
+       already-anonymized nickname (digits) and could otherwise never
+       restore. A connect-time digits name stays unknowable. */
+    char current[64] = "";
+    if (ts3_get_own_nickname(current, sizeof(current))
+        && !nick_looks_anonymized(current)) {
+        snprintf(g_savedNickname, sizeof(g_savedNickname), "%s", current);
+    }
+}
+
 /* ---- 12.2 anonymize before the ingame move ------------------------------------ */
 
 void nick_anonymize_before_ingame(uint64 ingameChannelID) {
@@ -95,14 +114,18 @@ void nick_anonymize_before_ingame(uint64 ingameChannelID) {
         return;
     }
     if (nick_looks_anonymized(current)) {
-        /* Relog case: still carrying digits from the previous round. Keep them,
-           but make sure a later hub restore has a name to fall back to. */
+        /* Relog case: still carrying digits from the previous round. Keep
+           them; the hub restore falls back to the connect-time name saved
+           by nick_on_connected (when one was available). */
+        if (!g_savedNickname[0]) {
+            log_write("NICK: already anonymized and no saved name - hub restore unavailable");
+        }
         g_anonymized = 1;
         return;
     }
     if (g_anonymized) {
         /* Stale flag (restore failed earlier) — real name is visible again. */
-        nick_reset();
+        g_anonymized = 0;
     }
 
     snprintf(g_savedNickname, sizeof(g_savedNickname), "%s", current);

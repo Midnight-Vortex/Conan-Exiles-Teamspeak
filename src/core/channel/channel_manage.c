@@ -128,6 +128,15 @@ static void chan_update_audio_mode(uint64 ownChannelID) {
     }
 }
 
+/* Distance-based muting: local toggle, server profile can force it on. */
+static int chan_distance_muting_enabled(void) {
+    if (g_config.enableDistanceMuting) {
+        return 1;
+    }
+    HubSettings hub;
+    return server_profile_get(&hub) && hub.forceDistanceMuting;
+}
+
 /* ---- tick driver ------------------------------------------------------------------ */
 
 void chan_tick(void) {
@@ -141,19 +150,20 @@ void chan_tick(void) {
     }
     g_lastTickMs = now;
 
-    /* Server profile can force auto-move even when disabled locally. */
-    if (!g_config.enableAutomaticChannelChange && !server_profile_force_auto_channel()) {
+    /* Whole proximity system off -> untouched TS behavior. */
+    if (!chan_distance_muting_enabled()) {
         ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
         return;
     }
 
-    /* (Re-)resolve channel IDs, throttled while missing. */
+    /* (Re-)resolve channel IDs, throttled while missing. Needed for the
+       playback gate even when auto-move is disabled. */
     if (g_hubChannelID == 0 || g_ingameChannelID == 0) {
-        if (now - g_lastFindMs < CHAN_FIND_RETRY_MS) {
-            return;
+        if (now - g_lastFindMs >= CHAN_FIND_RETRY_MS) {
+            g_lastFindMs = now;
+            chan_find_hub_and_ingame();
         }
-        g_lastFindMs = now;
-        if (!chan_find_hub_and_ingame()) {
+        if (g_hubChannelID == 0 && g_ingameChannelID == 0) {
             ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
             return;
         }
@@ -168,7 +178,14 @@ void chan_tick(void) {
         return;
     }
 
+    /* Playback gate follows the CURRENT channel — also for users who sit in
+       the hub manually with auto-move disabled (hub hard-mute stays active). */
     chan_update_audio_mode(ownChannel);
+
+    /* Server profile can force auto-move even when disabled locally. */
+    if (!g_config.enableAutomaticChannelChange && !server_profile_force_auto_channel()) {
+        return;
+    }
 
     int moveWanted = 0;
     if (chan_should_be_ingame()) {

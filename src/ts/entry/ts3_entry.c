@@ -107,31 +107,39 @@ void ts3plugin_shutdown(void) {
     log_close();
 }
 
+/* Reset every per-connection cache (disconnect / server switch / tab change). */
+static void ts3_reset_connection_state(void) {
+    player_table_clear();
+    cepos_reset();
+    ts3_audio_reset();
+    ts3d_reset();
+    chan_reset();
+    server_profile_reset();
+    nick_reset();
+}
+
 void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int newStatus, unsigned int errorNumber) {
     (void)errorNumber;
     ts3_thread_mark_callback();
+
+    /* Disconnects of other (inactive) tabs must not tear the plugin down. */
+    const uint64 activeBefore = ts3_get_active_connection();
     ts3_on_connect_status_changed(serverConnectionHandlerID, newStatus);
 
     if (newStatus == STATUS_DISCONNECTED) {
-        player_table_clear();
-        cepos_reset();
-        ts3_audio_reset();
-        ts3d_reset();
-        chan_reset();
-        server_profile_reset();
-        nick_reset();
+        if (activeBefore != 0 && serverConnectionHandlerID != activeBefore) {
+            return;
+        }
+        ts3_reset_connection_state();
         return;
     }
 
     if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
         /* 14.2 server switch: every per-connection cache starts empty. */
-        player_table_clear();
-        cepos_reset();
-        ts3_audio_reset();
-        ts3d_reset();
-        chan_reset();
-        server_profile_reset();
-        nick_reset();
+        ts3_reset_connection_state();
+        /* Remember the real name now — needed for the hub restore when the
+           plugin later finds an already-anonymized nickname (relog case). */
+        nick_on_connected();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -142,8 +150,16 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
 }
 
 void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) {
-    (void)serverConnectionHandlerID;
     ts3_thread_mark_callback();
+    /* 14.2 the user switched server tabs: follow the new tab and drop all
+       state that belonged to the previous connection. */
+    if (ts3_on_active_server_changed(serverConnectionHandlerID)) {
+        ts3_reset_connection_state();
+        if (ts3_is_connected()) {
+            nick_on_connected();
+            ts3_request_wakeup();
+        }
+    }
 }
 
 void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char* pluginName, const char* pluginCommand, anyID invokerClientID, const char* invokerName, const char* invokerUniqueIdentity) {
