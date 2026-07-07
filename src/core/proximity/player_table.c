@@ -23,9 +23,13 @@ static int entry_is_fresh(const PlayerEntry* e, unsigned long long now) {
 }
 
 int player_table_put(unsigned short clientID, const char* name,
-    float x, float y, float z, float voiceDistance) {
+    float x, float y, float z, float voiceDistance,
+    unsigned short* evictedClientID) {
     if (clientID == 0) {
         return 0;
+    }
+    if (evictedClientID) {
+        *evictedClientID = 0;
     }
     table_lock_ensure();
 
@@ -69,6 +73,9 @@ int player_table_put(unsigned short clientID, const char* name,
 
     if (slot >= 0) {
         PlayerEntry* e = &g_players[slot];
+        if (evictedClientID && e->valid && e->clientID != clientID) {
+            *evictedClientID = e->clientID;
+        }
         e->clientID = clientID;
         if (name && name[0]) {
             strncpy_s(e->name, PLAYER_NAME_LEN, name, _TRUNCATE);

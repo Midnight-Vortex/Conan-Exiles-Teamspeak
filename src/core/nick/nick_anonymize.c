@@ -89,16 +89,21 @@ void nick_on_connected(void) {
     if (!ts3_thread_is_callback()) {
         return;
     }
-    nick_reset();
 
-    /* If the client connected with its real name, keep it as the restore
-       fallback. Covers the relog case where the plugin later only sees an
-       already-anonymized nickname (digits) and could otherwise never
-       restore. A connect-time digits name stays unknowable. */
     char current[64] = "";
-    if (ts3_get_own_nickname(current, sizeof(current))
-        && !nick_looks_anonymized(current)) {
+    if (!ts3_get_own_nickname(current, sizeof(current))) {
+        return;
+    }
+    if (!nick_looks_anonymized(current)) {
         snprintf(g_savedNickname, sizeof(g_savedNickname), "%s", current);
+        g_anonymized = 0;
+        return;
+    }
+
+    /* Relog with digits still set — keep any saved real name from before. */
+    g_anonymized = 1;
+    if (!g_savedNickname[0]) {
+        log_write("NICK: connected with anonymized name and no saved restore name");
     }
 }
 

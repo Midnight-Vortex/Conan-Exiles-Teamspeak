@@ -24,9 +24,12 @@ typedef struct PlayerEntry {
     int valid;
 } PlayerEntry;
 
-/* Insert or update a player. Returns 1 on success, 0 when table is full. */
+/* Insert or update a player. Returns 1 on success, 0 when table is full.
+   When a slot is reused for a different clientID, *evictedClientID is set to
+   the previous occupant (optional — pass NULL to ignore). */
 int player_table_put(unsigned short clientID, const char* name,
-    float x, float y, float z, float voiceDistance);
+    float x, float y, float z, float voiceDistance,
+    unsigned short* evictedClientID);
 
 /* Copy one player's entry. Returns 1 when found and fresh. */
 int player_table_get(unsigned short clientID, PlayerEntry* out);

@@ -123,7 +123,8 @@ static void ts3_reset_connection_state(void) {
     ts3d_reset();
     chan_reset();
     server_profile_reset();
-    nick_reset();
+    /* Keep g_savedNickname across disconnect/tab reset so hub restore still
+       works when the TS client reconnects with the anonymized digits name. */
 }
 
 void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int newStatus, unsigned int errorNumber) {
