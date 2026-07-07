@@ -50,4 +50,7 @@ void voice_mode_flush_notify(void);
 /* 1 when a mode-change chat line is waiting. Any thread. */
 int voice_mode_has_pending_notify(void);
 
+/* Clear hotkey debounce state (e.g. after loading a preset). Pos watcher thread. */
+void voice_mode_reset_key_tracking(void);
+
 #endif /* CORE_VOICE_VOICE_MODES_H */

@@ -240,9 +240,6 @@ void saveVoiceSettings() {
     wchar_t* configFolder = getConfigFolderPath();
     if (!configFolder) return;
 
-    // Store current voice distance before modifications | Stocker la distance vocale actuelle avant modifications
-    float currentVoiceDistance = localVoiceData.voiceDistance;
-
     // Build configuration file path | Construire le chemin du fichier de configuration
     wchar_t configFile[MAX_PATH];
     swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
@@ -460,9 +457,6 @@ void loadVoicePreset(int presetIndex) {
         MessageBoxW(hConfigDialog, L"This preset slot is empty.", L"Empty Preset", MB_OK | MB_ICONINFORMATION);
         return;
     }
-
-    // Save current voice mode | Sauvegarder le mode vocal actuel
-    float currentVoiceDistance = localVoiceData.voiceDistance;
 
     // Load distances and keyboard shortcuts from preset | Charger les distances et les touches clavier depuis le preset
     distanceWhisper = voicePresets[presetIndex].whisperDistance;

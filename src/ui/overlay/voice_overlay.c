@@ -794,6 +794,7 @@ unsigned __stdcall overlayMonitorThreadEx(void* arg) {
 
 // Resolution monitor thread | Thread pour surveiller les changements de résolution
 void overlayMonitorThread(void* arg) {
+    (void)arg;
     overlayThreadRunning = TRUE;
 
     int lastScreenWidth = GetSystemMetrics(SM_CXSCREEN);

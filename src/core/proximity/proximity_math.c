@@ -74,6 +74,25 @@ float prox_volume_from_distance(float distanceMeters, float voiceDistanceMeters,
     return volume;
 }
 
+float proximity_calculate_volume_with_hub(float distanceMeters, float voiceDistanceMeters,
+    const ProximityVolumeContext* ctx) {
+    if (!ctx) {
+        return 0.0f;
+    }
+
+    float effectiveVoiceDistance = voiceDistanceMeters;
+    if (ctx->currentPlayerRaceIndex != -1 && ctx->currentListenAddDistance > 0.0f) {
+        effectiveVoiceDistance += ctx->currentListenAddDistance;
+    }
+
+    float maxVolumeFromServer = (float)(ctx->hubAudioMaxVolume / 100.0);
+    if (ctx->currentZoneIndex != -1) {
+        maxVolumeFromServer = (float)(ctx->zoneAudioMaxVolume / 100.0);
+    }
+
+    return prox_volume_from_distance(distanceMeters, effectiveVoiceDistance, maxVolumeFromServer);
+}
+
 void prox_stereo_pan(float localDirX, float localDirZ,
     float toRemoteX, float toRemoteZ,
     float* outLeft, float* outRight) {

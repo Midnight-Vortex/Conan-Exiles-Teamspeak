@@ -153,6 +153,8 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         /* Remember the real name now — needed for the hub restore when the
            plugin later finds an already-anonymized nickname (relog case). */
         nick_on_connected();
+        plugin_ui_sync_from_config();
+        plugin_ui_sync_live_state();
         chan_tick();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
@@ -175,6 +177,8 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
     if (ts3_on_active_server_changed(serverConnectionHandlerID)) {
         if (ts3_is_connected()) {
             nick_on_connected();
+            plugin_ui_sync_from_config();
+            plugin_ui_sync_live_state();
             chan_tick();
             ts3_request_wakeup();
         }

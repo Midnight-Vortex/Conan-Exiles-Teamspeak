@@ -163,6 +163,11 @@ void voice_mode_hotkey_poll(void) {
     }
 }
 
+void voice_mode_reset_key_tracking(void) {
+    memset(g_keyArmed, 0, sizeof(g_keyArmed));
+    memset(g_keySuppressUntil, 0, sizeof(g_keySuppressUntil));
+}
+
 /* ---- chat notify (callback thread) ----------------------------------------------- */
 
 void voice_mode_flush_notify(void) {

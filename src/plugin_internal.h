@@ -7,7 +7,7 @@
  */
 
 #include "plugin.h"
-#include "proximity_math.h"
+#include "core/proximity/proximity_math.h"
 #include "plugin_modules.h"
 #include <stdint.h>
 

@@ -273,3 +273,11 @@ void chan_reset(void) {
     g_lastTickMs = 0;
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
 }
+
+uint64 chan_get_hub_channel_id(void) {
+    return g_hubChannelID;
+}
+
+uint64 chan_get_ingame_channel_id(void) {
+    return g_ingameChannelID;
+}

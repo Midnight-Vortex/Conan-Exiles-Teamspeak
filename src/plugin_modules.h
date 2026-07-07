@@ -26,7 +26,8 @@
   TS-only: src/ts/adapter, deferred, proximity, entry, profile */
 
 #include "plugin.h"
-#include "proximity_math.h"
+#include "core/proximity/proximity_math.h"
+#include "core/voice/voice_modes.h"
 #include "mumble_compat.h"
 #include <windows.h>
 
@@ -107,8 +108,6 @@ void getLocalPlayerName(void);
 void broadcastPlayerCoordinates(void);
 void cycleVoiceMode(void);
 void updateVoiceMode(void);
-void voice_mode_apply(uint8_t newMode);
-void voice_mode_toggle(void);
 void voice_mode_notify_hotkey(int vkCode);
 void voice_mode_reset_key_tracking(void);
 void calculateLocalPositionalData(CompletePositionalData* localData);

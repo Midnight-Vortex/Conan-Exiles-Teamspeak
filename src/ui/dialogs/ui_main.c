@@ -17,6 +17,9 @@
 #include <shobjidl.h>
 #include <process.h>
 #include <ole2.h>
+#if defined(_MSC_VER)
+#pragma warning(disable : 4456) /* legacy UI reuses block-scoped names */
+#endif
 #include <uxtheme.h>
 #pragma comment(lib, "uxtheme.lib")
 
@@ -654,7 +657,6 @@ LRESULT CALLBACK PresetRenameDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         RECT dlgRect;
         GetClientRect(hwnd, &dlgRect);
         int dlgWidth = dlgRect.right - dlgRect.left;
-        int dlgHeight = dlgRect.bottom - dlgRect.top;
 
         // Input edit control dimensions | Dimensions du contrôle d'édition
         int inputWidth = 260;
@@ -672,14 +674,6 @@ LRESULT CALLBACK PresetRenameDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         SetWindowTextA(hInputEdit, voicePresets[renamePresetIndex].name);
         SetFocus(hInputEdit);
         SendMessage(hInputEdit, EM_SETSEL, 0, -1);
-
-        // OK and Cancel buttons dimensions | Dimensions des boutons OK et Annuler
-        int btnWidth = 80;
-        int btnHeight = 35;
-        int btnGap = 10;
-        int totalBtnWidth = (btnWidth * 2) + btnGap;
-        int btnStartX = (dlgWidth - totalBtnWidth) / 2;
-        int btnY = inputY + inputHeight + 30;
 
         // Get real dimensions of IDB_OK_Box_01 | Récupérer les dimensions réelles de IDB_OK_Box_01
         HMODULE hModuleOkBtn = NULL;
@@ -1215,6 +1209,7 @@ void updatePresetLabels(void) {
 }
 
 LRESULT CALLBACK PresetLabelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+    (void)dwRefData;
     switch (msg) {
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -1397,9 +1392,9 @@ void createPresetsCategory(void) {
 
 // Check if Saved folder exists in game folder | Vérifier que le dossier Saved existe dans le dossier du jeu
 int savedExistsInFolder(const wchar_t* folderPath) {
-    wchar_t savedPath[MAX_PATH];
-    swprintf(savedPath, MAX_PATH, L"%s\\ConanSandbox\\Saved", folderPath);
-    DWORD attribs = GetFileAttributesW(savedPath);
+    wchar_t savedCheckPath[MAX_PATH];
+    swprintf(savedCheckPath, MAX_PATH, L"%s\\ConanSandbox\\Saved", folderPath);
+    DWORD attribs = GetFileAttributesW(savedCheckPath);
     return (attribs != INVALID_FILE_ATTRIBUTES && (attribs & FILE_ATTRIBUTE_DIRECTORY));
 }
 
@@ -4182,6 +4177,7 @@ int showConfigInterface() {
 
 // Path selection dialog thread | Thread pour la boîte de dialogue de sélection de chemin
 void showPathSelectionDialogThread(void* arg) {
+    (void)arg;
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "showPathSelectionDialogThread: Thread started");
     }

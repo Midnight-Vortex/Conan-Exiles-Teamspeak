@@ -25,6 +25,7 @@
 
 // Key monitoring thread | Thread de surveillance des touches
 void keyMonitorThreadFunction(void* arg) {
+    (void)arg;
     keyMonitorThreadRunning = TRUE;
 
     if (enableLogGeneral) {

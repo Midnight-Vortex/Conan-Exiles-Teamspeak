@@ -55,6 +55,9 @@ int ts3_audio_has_pending_unmutes(void);
 /* Drop one client (left server). Callback thread. */
 void ts3_audio_invalidate_client(anyID clientID);
 
+/* 1 when the client's proximity snapshot is soundproof-muted. Any thread. */
+int ts3_proximity_audio_soundproof_muted(unsigned int clientID);
+
 /* Reset everything (disconnect/shutdown). Callback thread. */
 void ts3_audio_reset(void);
 

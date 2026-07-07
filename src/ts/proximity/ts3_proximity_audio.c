@@ -686,6 +686,18 @@ void ts3_audio_invalidate_client(anyID clientID) {
     g_renderGain[clientID] = 1.0f;
 }
 
+int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
+    if (clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+        return 0;
+    }
+    float gain, panL, panR, cutoffHz;
+    int soundproof, reverbSlot;
+    if (!snap_read((anyID)clientID, &gain, &panL, &panR, &cutoffHz, &soundproof, &reverbSlot)) {
+        return 0;
+    }
+    return soundproof ? 1 : 0;
+}
+
 void ts3_audio_reset(void) {
     for (anyID i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
         ts3_audio_invalidate_client(i);

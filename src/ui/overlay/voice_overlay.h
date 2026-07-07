@@ -20,6 +20,12 @@
 void overlay_start(void);
 void overlay_stop(void);
 
+void createVoiceOverlay(void);
+void updateVoiceOverlayVisibility(void);
+void voice_overlay_refresh_theme(void);
+void voice_overlay_refresh_position(void);
+void voice_overlay_refresh_size(void);
+
 void plugin_ui_on_settings_saved(void);
 
 /* Thread id hook retained for legacy UI helpers (0 when unused). */

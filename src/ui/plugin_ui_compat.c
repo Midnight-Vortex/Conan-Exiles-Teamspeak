@@ -2,11 +2,12 @@
 #include "core/util/log.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
+#include "core/channel/channel_manage.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
-#include "ui/input/key_watcher.h"
+#include "ui/overlay/voice_overlay.h"
 #include "plugin_modules.h"
 
 #include <stdio.h>
@@ -206,6 +207,32 @@ double hubMaximumShout = 50.0;
 BOOL hubForceDistanceBasedMuting = TRUE;
 BOOL hubForceAutomaticChannelSwitching = TRUE;
 
+BOOL isConnectedToServer = FALSE;
+BOOL hubDescriptionAvailable = FALSE;
+BOOL hubLimitsActive = FALSE;
+ULONGLONG lastConnectionCheck = 0;
+char serverConfigHash[256] = "";
+BOOL hasAppliedDefaultSettings = FALSE;
+BOOL enableDefaultSettingsOnFirstConnection = TRUE;
+int defaultWhisperKey = 97;
+int defaultNormalKey = 98;
+int defaultShoutKey = 99;
+int defaultVoiceToggleKey = 84;
+float defaultDistanceWhisper = 3.0f;
+float defaultDistanceNormal = 13.0f;
+float defaultDistanceShout = 26.0f;
+double hubAudioMinDistance = 2.0;
+double hubAudioMaxDistance = 50.0;
+double hubAudioMaxVolume = 85.0;
+double hubAudioBloom = 0.0;
+double hubAudioFilterIntensity = 0.0;
+BOOL hubForcePositionalAudio = FALSE;
+ULONGLONG lastHubDescriptionCheck = 0;
+char* lastHubDescriptionCache = NULL;
+const wchar_t* infoText1 = L"";
+const wchar_t* infoText2 = L"";
+const wchar_t* infoText3 = L"";
+
 CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
 CompletePositionalData remotePlayersData[64];
 size_t remotePlayerCount = 0;
@@ -313,9 +340,27 @@ void plugin_ui_sync_to_config(void) {
 void plugin_ui_sync_live_state(void) {
     coordinatesValid = pos_coordinates_valid() ? TRUE : FALSE;
     isConnectedToServer = ts3_is_connected() ? TRUE : FALSE;
+
+    PosSample localPos;
+    if (pos_get_current(&localPos)) {
+        axe_x = localPos.x;
+        axe_y = localPos.y;
+        axe_z = localPos.z;
+        localPlayerPosition.x = localPos.x / 100.0f;
+        localPlayerPosition.y = localPos.y / 100.0f;
+        localPlayerPosition.z = localPos.z / 100.0f;
+    }
+
+    const uint64 hubId = chan_get_hub_channel_id();
+    const uint64 ingameId = chan_get_ingame_channel_id();
+    hubChannelID = hubId ? (mumble_channelid_t)hubId : -1;
+    ingameChannelID = ingameId ? (mumble_channelid_t)ingameId : -1;
+
     HubSettings hub;
     if (server_profile_get(&hub) && hub.valid) {
         hubDescriptionAvailable = TRUE;
+        rootChannelID = 1;
+        channelManagementActive = TRUE;
         hubLimitsActive = hub.forceDistanceMuting ? TRUE : FALSE;
         hubForceDistanceBasedMuting = hub.forceDistanceMuting ? TRUE : FALSE;
         hubForceAutomaticChannelSwitching = hub.forceAutoChannelSwitch ? TRUE : FALSE;
@@ -356,6 +401,7 @@ void plugin_ui_sync_live_state(void) {
     else {
         hubDescriptionAvailable = FALSE;
         hubLimitsActive = FALSE;
+        rootChannelID = -1;
         zoneCount = 0;
         currentZoneIndex = -1;
     }
@@ -382,7 +428,144 @@ float getVoiceDistanceForMode(uint8_t voiceMode) {
 
 void plugin_ui_on_position_tick(void) {
     plugin_ui_sync_live_state();
+    localVoiceData.voiceDistance = voice_mode_get_current_distance();
 }
+
+#define POS_TXT_TO_WORLD_SCALE 0.01f
+
+static float pos_txt_to_world(float v) {
+    return v * POS_TXT_TO_WORLD_SCALE;
+}
+
+void pluginGetLocalWorldPos(float* outX, float* outY, float* outZ) {
+    if (outX) {
+        *outX = pos_txt_to_world(axe_x);
+    }
+    if (outY) {
+        *outY = pos_txt_to_world(axe_y);
+    }
+    if (outZ) {
+        *outZ = pos_txt_to_world(axe_z);
+    }
+}
+
+int getLocalPlayerZoneIndex(void) {
+    float wx, wy, wz;
+    pluginGetLocalWorldPos(&wx, &wy, &wz);
+    int idx = resolvePlayerZoneIndex(wx, wy, wz);
+    if (idx >= 0) {
+        return idx;
+    }
+    return resolvePlayerZoneIndex(axe_x, axe_y, axe_z);
+}
+
+int getRemotePlayerZoneIndex(float rx, float ry, float rz) {
+    return resolvePlayerZoneIndex(rx, ry, rz);
+}
+
+int resolvePlayerZoneIndex(float px, float py, float pz) {
+    int idx = getPlayerZone(px, py, pz);
+    if (idx >= 0) {
+        return idx;
+    }
+    idx = getPlayerZone(px * 100.0f, py * 100.0f, pz * 100.0f);
+    if (idx >= 0) {
+        return idx;
+    }
+    return getPlayerZone(px * POS_TXT_TO_WORLD_SCALE, py * POS_TXT_TO_WORLD_SCALE,
+        pz * POS_TXT_TO_WORLD_SCALE);
+}
+
+int ts3_plugin_resolve_remote_zone(float rx, float ry, float rz) {
+    int idx = getRemotePlayerZoneIndex(rx, ry, rz);
+    if (idx >= 0) {
+        return idx;
+    }
+    idx = getPlayerZone(rx * 100.0f, ry * 100.0f, rz * 100.0f);
+    return idx >= 0 ? idx : -1;
+}
+
+int ts3_plugin_resolve_local_zone(void) {
+    int z = getLocalPlayerZoneIndex();
+    if (z < 0 && currentZoneIndex >= 0 && (size_t)currentZoneIndex < zoneCount) {
+        z = currentZoneIndex;
+    }
+    return z;
+}
+
+float plugin_clamp_remote_voice_distance(float voiceDistanceMeters) {
+    if (voiceDistanceMeters < 0.0f) {
+        return 0.0f;
+    }
+    if (!hubDescriptionAvailable) {
+        return voiceDistanceMeters;
+    }
+    float cap = (float)hubMaximumShout;
+    if (cap <= 0.0f) {
+        cap = (float)hubMaximumNormal;
+    }
+    if (cap > 0.0f && voiceDistanceMeters > cap) {
+        return cap;
+    }
+    return voiceDistanceMeters;
+}
+
+int ts3_plugin_is_soundproof_muted(int localZone, int remoteZone) {
+    if (remoteZone >= 0 && (size_t)remoteZone < zoneCount && zones[remoteZone].isSoundproof) {
+        if (localZone != remoteZone) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int ts3_plugin_is_soundproof_muted_at(float rx, float ry, float rz) {
+    const int localZone = ts3_plugin_resolve_local_zone();
+    const int remoteZone = ts3_plugin_resolve_remote_zone(rx, ry, rz);
+    return ts3_plugin_is_soundproof_muted(localZone, remoteZone);
+}
+
+int ts3_plugin_client_soundproof_muted(unsigned int clientID) {
+    if (pluginShuttingDown || !enableDistanceMuting || clientID == 0) {
+        return 0;
+    }
+    return ts3_proximity_audio_soundproof_muted(clientID);
+}
+
+int ts3_plugin_zone_reverb_active(int localZone, int remoteZone) {
+    if (localZone >= 0 && (size_t)localZone < zoneCount && zones[localZone].isReverb) {
+        return 1;
+    }
+    if (remoteZone >= 0 && (size_t)remoteZone < zoneCount && zones[remoteZone].isReverb) {
+        return 1;
+    }
+    return 0;
+}
+
+BOOL hubDescriptionHasContent(const char* description) {
+    if (!description) {
+        return FALSE;
+    }
+    for (const char* p = description; *p; p++) {
+        if (*p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+void readHubDescription(void) { }
+void parseHubDescription(const char* description) { (void)description; }
+void applyDefaultSettingsIfNeeded(const char* description, mumble_connection_t connection) {
+    (void)description;
+    (void)connection;
+}
+void initializeChannelIDs(void) { }
+void manageChannelBasedOnCoordinates(void) { }
+void ts3_show_pending_hub_confirm(void) { }
+int ts3_is_root_channel_id(uint64_t channelID) { (void)channelID; return 0; }
+void hubDescriptionMonitorThread(void* arg) { (void)arg; }
+void channelManagementThread(void* arg) { (void)arg; }
 
 void plugin_ui_init(void) {
     mumbleAPI.log = compat_mumble_log;

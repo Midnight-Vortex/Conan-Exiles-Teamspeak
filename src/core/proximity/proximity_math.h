@@ -34,4 +34,18 @@ float prox_lowpass_cutoff_hz(float distanceMeters);
 /* Log a fixed-value table through log_write (Phase 5 test aid). */
 void prox_math_self_test(void);
 
+/* Legacy UI / proximity_volume.c — hub+zone volume context (same curve as prox_volume_from_distance). */
+typedef struct ProximityVolumeContext {
+    double hubAudioMinDistance;
+    double hubAudioMaxVolume;
+    int currentZoneIndex;
+    double zoneAudioMinDistance;
+    double zoneAudioMaxVolume;
+    int currentPlayerRaceIndex;
+    float currentListenAddDistance;
+} ProximityVolumeContext;
+
+float proximity_calculate_volume_with_hub(float distanceMeters, float voiceDistanceMeters,
+    const ProximityVolumeContext* ctx);
+
 #endif /* CORE_PROXIMITY_PROXIMITY_MATH_H */

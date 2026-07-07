@@ -43,4 +43,8 @@ void chan_on_own_move(uint64 newChannelID);
 /* Drop all state (disconnect / new connection). */
 void chan_reset(void);
 
+/* Read-only channel IDs resolved by chan_find_hub_and_ingame (0 when unknown). */
+uint64 chan_get_hub_channel_id(void);
+uint64 chan_get_ingame_channel_id(void);
+
 #endif /* CORE_CHANNEL_CHANNEL_MANAGE_H */
