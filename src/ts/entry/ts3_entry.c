@@ -15,6 +15,7 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
+#include "ts/proximity/ts3_3d.h"
 
 #include <string.h>
 
@@ -87,11 +88,13 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
     if (newStatus == STATUS_DISCONNECTED) {
         cepos_reset();
         ts3_audio_reset();
+        ts3d_reset();
         return;
     }
 
     if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
         cepos_reset();
+        ts3d_reset();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -114,6 +117,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     ts3_thread_mark_callback();
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
+        ts3d_apply();
         ts3_audio_flush_unmutes();
         return;
     }
@@ -121,6 +125,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
         ts3_cmd_queue_drain();
         cepos_flush();
+        ts3d_apply();
         ts3_audio_flush_unmutes();
     }
 }
@@ -129,4 +134,10 @@ void ts3plugin_onEditPlaybackVoiceDataEvent(uint64 serverConnectionHandlerID, an
     (void)serverConnectionHandlerID;
     /* Audio thread — no API calls, no locks, snapshot reads only. */
     ts3_audio_process_playback(clientID, samples, sampleCount, channels);
+}
+
+void ts3plugin_onCustom3dRolloffCalculationClientEvent(uint64 serverConnectionHandlerID, anyID clientID, float distance, float* volume) {
+    (void)serverConnectionHandlerID;
+    /* Audio thread — pure function, no API calls, no locks. */
+    ts3d_on_custom_rolloff(clientID, distance, volume);
 }

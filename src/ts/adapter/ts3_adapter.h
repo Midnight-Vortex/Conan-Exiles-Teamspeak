@@ -99,6 +99,18 @@ int ts3_get_own_nickname(char* outName, int outLen);
    TS callback thread ONLY. Returns number of clients unmuted. */
 int ts3_unmute_clients_for_pcm(const anyID* clients, int count);
 
+/* ---- 3D audio (TS callback thread ONLY, raw calls — dedup lives in ts3_3d) */
+
+/* systemset3DSettings. Returns 1 on success. */
+int ts3_set_3d_settings(float distanceFactor, float rolloffScale);
+
+/* systemset3DListenerAttributes. Returns 1 on success. */
+int ts3_set_3d_listener(const TS3_VECTOR* position, const TS3_VECTOR* forward,
+    const TS3_VECTOR* up);
+
+/* channelset3DAttributes for one client. Returns 1 on success. */
+int ts3_set_3d_client(anyID clientID, const TS3_VECTOR* position);
+
 /* ---- shutdown (TS callback thread) --------------------------------------- */
 
 void ts3_adapter_shutdown(void);

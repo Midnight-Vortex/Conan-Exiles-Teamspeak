@@ -327,6 +327,43 @@ int ts3_unmute_clients_for_pcm(const anyID* clients, int count) {
     return n;
 }
 
+/* ---- 3D audio (raw API, callback thread only) ------------------------------- */
+
+int ts3_set_3d_settings(float distanceFactor, float rolloffScale) {
+    if (!ts3_require_callback_thread("set3DSettings")) {
+        return 0;
+    }
+    if (!g_ts3FunctionsSet || !ts3_is_connected() || !g_ts3.systemset3DSettings) {
+        return 0;
+    }
+    return g_ts3.systemset3DSettings(g_activeConnection, distanceFactor, rolloffScale) == ERROR_ok;
+}
+
+int ts3_set_3d_listener(const TS3_VECTOR* position, const TS3_VECTOR* forward,
+    const TS3_VECTOR* up) {
+    if (!ts3_require_callback_thread("set3DListener")) {
+        return 0;
+    }
+    if (!position || !forward || !up
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.systemset3DListenerAttributes) {
+        return 0;
+    }
+    return g_ts3.systemset3DListenerAttributes(g_activeConnection, position, forward, up) == ERROR_ok;
+}
+
+int ts3_set_3d_client(anyID clientID, const TS3_VECTOR* position) {
+    if (!ts3_require_callback_thread("set3DClient")) {
+        return 0;
+    }
+    if (!position || clientID == 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.channelset3DAttributes) {
+        return 0;
+    }
+    return g_ts3.channelset3DAttributes(g_activeConnection, clientID, position) == ERROR_ok;
+}
+
 /* ---- setup / shutdown ------------------------------------------------------ */
 
 void ts3_adapter_set_functions(const struct TS3Functions* funcs) {
