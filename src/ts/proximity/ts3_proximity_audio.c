@@ -483,8 +483,12 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
     float target, panL, panR, cutoffHz;
     int soundproof, reverbSlot;
     if (!snap_read(clientID, &target, &panL, &panR, &cutoffHz, &soundproof, &reverbSlot)) {
-        /* No proximity data — leave audio untouched (normal TS behavior). */
-        g_renderGain[clientID] = 1.0f;
+        /* Ingame proximity mode but no position data for this speaker (no
+           CEPOS yet / expired) — mute instead of leaking full-volume voice
+           that should be distance-attenuated. The next CEPOS packet
+           publishes a snapshot and unmutes. */
+        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        g_renderGain[clientID] = 0.0f;
         g_lpf[clientID].initialized = 0;
         return;
     }

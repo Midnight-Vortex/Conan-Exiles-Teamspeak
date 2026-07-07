@@ -38,7 +38,11 @@ int ts3_thread_is_callback(void);
 
 /* ---- 3.1 connection state (written on callback thread, read anywhere) --- */
 
-void ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus);
+/* Connect status event. Returns 1 when the event changed the plugin's
+   active connection (active tab disconnected, or a connection was adopted);
+   0 when it was ignored (background tab). Callers reset their
+   per-connection caches only when this returns 1. */
+int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus);
 
 /* User switched the active server tab. Updates the active connection and
    the connected/local-client state to the new tab. Returns 1 when the

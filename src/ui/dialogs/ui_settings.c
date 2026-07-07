@@ -1,5 +1,6 @@
 #include "ui/dialogs/ui_settings.h"
 #include "core/config/config.h"
+#include "core/mod_file/pos_file.h"
 #include "core/util/log.h"
 #include "core/voice/voice_modes.h"
 #include "ts/adapter/ts3_adapter.h"
@@ -389,6 +390,9 @@ void ui_settings_flush_apply(void) {
 
     config_save();
     log_set_enabled(g_config.debugMode);
+
+    /* Auto path find may have just been enabled — resolve it now. */
+    pos_autodetect_saved_path();
 
     /* Distances may have changed: push a fresh CEPOS packet and re-gain all. */
     cepos_invalidate_send_cache();

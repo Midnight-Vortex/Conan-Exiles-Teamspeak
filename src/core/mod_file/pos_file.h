@@ -40,6 +40,11 @@ void pos_watcher_stop(void);
    must NOT call the TS API. Register before pos_watcher_start. */
 void pos_watcher_set_update_callback(void (*callback)(void));
 
+/* Auto-detect the Conan Saved folder (Steam registry + libraryfolders.vdf)
+   when AutomaticPatchFind is on and the stored path is empty/gone; persists
+   the result to plugin.cfg. TS callback thread (init / settings apply). */
+void pos_autodetect_saved_path(void);
+
 /* Latest sample. Returns 1 when coordinates are valid (fresh). */
 int pos_get_current(PosSample* out);
 

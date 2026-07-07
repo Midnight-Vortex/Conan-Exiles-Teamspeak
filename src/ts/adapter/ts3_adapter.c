@@ -40,23 +40,40 @@ static volatile uint64 g_activeConnection = 0;
 static volatile long g_connected = 0;
 static volatile long g_localClientID = 0;
 
-void ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus) {
+int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus) {
     if (newStatus == STATUS_DISCONNECTED) {
         /* Only a disconnect of the ACTIVE tab may tear the plugin down —
            other tabs disconnecting are none of our business (14.2). */
         if (g_activeConnection != 0 && serverConnectionHandlerID != g_activeConnection) {
             log_debug("TS-EVT: DISCONNECTED on inactive conn=%llu - ignored",
                 (unsigned long long)serverConnectionHandlerID);
-            return;
+            return 0;
         }
         InterlockedExchange(&g_connected, 0);
         InterlockedExchange(&g_localClientID, 0);
         g_activeConnection = 0;
         log_write("TS-EVT: DISCONNECTED");
-        return;
+        return 1;
     }
 
     if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
+        /* A BACKGROUND tab finishing its connect must not hijack the plugin
+           while the active tab is alive. Adopt the new connection only when
+           we have none, or when it is the tab the user is looking at. */
+        if (g_activeConnection != 0
+            && serverConnectionHandlerID != g_activeConnection
+            && InterlockedCompareExchange(&g_connected, 0, 0)) {
+            uint64 visibleTab = 0;
+            if (g_ts3FunctionsSet && g_ts3.getCurrentServerConnectionHandlerID) {
+                visibleTab = g_ts3.getCurrentServerConnectionHandlerID();
+            }
+            if (visibleTab != serverConnectionHandlerID) {
+                log_write("TS-EVT: CONNECTION_ESTABLISHED on background conn=%llu - ignored",
+                    (unsigned long long)serverConnectionHandlerID);
+                return 0;
+            }
+        }
+
         g_activeConnection = serverConnectionHandlerID;
         anyID localID = 0;
         if (g_ts3.getClientID
@@ -66,7 +83,9 @@ void ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStat
         InterlockedExchange(&g_connected, 1);
         log_write("TS-EVT: CONNECTION_ESTABLISHED conn=%llu localClient=%d",
             (unsigned long long)serverConnectionHandlerID, (int)localID);
+        return 1;
     }
+    return 0;
 }
 
 int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {

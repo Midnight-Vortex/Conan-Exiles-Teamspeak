@@ -73,6 +73,7 @@ int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
     config_load();
+    pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
     pos_watcher_start();
     overlay_start();
@@ -122,14 +123,14 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
     (void)errorNumber;
     ts3_thread_mark_callback();
 
-    /* Disconnects of other (inactive) tabs must not tear the plugin down. */
-    const uint64 activeBefore = ts3_get_active_connection();
-    ts3_on_connect_status_changed(serverConnectionHandlerID, newStatus);
+    /* Adapter decides whether this event concerns the active tab; events of
+       background tabs (disconnect or connect) are ignored entirely. */
+    const int accepted = ts3_on_connect_status_changed(serverConnectionHandlerID, newStatus);
+    if (!accepted) {
+        return;
+    }
 
     if (newStatus == STATUS_DISCONNECTED) {
-        if (activeBefore != 0 && serverConnectionHandlerID != activeBefore) {
-            return;
-        }
         ts3_reset_connection_state();
         return;
     }

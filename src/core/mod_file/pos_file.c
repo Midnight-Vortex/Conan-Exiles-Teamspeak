@@ -1,4 +1,5 @@
 #include "core/mod_file/pos_file.h"
+#include "core/mod_file/path_detect.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
 
@@ -133,6 +134,28 @@ static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
 }
 
 /* ---- watcher thread ----------------------------------------------------- */
+
+void pos_autodetect_saved_path(void) {
+    PluginConfig cfg;
+    config_copy(&cfg);
+
+    if (!cfg.automaticPatchFind) {
+        return;
+    }
+    /* Keep a stored path that still exists; re-detect when empty or stale. */
+    if (cfg.automaticSavedPath[0]
+        && GetFileAttributesW(cfg.automaticSavedPath) != INVALID_FILE_ATTRIBUTES) {
+        return;
+    }
+
+    wchar_t detected[CONFIG_MAX_PATH] = L"";
+    if (!path_detect_conan_saved(detected, CONFIG_MAX_PATH)) {
+        return;
+    }
+    wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, detected, _TRUNCATE);
+    config_apply(&cfg);
+    config_save();
+}
 
 /* Pos.txt path from config: automatic path when enabled and set, else manual.
    Uses config_copy — the settings dialog may rewrite the path strings while
