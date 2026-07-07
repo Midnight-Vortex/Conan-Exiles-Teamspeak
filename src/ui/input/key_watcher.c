@@ -6,7 +6,6 @@
 #include "ts/profile/ts3_server_profile.h"
 #endif
 #include "core/proximity/proximity_math.h"
-#include "core/voice/voice_modes.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,10 +17,11 @@
 #include <shobjidl.h>
 #include <process.h>
 #include <ole2.h>
+#include "core/util/poll_interval.h"
 
 // MODULE 17: HOTKEY WATCHER
-// EN: F10 settings dialog, voice-mode hotkeys — runs on dedicated key-monitor thread.
-// FR: Dialogue réglages F10, raccourcis mode voix — tourne sur thread dédié surveillance touches.
+// EN: F10 settings dialog — dedicated key-monitor thread at PLUGIN_POLL_INTERVAL_MS.
+// FR: Dialogue réglages F10 — thread dédié surveillance touche config.
 // ============================================================================
 
 // Key monitoring thread | Thread de surveillance des touches
@@ -56,8 +56,7 @@ void keyMonitorThreadFunction(void* arg) {
         }
 
         lastKeyState = currentKeyState;
-        voice_mode_hotkey_poll();
-        Sleep(30);
+        Sleep(PLUGIN_POLL_INTERVAL_MS);
     }
 
     keyMonitorThreadRunning = FALSE;

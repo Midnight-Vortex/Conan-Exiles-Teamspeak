@@ -83,7 +83,7 @@ int ts3_cmd_queue_nonempty(void);
 /* ---- 3.3 wakeup ---------------------------------------------------------- */
 
 /* Ask the TS callback thread to run ts3_cmd_queue_drain() soon. Any thread.
-   Rate-limited to one server round trip per 50 ms. */
+   Rate-limited to one server round trip per PLUGIN_POLL_INTERVAL_MS. */
 void ts3_request_wakeup(void);
 
 /* ---- 3.4 channel queries (TS callback thread ONLY) ----------------------- */
@@ -138,10 +138,6 @@ int ts3_unmute_clients_for_pcm(const anyID* clients, int count);
    the request was sent. TS callback thread ONLY — flood protection lives in
    channel_manage (in-flight flag + cooldown). */
 int ts3_request_client_move(anyID clientID, uint64 channelID, const char* password);
-
-/* Connected client IDs into caller buffer; returns count (0 on error).
-   TS callback thread ONLY. */
-int ts3_get_connected_client_ids(anyID* outClients, int maxClients);
 
 /* Ask the server for a channel's description (arrives via
    onChannelDescriptionUpdateEvent). Returns 1 when the request was sent.

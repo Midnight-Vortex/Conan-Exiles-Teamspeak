@@ -1,4 +1,5 @@
 #include "ts/adapter/ts3_adapter.h"
+#include "core/util/poll_interval.h"
 #include "core/util/log.h"
 
 #include "sdk/include/teamspeak/public_errors.h"
@@ -312,10 +313,10 @@ void ts3_request_wakeup(void) {
         return;
     }
 
-    /* Rate limit: one wakeup round trip per 50 ms across all threads. */
+    /* Rate limit: one wakeup round trip per PLUGIN_POLL_INTERVAL_MS. */
     LONG64 now = (LONG64)GetTickCount64();
     LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
-    if (now - last < 50) {
+    if (now - last < PLUGIN_POLL_INTERVAL_MS) {
         return;
     }
     if (InterlockedCompareExchange64(&s_lastWakeMs, now, last) != last) {
@@ -400,26 +401,6 @@ int ts3_get_channel_client_list(uint64 channelID, anyID* outClients, int maxClie
 
     anyID* list = NULL;
     if (g_ts3.getChannelClientList(g_activeConnection, channelID, &list) != ERROR_ok || !list) {
-        return 0;
-    }
-    int count = 0;
-    for (int i = 0; list[i] != 0 && count < maxClients; i++) {
-        outClients[count++] = list[i];
-    }
-    g_ts3.freeMemory(list);
-    return count;
-}
-
-int ts3_get_connected_client_ids(anyID* outClients, int maxClients) {
-    /* ts3plugin_infoData runs on the TS UI thread — no callback-thread guard here. */
-    if (!outClients || maxClients <= 0
-        || !g_ts3FunctionsSet || !ts3_is_connected()
-        || !g_ts3.getClientList || !g_ts3.freeMemory) {
-        return 0;
-    }
-
-    anyID* list = NULL;
-    if (g_ts3.getClientList(g_activeConnection, &list) != ERROR_ok || !list) {
         return 0;
     }
     int count = 0;

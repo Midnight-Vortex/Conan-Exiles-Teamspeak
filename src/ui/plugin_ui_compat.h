@@ -32,7 +32,7 @@ void overlay_ui_mark_thread(void);
 void overlay_ui_clear_thread(void);
 void overlay_ui_signal_quit(void);
 
-/* Called from the pos watcher (~30 ms) to keep legacy flags fresh. */
+/* Called from the pos watcher (PLUGIN_POLL_INTERVAL_MS) to keep legacy flags fresh. */
 void plugin_ui_on_position_tick(void);
 
 void plugin_ui_on_settings_saved(void);

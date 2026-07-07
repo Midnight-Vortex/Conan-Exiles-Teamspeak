@@ -2,43 +2,73 @@
 
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/entry/ts3_exports.h"
-#include "core/util/log.h"
+#include "plugin.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <windows.h>
 
-#define TS3_MAX_CLIENT_ID       4096
-#define TS3_VERSION_MAX_LEN     24
-#define TS3_DISPLAY_NAME_LEN    48
-#define TS3_UNIQUE_ID_LEN       48
-#define CEVER_CMD_PREFIX        "CEVER:"
+#define VERSION_MAX_CLIENTS   4096
+#define VERSION_TEXT_MAX      24
+#define VERSION_NAME_MAX      48
+#define VERSION_UID_MAX       48
+#define VERSION_CMD_PREFIX    "CEVER:"
+#define VERSION_CMD_MAX       64
 
-static char g_clientVersion[TS3_MAX_CLIENT_ID][TS3_VERSION_MAX_LEN];
-static char g_clientDisplayName[TS3_MAX_CLIENT_ID][TS3_DISPLAY_NAME_LEN];
-static char g_clientUniqueId[TS3_MAX_CLIENT_ID][TS3_UNIQUE_ID_LEN];
-static char g_versionReplied[TS3_MAX_CLIENT_ID];
+typedef struct VersionClientSlot {
+    char version[VERSION_TEXT_MAX];
+    char displayName[VERSION_NAME_MAX];
+    char uniqueId[VERSION_UID_MAX];
+    unsigned char replied;
+    unsigned char hasVersion;
+} VersionClientSlot;
 
-static int plugin_name_matches(const char* pluginName) {
+static VersionClientSlot g_slots[VERSION_MAX_CLIENTS];
+static CRITICAL_SECTION g_lock;
+static INIT_ONCE g_lockOnce = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK version_lock_init(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once;
+    (void)param;
+    (void)ctx;
+    InitializeCriticalSection(&g_lock);
+    return TRUE;
+}
+
+static void version_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_lockOnce, version_lock_init, NULL, NULL);
+}
+
+static int version_slot_valid(anyID clientID) {
+    return clientID > 0 && clientID < VERSION_MAX_CLIENTS;
+}
+
+static int version_plugin_name_ok(const char* pluginName) {
+    const char* registered;
+
     if (!pluginName || !pluginName[0]) {
         return 0;
     }
-    if (strcmp(pluginName, ts3_get_plugin_id()) == 0) {
+    registered = ts3_get_plugin_id();
+    if (registered && registered[0] && strcmp(pluginName, registered) == 0) {
         return 1;
     }
     return strcmp(pluginName, "conan_exiles") == 0
         || strcmp(pluginName, "conan_exiles_ts") == 0;
 }
 
-static int version_string_valid(const char* ver) {
-    if (!ver || !ver[0]) {
+static int version_text_ok(const char* text) {
+    size_t len;
+
+    if (!text || !text[0]) {
         return 0;
     }
-    const size_t len = strlen(ver);
-    if (len == 0 || len >= TS3_VERSION_MAX_LEN) {
+    len = strlen(text);
+    if (len == 0 || len >= VERSION_TEXT_MAX) {
         return 0;
     }
     for (size_t i = 0; i < len; i++) {
-        const char c = ver[i];
+        const char c = text[i];
         if ((c >= '0' && c <= '9')
             || (c >= 'a' && c <= 'z')
             || (c >= 'A' && c <= 'Z')
@@ -50,145 +80,183 @@ static int version_string_valid(const char* ver) {
     return 1;
 }
 
-static void cache_display_name(anyID clientID, const char* name) {
-    if (clientID == 0 || clientID >= TS3_MAX_CLIENT_ID || !name || !name[0]) {
+static void version_clear_slot_locked(anyID clientID) {
+    if (!version_slot_valid(clientID)) {
         return;
     }
-    strncpy_s(g_clientDisplayName[clientID], sizeof(g_clientDisplayName[clientID]),
-        name, _TRUNCATE);
+    memset(&g_slots[clientID], 0, sizeof(g_slots[clientID]));
 }
 
-static void cache_unique_id(anyID clientID, const char* uniqueId) {
-    if (clientID == 0 || clientID >= TS3_MAX_CLIENT_ID || !uniqueId || !uniqueId[0]) {
-        return;
-    }
-    strncpy_s(g_clientUniqueId[clientID], sizeof(g_clientUniqueId[clientID]),
-        uniqueId, _TRUNCATE);
-}
+static void version_purge_stale_locked(anyID keepClientID,
+    const char* uniqueId, const char* displayName) {
+    for (anyID i = 1; i < VERSION_MAX_CLIENTS; i++) {
+        VersionClientSlot* slot;
 
-static void set_client_version(anyID clientID, const char* version) {
-    if (clientID == 0 || clientID >= TS3_MAX_CLIENT_ID || !version_string_valid(version)) {
-        return;
-    }
-    strncpy_s(g_clientVersion[clientID], sizeof(g_clientVersion[clientID]),
-        version, _TRUNCATE);
-}
-
-static void purge_stale_version_entries(anyID keepClientID, const char* uniqueId, const char* displayName) {
-    for (anyID i = 1; i < TS3_MAX_CLIENT_ID; i++) {
-        if (i == keepClientID || !g_clientVersion[i][0]) {
+        if (i == keepClientID || !g_slots[i].hasVersion) {
             continue;
         }
-        if (uniqueId && uniqueId[0] && g_clientUniqueId[i][0]
-            && strcmp(g_clientUniqueId[i], uniqueId) == 0) {
-            g_clientVersion[i][0] = '\0';
-            g_versionReplied[i] = 0;
+        slot = &g_slots[i];
+        if (uniqueId && uniqueId[0] && slot->uniqueId[0]
+            && strcmp(slot->uniqueId, uniqueId) == 0) {
+            version_clear_slot_locked(i);
             continue;
         }
-        if (displayName && displayName[0] && g_clientDisplayName[i][0]
-            && strcmp(g_clientDisplayName[i], displayName) == 0) {
-            g_clientVersion[i][0] = '\0';
-            g_versionReplied[i] = 0;
+        if (displayName && displayName[0] && slot->displayName[0]
+            && strcmp(slot->displayName, displayName) == 0) {
+            version_clear_slot_locked(i);
         }
     }
 }
 
-static void send_version_command(void) {
-    if (!ts3_thread_is_callback() || !ts3_is_connected()) {
+static void version_store_locked(anyID clientID, const char* versionText,
+    const char* displayName, const char* uniqueId) {
+    VersionClientSlot* slot;
+
+    if (!version_slot_valid(clientID) || !version_text_ok(versionText)) {
         return;
     }
-    const char* ver = ts3plugin_version();
-    if (!ver || !ver[0]) {
-        return;
+    slot = &g_slots[clientID];
+    strncpy_s(slot->version, sizeof(slot->version), versionText, _TRUNCATE);
+    slot->hasVersion = 1;
+    if (displayName && displayName[0]) {
+        strncpy_s(slot->displayName, sizeof(slot->displayName), displayName, _TRUNCATE);
     }
-    char command[64];
-    snprintf(command, sizeof(command), "%s%s", CEVER_CMD_PREFIX, ver);
-    if (ts3_send_plugin_command_server(command)) {
-        const anyID localId = ts3_get_local_client_id();
-        if (localId != 0) {
-            set_client_version(localId, ver);
-        }
-        log_debug("VERSION: broadcast %s", ver);
+    if (uniqueId && uniqueId[0]) {
+        strncpy_s(slot->uniqueId, sizeof(slot->uniqueId), uniqueId, _TRUNCATE);
     }
 }
 
-void ts3_version_reset(void) {
-    memset(g_clientVersion, 0, sizeof(g_clientVersion));
-    memset(g_clientDisplayName, 0, sizeof(g_clientDisplayName));
-    memset(g_clientUniqueId, 0, sizeof(g_clientUniqueId));
-    memset(g_versionReplied, 0, sizeof(g_versionReplied));
-}
+static int version_send_broadcast(void) {
+    const char* ver;
+    char command[VERSION_CMD_MAX];
+    anyID localId;
 
-void ts3_version_clear_client(anyID clientID) {
-    if (clientID == 0 || clientID >= TS3_MAX_CLIENT_ID) {
-        return;
-    }
-    g_clientVersion[clientID][0] = '\0';
-    g_clientDisplayName[clientID][0] = '\0';
-    g_clientUniqueId[clientID][0] = '\0';
-    g_versionReplied[clientID] = 0;
-}
-
-void ts3_version_broadcast(void) {
-    send_version_command();
-}
-
-int ts3_version_on_plugin_command(const char* pluginName, const char* pluginCommand,
-    anyID invokerClientID, const char* invokerDisplayName, const char* invokerUniqueIdentity) {
-    if (!pluginCommand || strncmp(pluginCommand, CEVER_CMD_PREFIX, strlen(CEVER_CMD_PREFIX)) != 0) {
+    if (!ts3_thread_is_callback() || !ts3_is_connected() || pluginShuttingDown) {
         return 0;
     }
-    if (!plugin_name_matches(pluginName)) {
-        return 1;
+
+    ver = ts3plugin_version();
+    if (!ver || !ver[0] || !version_text_ok(ver)) {
+        return 0;
     }
 
-    const char* versionText = pluginCommand + strlen(CEVER_CMD_PREFIX);
-    if (invokerClientID == 0 || invokerClientID >= TS3_MAX_CLIENT_ID) {
-        return 1;
-    }
-    if (!version_string_valid(versionText)) {
-        return 1;
+    snprintf(command, sizeof(command), "%s%s", VERSION_CMD_PREFIX, ver);
+    if (!ts3_send_plugin_command_server(command)) {
+        return 0;
     }
 
-    purge_stale_version_entries(invokerClientID, invokerUniqueIdentity, invokerDisplayName);
-    cache_display_name(invokerClientID, invokerDisplayName);
-    cache_unique_id(invokerClientID, invokerUniqueIdentity);
-    set_client_version(invokerClientID, versionText);
-
-    if (!g_versionReplied[invokerClientID]) {
-        g_versionReplied[invokerClientID] = 1;
-        send_version_command();
+    localId = ts3_get_local_client_id();
+    if (version_slot_valid(localId)) {
+        version_lock_ensure();
+        EnterCriticalSection(&g_lock);
+        version_store_locked(localId, ver, NULL, NULL);
+        LeaveCriticalSection(&g_lock);
     }
     return 1;
 }
 
-int ts3_version_format_info(anyID clientID, char* buf, size_t bufSize) {
+void ts3_version_reset(void) {
+    version_lock_ensure();
+    EnterCriticalSection(&g_lock);
+    memset(g_slots, 0, sizeof(g_slots));
+    LeaveCriticalSection(&g_lock);
+}
+
+void ts3_version_clear_client(anyID clientID) {
+    version_lock_ensure();
+    EnterCriticalSection(&g_lock);
+    version_clear_slot_locked(clientID);
+    LeaveCriticalSection(&g_lock);
+}
+
+void ts3_version_broadcast(void) {
+    if (!ts3_thread_is_callback()) {
+        return;
+    }
+    version_send_broadcast();
+}
+
+int ts3_version_on_plugin_command(const char* pluginName, const char* pluginCommand,
+    anyID invokerClientID, const char* invokerDisplayName, const char* invokerUniqueIdentity) {
+    const char* versionText;
+    int needReply = 0;
+
+    if (!pluginCommand || pluginShuttingDown) {
+        return 0;
+    }
+    if (strncmp(pluginCommand, VERSION_CMD_PREFIX, strlen(VERSION_CMD_PREFIX)) != 0) {
+        return 0;
+    }
+    if (!version_plugin_name_ok(pluginName)) {
+        return 1;
+    }
+    if (!ts3_thread_is_callback()) {
+        return 1;
+    }
+
+    versionText = pluginCommand + strlen(VERSION_CMD_PREFIX);
+    if (!version_slot_valid(invokerClientID) || !version_text_ok(versionText)) {
+        return 1;
+    }
+
+    version_lock_ensure();
+    EnterCriticalSection(&g_lock);
+    version_purge_stale_locked(invokerClientID, invokerUniqueIdentity, invokerDisplayName);
+    version_store_locked(invokerClientID, versionText, invokerDisplayName, invokerUniqueIdentity);
+    needReply = !g_slots[invokerClientID].replied;
+    if (needReply) {
+        g_slots[invokerClientID].replied = 1;
+    }
+    LeaveCriticalSection(&g_lock);
+
+    if (needReply) {
+        version_send_broadcast();
+    }
+    return 1;
+}
+
+static int version_format_one_client(anyID clientID, char* buf, size_t bufSize) {
     const char* currentVer = ts3plugin_version();
+    VersionClientSlot slot;
     int written;
 
-    if (!buf || bufSize < 32) {
+    if (!buf || bufSize < 32 || !version_slot_valid(clientID)) {
         return 0;
     }
 
-    if (clientID != 0) {
-        if (g_clientVersion[clientID][0]) {
-            const char* remoteVer = g_clientVersion[clientID];
-            if (currentVer && strcmp(remoteVer, currentVer) == 0) {
-                written = snprintf(buf, bufSize,
-                    "Conan Exiles Proximity Voice %s (aktuell)", remoteVer);
-            }
-            else {
-                written = snprintf(buf, bufSize,
-                    "Conan Exiles Proximity Voice %s (veraltet - neu: %s)",
-                    remoteVer, currentVer ? currentVer : "?");
-            }
+    version_lock_ensure();
+    EnterCriticalSection(&g_lock);
+    slot = g_slots[clientID];
+    LeaveCriticalSection(&g_lock);
+
+    if (slot.hasVersion) {
+        if (currentVer && strcmp(slot.version, currentVer) == 0) {
+            written = snprintf(buf, bufSize,
+                "Conan Exiles Proximity Voice %s (aktuell)", slot.version);
         }
         else {
             written = snprintf(buf, bufSize,
-                "Kein Plugin erkannt\n(Conan Exiles %s erwartet)",
-                currentVer ? currentVer : "?");
+                "Conan Exiles Proximity Voice %s (veraltet - neu: %s)",
+                slot.version, currentVer ? currentVer : "?");
         }
-        return written > 0 ? written : 0;
+    }
+    else {
+        written = snprintf(buf, bufSize,
+            "Kein Plugin erkannt\n(Conan Exiles %s erwartet)",
+            currentVer ? currentVer : "?");
+    }
+    return written > 0 ? written : 0;
+}
+
+static int version_format_server_list(char* buf, size_t bufSize) {
+    const char* currentVer = ts3plugin_version();
+    char* line;
+    size_t remain;
+    int written;
+    int anyListed = 0;
+
+    if (!buf || bufSize < 64) {
+        return 0;
     }
 
     written = snprintf(buf, bufSize,
@@ -199,27 +267,28 @@ int ts3_version_format_info(anyID clientID, char* buf, size_t bufSize) {
         return written > 0 ? written : 0;
     }
 
-    char* line = buf + written;
-    size_t remain = bufSize - (size_t)written;
-    int anyListed = 0;
-    anyID clientIds[256];
-    const int count = ts3_get_connected_client_ids(clientIds, (int)(sizeof(clientIds) / sizeof(clientIds[0])));
+    line = buf + written;
+    remain = bufSize - (size_t)written;
 
-    for (int i = 0; i < count && remain > 48; i++) {
-        const anyID cid = clientIds[i];
-        if (cid == 0 || cid >= TS3_MAX_CLIENT_ID || !g_clientVersion[cid][0]) {
+    version_lock_ensure();
+    EnterCriticalSection(&g_lock);
+    for (anyID cid = 1; cid < VERSION_MAX_CLIENTS && remain > 48; cid++) {
+        const VersionClientSlot* slot = &g_slots[cid];
+        const char* status;
+        int lineLen;
+
+        if (!slot->hasVersion) {
             continue;
         }
         anyListed = 1;
-        const char* ver = g_clientVersion[cid];
-        const char* status = (currentVer && strcmp(ver, currentVer) == 0) ? "ok" : "veraltet";
-        const char* name = g_clientDisplayName[cid][0] ? g_clientDisplayName[cid] : NULL;
-        int lineLen;
-        if (name) {
-            lineLen = snprintf(line, remain, "  %s: %s (%s)\n", name, ver, status);
+        status = (currentVer && strcmp(slot->version, currentVer) == 0) ? "ok" : "veraltet";
+        if (slot->displayName[0]) {
+            lineLen = snprintf(line, remain, "  %s: %s (%s)\n",
+                slot->displayName, slot->version, status);
         }
         else {
-            lineLen = snprintf(line, remain, "  Client %u: %s (%s)\n", (unsigned)cid, ver, status);
+            lineLen = snprintf(line, remain, "  Client %u: %s (%s)\n",
+                (unsigned)cid, slot->version, status);
         }
         if (lineLen <= 0 || (size_t)lineLen >= remain) {
             break;
@@ -227,6 +296,7 @@ int ts3_version_format_info(anyID clientID, char* buf, size_t bufSize) {
         line += lineLen;
         remain -= (size_t)lineLen;
     }
+    LeaveCriticalSection(&g_lock);
 
     if (!anyListed) {
         snprintf(line, remain, "  (noch keine - kurz warten nach Connect)\n");
@@ -236,4 +306,14 @@ int ts3_version_format_info(anyID clientID, char* buf, size_t bufSize) {
     }
 
     return (int)strlen(buf);
+}
+
+int ts3_version_format_info(anyID clientID, char* buf, size_t bufSize) {
+    if (pluginShuttingDown || !buf || bufSize < 32) {
+        return 0;
+    }
+    if (clientID != 0) {
+        return version_format_one_client(clientID, buf, bufSize);
+    }
+    return version_format_server_list(buf, bufSize);
 }

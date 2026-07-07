@@ -7,6 +7,7 @@
 #include "core/proximity/player_table.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
+#include "core/util/poll_interval.h"
 
 #include <windows.h>
 #include <math.h>
@@ -15,7 +16,7 @@
 #include <string.h>
 
 #define CEPOS_CMD_PREFIX          "CEPOS:"
-#define CEPOS_SEND_MIN_MS         50
+#define CEPOS_SEND_MIN_MS         PLUGIN_POLL_INTERVAL_MS
 #define CEPOS_KEEPALIVE_MS        1000
 #define CEPOS_POS_EPS             0.08f
 #define CEPOS_VOICE_EPS           0.05f

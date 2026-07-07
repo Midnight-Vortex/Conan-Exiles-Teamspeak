@@ -21,7 +21,7 @@ static volatile long g_currentMode = VOICE_MODE_NORMAL;
    consumed on the callback thread. */
 static volatile long g_pendingNotify = 0;
 
-/* Hotkey state — pos watcher thread only. One trigger per press; re-arm on
+/* Hotkey state — pos watcher tick only. One trigger per press; re-arm on
    GetKeyState release because GetAsyncKeyState can stay stuck after the TS
    push-to-talk hook captures the key (old plugin lesson). */
 static char g_keyArmed[256];

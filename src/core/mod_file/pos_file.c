@@ -2,6 +2,7 @@
 #include "core/mod_file/path_detect.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
+#include "core/util/poll_interval.h"
 
 #include <windows.h>
 #include <process.h>
@@ -9,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define POS_POLL_INTERVAL_MS    30
 #define POS_STALE_MS            5000
 #define POS_LOG_THROTTLE_MS     30000
 #define POS_AUTODETECT_RETRY_MS 15000
@@ -23,9 +23,14 @@ static HANDLE g_watcherThread = NULL;
 static HANDLE g_stopEvent = NULL;
 static volatile long g_watcherRunning = 0;
 static void (*g_updateCallback)(void) = NULL;
+static void (*g_tickCallback)(void) = NULL;
 
 void pos_watcher_set_update_callback(void (*callback)(void)) {
     g_updateCallback = callback;
+}
+
+void pos_watcher_set_tick_callback(void (*callback)(void)) {
+    g_tickCallback = callback;
 }
 
 /* ---- 2.1 pure read function ------------------------------------------- */
@@ -213,7 +218,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
     log_write("POS: watcher started");
 
     for (;;) {
-        if (WaitForSingleObject(g_stopEvent, POS_POLL_INTERVAL_MS) != WAIT_TIMEOUT) {
+        if (WaitForSingleObject(g_stopEvent, PLUGIN_POLL_INTERVAL_MS) != WAIT_TIMEOUT) {
             break;
         }
 
@@ -279,6 +284,10 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 lastMissingLog = now;
                 log_debug("POS: Pos.txt missing at %ls", filePath);
             }
+        }
+
+        if (g_tickCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+            g_tickCallback();
         }
     }
 

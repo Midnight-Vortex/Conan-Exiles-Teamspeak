@@ -5,7 +5,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 void ts3plugin_freeMemory(void* data) {
     if (data) {
@@ -22,6 +21,10 @@ const char* ts3plugin_infoTitle(void) {
 }
 
 void ts3plugin_infoData(uint64 serverConnectionHandlerID, uint64 id, enum PluginItemType type, char** data) {
+    anyID clientID = 0;
+    size_t infoSize = 4096;
+    char* info;
+
     (void)serverConnectionHandlerID;
 
     if (!data) {
@@ -32,18 +35,17 @@ void ts3plugin_infoData(uint64 serverConnectionHandlerID, uint64 id, enum Plugin
         return;
     }
 
-    anyID clientID = 0;
-    size_t infoSize = 4096;
     if (type == PLUGIN_CLIENT && id != 0) {
         clientID = (anyID)id;
         infoSize = 512;
     }
 
-    char* info = (char*)malloc(infoSize);
+    info = (char*)malloc(infoSize);
     if (!info) {
         *data = NULL;
         return;
     }
+    info[0] = '\0';
 
     if (!ts3_version_format_info(clientID, info, infoSize)) {
         snprintf(info, infoSize, "Conan Exiles Proximity Voice %s", ts3plugin_version());

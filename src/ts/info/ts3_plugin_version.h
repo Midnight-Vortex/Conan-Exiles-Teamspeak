@@ -3,7 +3,13 @@
 
 /*
  * Plugin version exchange (CEVER:) and TeamSpeak info-panel text.
- * TS callback thread ONLY except ts3_version_reset (any thread on disconnect).
+ *
+ * Thread contract:
+ *  - ts3_version_broadcast / ts3_version_on_plugin_command / ts3_version_clear_client:
+ *    TS callback thread ONLY (TS API for sendPluginCommand).
+ *  - ts3_version_reset: any thread (disconnect cleanup).
+ *  - ts3_version_format_info: any thread (TS UI info panel); uses an internal
+ *    lock and never calls the TS API.
  */
 
 #include "sdk/include/teamspeak/public_definitions.h"

@@ -31,7 +31,7 @@ typedef struct CeposPacket {
 void cepos_signal_send_pending(void);
 
 /* Send own position if pending/keepalive and changed; on-change + 1 Hz
-   keepalive, min 50 ms between sends. TS callback thread ONLY. */
+   keepalive, min PLUGIN_POLL_INTERVAL_MS between sends. TS callback ONLY. */
 void cepos_flush(void);
 
 /* Handle an incoming plugin command. Returns 1 when it was a CEPOS command

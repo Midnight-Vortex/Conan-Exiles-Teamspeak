@@ -81,15 +81,18 @@ static void overlay_request_immediate_start(void) {
     overlay_schedule_start();
 }
 
-/* Pos watcher tick (watcher thread): poll voice hotkeys, queue own CEPOS
-   send and refresh the audio snapshots for all known speakers. No TS API
-   calls in here. */
+/* Pos watcher tick (watcher thread): queue own CEPOS send and refresh the
+   audio snapshots for all known speakers. No TS API calls in here. */
 static void ts3_on_local_position_update(void) {
     plugin_ui_on_position_tick();
-    /* Voice hotkeys are polled on the key-monitor thread (works without Pos.txt). */
     chan_signal_position_update();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
+}
+
+/* Pos watcher tick (every PLUGIN_POLL_INTERVAL_MS): voice hotkeys. */
+static void ts3_on_watcher_tick(void) {
+    voice_mode_hotkey_poll();
 }
 
 #define PLUGIN_API_VERSION 26
@@ -203,6 +206,7 @@ int ts3plugin_init(void) {
     plugin_ui_init();
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
+    pos_watcher_set_tick_callback(ts3_on_watcher_tick);
     pos_watcher_start();
     overlay_schedule_start();
     if (log_is_enabled()) {
