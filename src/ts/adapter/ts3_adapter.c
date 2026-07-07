@@ -457,7 +457,9 @@ void ts3_print_to_chat(const char* message) {
     if (!message || !g_ts3FunctionsSet || !g_ts3.printMessageToCurrentTab) {
         return;
     }
-    g_ts3.printMessageToCurrentTab(message);
+    char formatted[640];
+    snprintf(formatted, sizeof(formatted), "[color=green]%s[/color]", message);
+    g_ts3.printMessageToCurrentTab(formatted);
 }
 
 void ts3_log_client(const char* message) {

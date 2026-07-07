@@ -128,12 +128,7 @@ void displayInChat(const char* message) {
         return;
     }
 #ifdef CONAN_EXILES_TS_EXPORTS
-    if (ts3_adapter_is_connected()) {
-        ts3_adapter_print_chat(message);
-        return;
-    }
-    ts3_queue_chat_message(message);
-    ts3_adapter_request_chat_wakeup();
+    ts3_adapter_print_chat(message);
 #else
     mumbleAPI.log(ownID, message);
 #endif

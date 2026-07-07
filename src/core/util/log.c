@@ -41,6 +41,13 @@ static int log_resolve_path(void) {
     return 1;
 }
 
+const wchar_t* log_get_path(void) {
+    if (!log_resolve_path()) {
+        return NULL;
+    }
+    return g_logPath;
+}
+
 static void log_write_line(const char* prefix, const char* fmt, va_list args) {
     if (!log_resolve_path()) {
         return;
@@ -49,17 +56,41 @@ static void log_write_line(const char* prefix, const char* fmt, va_list args) {
     InitOnceExecuteOnce(&g_logLockInit, log_lock_init_once, NULL, NULL);
     EnterCriticalSection(&g_logLock);
 
-    /* Open per write: nothing is lost in a buffer if the client crashes. */
-    FILE* f = _wfopen(g_logPath, L"a");
-    if (f) {
-        SYSTEMTIME st;
-        GetLocalTime(&st);
-        fprintf(f, "%04u-%02u-%02u %02u:%02u:%02u.%03u %s",
-            st.wYear, st.wMonth, st.wDay,
-            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, prefix);
-        vfprintf(f, fmt, args);
-        fputc('\n', f);
-        fclose(f);
+    char body[2048];
+    va_list argsCopy;
+    va_copy(argsCopy, args);
+    const int bodyLen = vsnprintf(body, sizeof(body), fmt, argsCopy);
+    va_end(argsCopy);
+    if (bodyLen < 0) {
+        LeaveCriticalSection(&g_logLock);
+        return;
+    }
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char line[2300];
+    const int lineLen = snprintf(line, sizeof(line),
+        "%04u-%02u-%02u %02u:%02u:%02u.%03u %s%s\r\n",
+        st.wYear, st.wMonth, st.wDay,
+        st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        prefix ? prefix : "", body);
+    if (lineLen <= 0 || lineLen >= (int)sizeof(line)) {
+        LeaveCriticalSection(&g_logLock);
+        return;
+    }
+
+    /* FILE_SHARE_* so writes succeed while the user has plugin.log open in an editor. */
+    HANDLE h = CreateFileW(g_logPath,
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        WriteFile(h, line, (DWORD)lineLen, &written, NULL);
+        CloseHandle(h);
     }
 
     LeaveCriticalSection(&g_logLock);

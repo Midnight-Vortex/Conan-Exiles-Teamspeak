@@ -724,11 +724,26 @@ int ts3_adapter_is_connected(void) {
 }
 
 void ts3_adapter_print_chat(const char* message) {
-    (void)message;
+    if (!message) {
+        return;
+    }
+    if (ts3_thread_is_callback()) {
+        if (ts3_is_connected()) {
+            ts3_print_to_chat(message);
+        }
+        return;
+    }
+    ts3_queue_chat_message(message);
+    if (ts3_is_connected()) {
+        ts3_request_wakeup();
+    }
 }
 
 void ts3_adapter_print_chat_force(const char* message) {
-    (void)message;
+    if (!message || !ts3_is_connected()) {
+        return;
+    }
+    ts3_print_to_chat(message);
 }
 
 void ts3_adapter_request_chat_wakeup(void) {

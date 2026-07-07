@@ -204,6 +204,16 @@ int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
     config_load();
+    {
+        const wchar_t* logPath = log_get_path();
+        if (logPath) {
+            char pathUtf8[MAX_PATH * 3];
+            const int n = WideCharToMultiByte(CP_UTF8, 0, logPath, -1, pathUtf8, (int)sizeof(pathUtf8), NULL, NULL);
+            if (n > 0) {
+                log_write("BOOT: log file: %s", pathUtf8);
+            }
+        }
+    }
     plugin_ui_init();
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
@@ -319,6 +329,9 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         overlay_request_immediate_start();
         ts3_sync_overlay_channel_state(0);
         ts3_version_broadcast();
+        if (ts3_plugin_has_pending_chat()) {
+            ts3_plugin_flush_pending_chat();
+        }
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));

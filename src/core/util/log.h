@@ -1,6 +1,8 @@
 #ifndef CORE_UTIL_LOG_H
 #define CORE_UTIL_LOG_H
 
+#include <wchar.h>
+
 /*
  * Plugin log file — Documents\Conan Exiles TeamSpeak plugin\plugin.log
  *
@@ -14,6 +16,7 @@
 
 void log_set_enabled(int enabled);
 int log_is_enabled(void);
+const wchar_t* log_get_path(void);
 void log_write(const char* fmt, ...);
 void log_debug(const char* fmt, ...);
 void log_close(void);
