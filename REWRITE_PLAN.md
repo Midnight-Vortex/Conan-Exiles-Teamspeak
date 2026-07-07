@@ -352,3 +352,9 @@ Für JEDE Funktion aus dem Plan:
 - [ ] GitHub-Fork vom Kumpel anlegen und `E:\programme\Conan-Exiles-Teamspeak` als Remote verbinden (zentrale Entwicklung, sein Vorschlag)
 - [ ] Versionsnummer: Vorschlag `7.0.0-dev` während des Rewrites
 - [ ] Mischbetrieb alt/neu auf dem Server: CEPOS bleibt kompatibel (Phase 4), trotzdem Umstiegstermin planen
+
+---
+
+## Skalierung 200+ Spieler (Phasen 1–5)
+
+Siehe **`plan.md`** — Review nach Skalierungs-Phasen 1–3, Crash-Einschätzung, offene Performance-Risiken und empfohlene Phase 4/5 Arbeiten.
