@@ -278,7 +278,9 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     snap_publish(clientID, gain, panL, panR, cutoffHz, soundproof, reverbSlot, 1);
 
     if (gain > TS3_AUDIBLE_GAIN) {
-        ts3_audio_signal_unmute(clientID);
+        /* Flag only — caller may hold g_writerLock; ts3_request_wakeup is
+           deferred to recompute_* after the lock is released. */
+        audio_signal_unmute_flag_only(clientID);
     }
 }
 
@@ -308,6 +310,10 @@ void ts3_audio_recompute_client(anyID clientID) {
     audio_compute_and_publish(clientID, &local, localValid,
         hubActive ? &hub : NULL, localZone);
     LeaveCriticalSection(&g_writerLock);
+
+    if (InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0) {
+        ts3_request_wakeup();
+    }
 }
 
 void ts3_audio_recompute_all(void) {
@@ -331,6 +337,10 @@ void ts3_audio_recompute_all(void) {
         }
     }
     LeaveCriticalSection(&g_writerLock);
+
+    if (InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0) {
+        ts3_request_wakeup();
+    }
 }
 
 /* ---- 10.3 lowpass (audio thread, no locks, no allocations) ------------------- */

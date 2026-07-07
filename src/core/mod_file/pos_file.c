@@ -190,7 +190,11 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
 
     log_write("POS: watcher started");
 
-    while (WaitForSingleObject(g_stopEvent, POS_POLL_INTERVAL_MS) == WAIT_TIMEOUT) {
+    for (;;) {
+        if (WaitForSingleObject(g_stopEvent, POS_POLL_INTERVAL_MS) != WAIT_TIMEOUT) {
+            break;
+        }
+
         pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
 
         const ULONGLONG now = GetTickCount64();
@@ -229,7 +233,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 lastSeq = sample.seq;
             }
 
-            if (g_updateCallback) {
+            if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
                 g_updateCallback();
             }
         }
@@ -239,7 +243,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                     age == MAXULONGLONG ? "missing" : "stale",
                     age == MAXULONGLONG ? 0ULL : (unsigned long long)age);
                 InterlockedExchange(&g_coordinatesValid, 0);
-                if (g_updateCallback) {
+                if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
                     g_updateCallback(); /* one shot on the valid->invalid edge */
                 }
             }
@@ -291,13 +295,9 @@ void pos_watcher_stop(void) {
     }
 
     SetEvent(g_stopEvent);
-    if (WaitForSingleObject(g_watcherThread, 5000) != WAIT_OBJECT_0) {
-        /* The watcher may be inside a slow callback or file I/O — do NOT
-           delete g_posLock while the thread still runs (use-after-free). */
-        log_write("POS: watcher thread stuck - terminating");
-#pragma warning(suppress: 6258)
-        TerminateThread(g_watcherThread, 1);
-        WaitForSingleObject(g_watcherThread, 1000);
+    if (WaitForSingleObject(g_watcherThread, 10000) != WAIT_OBJECT_0) {
+        log_write("POS: watcher thread slow to exit - waiting");
+        WaitForSingleObject(g_watcherThread, INFINITE);
     }
     CloseHandle(g_watcherThread);
     g_watcherThread = NULL;
