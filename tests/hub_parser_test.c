@@ -133,7 +133,8 @@ static void test_zone_audio_rules(void) {
     HubSettings s;
     hub_parse_settings(real_description, &s);
 
-    CHECK(zone_soundproof_muted(&s, -1, 0) == 1, "soundproof: listener outside, speaker inside");
+    CHECK(zone_soundproof_muted(&s, -1, 0) == 1, "soundproof: outside cannot hear inside");
+    CHECK(zone_soundproof_muted(&s, 0, -1) == 0, "soundproof: inside can hear outside");
     CHECK(zone_soundproof_muted(&s, 0, 0) == 0, "soundproof: same zone");
     CHECK(zone_reverb_active(&s, -1, 0) == 1, "reverb: remote zone active");
     CHECK(zone_reverb_active(&s, 0, -1) == 1, "reverb: local zone active");

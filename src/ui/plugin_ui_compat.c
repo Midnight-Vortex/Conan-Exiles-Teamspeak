@@ -577,12 +577,11 @@ float plugin_clamp_remote_voice_distance(float voiceDistanceMeters) {
 }
 
 int ts3_plugin_is_soundproof_muted(int localZone, int remoteZone) {
-    if (remoteZone >= 0 && (size_t)remoteZone < zoneCount && zones[remoteZone].isSoundproof) {
-        if (localZone != remoteZone) {
-            return 1;
-        }
+    HubSettings hub;
+    if (!server_profile_get(&hub)) {
+        return 0;
     }
-    return 0;
+    return zone_soundproof_muted(&hub, localZone, remoteZone);
 }
 
 int ts3_plugin_is_soundproof_muted_at(float rx, float ry, float rz) {

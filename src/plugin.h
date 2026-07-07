@@ -404,7 +404,8 @@ extern float defaultDistanceShout;
 
 /* Zone system: 3D quadrilateral from Root [ZONES] block (shared with proximity path).
    Horizontal footprint uses X1..X4 and Z1..Z4; GroundY/TopY are vertical bounds.
-   SoundProof=True: see ts3_plugin_is_soundproof_muted() (one-way in TS build). */
+   SoundProof=True: one-way — outsiders cannot hear speakers inside the zone;
+   listeners inside can still hear speakers outside (see zone_soundproof_muted). */
 #define MAX_ZONES 32
 typedef struct {
     char name[64];

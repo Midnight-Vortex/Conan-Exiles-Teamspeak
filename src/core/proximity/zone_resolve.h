@@ -17,9 +17,11 @@
 /* Zone index containing the point (world meters), or -1. */
 int zone_resolve(const HubSettings* settings, float x, float y, float z);
 
-/* 10.2 one-way soundproof rule (matches the old TS build): a speaker inside
-   a soundproof zone is muted for every listener outside that zone. Same
-   zone = normal proximity. Returns 1 = hard mute. */
+/* 10.2 one-way soundproof (TeamSpeak build):
+   - Speaker INSIDE a SoundProof zone, listener OUTSIDE → muted (outside cannot hear in).
+   - Speaker OUTSIDE, listener INSIDE that zone → NOT muted (inside can hear out).
+   - Both in the same zone → normal proximity.
+   localZone = listener, remoteZone = speaker. Returns 1 = hard mute. */
 int zone_soundproof_muted(const HubSettings* settings, int localZone, int remoteZone);
 
 /* 1 when listener or speaker is inside a Reverb=true zone. */
