@@ -5,15 +5,17 @@
 
 /* Private lock — copy in/out only, no calls into other modules while held. */
 static CRITICAL_SECTION g_tableLock;
-static volatile long g_tableLockReady = 0;
+static INIT_ONCE g_tableLockOnce = INIT_ONCE_STATIC_INIT;
 static PlayerEntry g_players[PLAYER_TABLE_MAX_PLAYERS];
 
-static void table_lock_ensure(void) {
-    if (InterlockedCompareExchange(&g_tableLockReady, 0, 0)) {
-        return;
-    }
+static BOOL CALLBACK table_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_tableLock);
-    InterlockedExchange(&g_tableLockReady, 1);
+    return TRUE;
+}
+
+static void table_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_tableLockOnce, table_lock_init_once, NULL, NULL);
 }
 
 static int entry_is_fresh(const PlayerEntry* e, unsigned long long now) {

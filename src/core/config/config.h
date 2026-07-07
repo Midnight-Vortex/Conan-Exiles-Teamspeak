@@ -46,8 +46,18 @@ typedef struct PluginConfig {
     int debugMode;
 } PluginConfig;
 
-/* Global config instance — written on callback thread only. */
+/* Global config instance — written on the callback thread only (via
+   config_load / config_apply). Other threads may read SCALAR fields
+   directly (4-byte aligned loads are atomic on x86/x64); anyone reading
+   the STRING fields (savedPath/automaticSavedPath) must use config_copy
+   to avoid torn strings while the settings dialog applies changes. */
 extern PluginConfig g_config;
+
+/* Replace g_config under the internal lock. TS callback thread. */
+void config_apply(const PluginConfig* src);
+
+/* Consistent snapshot of g_config (for string fields). Any thread. */
+void config_copy(PluginConfig* out);
 
 /* Documents\Conan Exiles TeamSpeak plugin (created if missing). NULL on failure. */
 const wchar_t* config_get_folder_path(void);

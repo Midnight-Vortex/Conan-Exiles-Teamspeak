@@ -389,8 +389,23 @@ void overlay_stop(void) {
         PostThreadMessageW(g_uiThreadId, WM_QUIT, 0, 0);
     }
 
+    /* The DLL must NOT unload while this thread still runs (instant crash).
+       Escalate: WM_CLOSE -> direct WM_QUIT -> forced termination. */
     if (WaitForSingleObject(g_uiThread, 2000) != WAIT_OBJECT_0) {
-        log_write("OVERLAY: UI thread did not exit in time");
+        log_write("OVERLAY: UI thread ignored WM_CLOSE - posting WM_QUIT");
+        if (g_uiThreadId != 0) {
+            PostThreadMessageW(g_uiThreadId, WM_QUIT, 0, 0);
+        }
+        if (WaitForSingleObject(g_uiThread, 5000) != WAIT_OBJECT_0) {
+            /* Last resort: a leaked lock is better than executing unloaded
+               code. The thread only touches UI objects at this point. */
+            log_write("OVERLAY: UI thread stuck - terminating");
+#pragma warning(suppress: 6258) /* deliberate TerminateThread as final fallback */
+            TerminateThread(g_uiThread, 1);
+            WaitForSingleObject(g_uiThread, 1000);
+            g_hwnd = NULL;
+            g_uiThreadId = 0;
+        }
     }
     CloseHandle(g_uiThread);
     g_uiThread = NULL;

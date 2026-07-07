@@ -8,6 +8,40 @@
 
 PluginConfig g_config;
 
+/* Guards whole-struct writes vs. snapshot reads (string fields). */
+static CRITICAL_SECTION g_cfgLock;
+static INIT_ONCE g_cfgLockOnce = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK cfg_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
+    InitializeCriticalSection(&g_cfgLock);
+    return TRUE;
+}
+
+static void cfg_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_cfgLockOnce, cfg_lock_init_once, NULL, NULL);
+}
+
+void config_apply(const PluginConfig* src) {
+    if (!src) {
+        return;
+    }
+    cfg_lock_ensure();
+    EnterCriticalSection(&g_cfgLock);
+    g_config = *src;
+    LeaveCriticalSection(&g_cfgLock);
+}
+
+void config_copy(PluginConfig* out) {
+    if (!out) {
+        return;
+    }
+    cfg_lock_ensure();
+    EnterCriticalSection(&g_cfgLock);
+    *out = g_config;
+    LeaveCriticalSection(&g_cfgLock);
+}
+
 const wchar_t* config_get_folder_path(void) {
     static wchar_t s_configPath[CONFIG_MAX_PATH];
     static volatile long s_ready = 0;
@@ -168,10 +202,12 @@ void config_clamp(PluginConfig* cfg) {
 }
 
 int config_load(void) {
-    config_set_defaults(&g_config);
+    PluginConfig cfg;
+    config_set_defaults(&cfg);
 
     wchar_t path[CONFIG_MAX_PATH];
     if (!config_file_path(path, CONFIG_MAX_PATH)) {
+        config_apply(&cfg);
         log_write("CONFIG: config folder unavailable");
         return 0;
     }
@@ -179,17 +215,19 @@ int config_load(void) {
     FILE* f = _wfopen(path, L"r");
     if (!f) {
         /* First run — persist defaults so the user has a file to edit. */
+        config_apply(&cfg);
         log_write("CONFIG: plugin.cfg missing, creating defaults");
         return config_save();
     }
 
     wchar_t line[1024];
     while (fgetws(line, 1024, f)) {
-        config_apply_line(&g_config, line);
+        config_apply_line(&cfg, line);
     }
     fclose(f);
 
-    config_clamp(&g_config);
+    config_clamp(&cfg);
+    config_apply(&cfg);
     log_set_enabled(g_config.debugMode);
     log_write("CONFIG: loaded (whisper=%.1f normal=%.1f shout=%.1f debug=%d)",
         g_config.distanceWhisper, g_config.distanceNormal, g_config.distanceShout,

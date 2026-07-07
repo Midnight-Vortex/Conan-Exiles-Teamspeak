@@ -46,16 +46,18 @@ static ULONGLONG g_cfgKeySuppressUntil = 0;
 
 /* Staging config published by "Speichern", consumed on the callback thread. */
 static CRITICAL_SECTION g_pendingLock;
-static volatile long g_pendingLockReady = 0;
+static INIT_ONCE g_pendingLockOnce = INIT_ONCE_STATIC_INIT;
 static volatile long g_pendingValid = 0;
 static PluginConfig g_pending;
 
-static void pending_lock_ensure(void) {
-    if (InterlockedCompareExchange(&g_pendingLockReady, 0, 0)) {
-        return;
-    }
+static BOOL CALLBACK pending_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_pendingLock);
-    InterlockedExchange(&g_pendingLockReady, 1);
+    return TRUE;
+}
+
+static void pending_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_pendingLockOnce, pending_lock_init_once, NULL, NULL);
 }
 
 /* ---- helpers (UI thread) ------------------------------------------------------ */
@@ -374,11 +376,16 @@ void ui_settings_flush_apply(void) {
         return;
     }
 
+    PluginConfig staged;
     pending_lock_ensure();
     EnterCriticalSection(&g_pendingLock);
-    g_config = g_pending;
+    staged = g_pending;
     LeaveCriticalSection(&g_pendingLock);
     InterlockedExchange(&g_pendingValid, 0);
+
+    /* Publish under the config lock so concurrent string readers
+       (pos watcher path resolution) never see a torn g_config. */
+    config_apply(&staged);
 
     config_save();
     log_set_enabled(g_config.debugMode);

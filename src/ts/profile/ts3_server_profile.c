@@ -19,19 +19,21 @@ static ULONGLONG g_lastRequestMs = 0;
 
 /* Active profile — written on the callback thread, read from any thread. */
 static CRITICAL_SECTION g_profileLock;
-static volatile long g_profileLockReady = 0;
+static INIT_ONCE g_profileLockOnce = INIT_ONCE_STATIC_INIT;
 static HubSettings g_active;
 static volatile long g_profileActive = 0;
 
 /* Callback thread only (password consumer runs there too). */
 static char g_ingamePassword[HUB_PASSWORD_LEN] = "";
 
-static void profile_lock_ensure(void) {
-    if (InterlockedCompareExchange(&g_profileLockReady, 0, 0)) {
-        return;
-    }
+static BOOL CALLBACK profile_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_profileLock);
-    InterlockedExchange(&g_profileLockReady, 1);
+    return TRUE;
+}
+
+static void profile_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_profileLockOnce, profile_lock_init_once, NULL, NULL);
 }
 
 /* ---- 9.3 apply ---------------------------------------------------------- */
@@ -44,8 +46,8 @@ void server_profile_apply(const HubSettings* settings) {
 
     EnterCriticalSection(&g_profileLock);
     g_active = *settings;
-    LeaveCriticalSection(&g_profileLock);
     InterlockedExchange(&g_profileActive, 1);
+    LeaveCriticalSection(&g_profileLock);
 
     strncpy_s(g_ingamePassword, sizeof(g_ingamePassword),
         settings->ingameChannelPassword, _TRUNCATE);
@@ -70,42 +72,44 @@ void server_profile_apply(const HubSettings* settings) {
 
 /* ---- getters -------------------------------------------------------------- */
 
+/* The active flag is re-checked INSIDE the lock — a concurrent
+   server_profile_reset between check and copy must not leak a stale
+   profile to the caller. */
 int server_profile_get(HubSettings* out) {
     if (!out) {
         return 0;
     }
-    if (!InterlockedCompareExchange(&g_profileActive, 0, 0)) {
+    int active = 0;
+    if (InterlockedCompareExchange(&g_profileActive, 0, 0)) {
+        profile_lock_ensure();
+        EnterCriticalSection(&g_profileLock);
+        active = InterlockedCompareExchange(&g_profileActive, 0, 0) != 0;
+        if (active) {
+            *out = g_active;
+        }
+        LeaveCriticalSection(&g_profileLock);
+    }
+    if (!active) {
         memset(out, 0, sizeof(*out));
         out->audioMaxVolume = 1.0f;
-        return 0;
     }
-    profile_lock_ensure();
-    EnterCriticalSection(&g_profileLock);
-    *out = g_active;
-    LeaveCriticalSection(&g_profileLock);
-    return 1;
+    return active;
 }
 
 float server_profile_get_max_volume(void) {
-    if (!InterlockedCompareExchange(&g_profileActive, 0, 0)) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
         return 1.0f;
     }
-    profile_lock_ensure();
-    EnterCriticalSection(&g_profileLock);
-    const float v = g_active.audioMaxVolume;
-    LeaveCriticalSection(&g_profileLock);
-    return v;
+    return settings.audioMaxVolume;
 }
 
 int server_profile_force_auto_channel(void) {
-    if (!InterlockedCompareExchange(&g_profileActive, 0, 0)) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
         return 0;
     }
-    profile_lock_ensure();
-    EnterCriticalSection(&g_profileLock);
-    const int f = g_active.forceAutoChannelSwitch;
-    LeaveCriticalSection(&g_profileLock);
-    return f;
+    return settings.forceAutoChannelSwitch;
 }
 
 const char* server_profile_get_ingame_password(void) {
@@ -206,5 +210,10 @@ void server_profile_reset(void) {
     g_requestSentMs = 0;
     g_lastRequestMs = 0;
     g_ingamePassword[0] = '\0';
+    /* Clear flag under the lock so a concurrent server_profile_get can
+       never copy the profile after it was invalidated. */
+    profile_lock_ensure();
+    EnterCriticalSection(&g_profileLock);
     InterlockedExchange(&g_profileActive, 0);
+    LeaveCriticalSection(&g_profileLock);
 }

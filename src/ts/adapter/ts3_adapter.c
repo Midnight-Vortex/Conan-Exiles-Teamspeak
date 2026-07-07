@@ -121,20 +121,21 @@ anyID ts3_get_local_client_id(void) {
    one command in push/pop — commands are executed OUTSIDE the lock, so the
    TS API is never called while this lock is held. */
 static CRITICAL_SECTION g_cmdLock;
-static volatile long g_cmdLockReady = 0;
+static INIT_ONCE g_cmdLockOnce = INIT_ONCE_STATIC_INIT;
 static Ts3Command g_cmdQueue[TS3_CMD_QUEUE_SIZE];
 static int g_cmdHead = 0; /* next pop  */
 static int g_cmdTail = 0; /* next push */
 static int g_cmdCount = 0;
 static volatile long g_cmdDropped = 0;
 
-static void ts3_cmd_lock_ensure(void) {
-    if (InterlockedCompareExchange(&g_cmdLockReady, 0, 0)) {
-        return;
-    }
-    /* Init happens on plugin load (single-threaded) before any producer runs. */
+static BOOL CALLBACK ts3_cmd_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_cmdLock);
-    InterlockedExchange(&g_cmdLockReady, 1);
+    return TRUE;
+}
+
+static void ts3_cmd_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_cmdLockOnce, ts3_cmd_lock_init_once, NULL, NULL);
 }
 
 int ts3_cmd_queue_push(const Ts3Command* cmd) {

@@ -36,7 +36,7 @@ static AudioSnap g_snap[TS3_AUDIO_MAX_CLIENT];
 
 /* Writer-side lock (callback thread + pos watcher). Audio thread never takes it. */
 static CRITICAL_SECTION g_writerLock;
-static volatile long g_writerLockReady = 0;
+static INIT_ONCE g_writerLockOnce = INIT_ONCE_STATIC_INIT;
 
 /* Render gain per client — audio thread private (ramping state). */
 static float g_renderGain[TS3_AUDIO_MAX_CLIENT];
@@ -66,12 +66,14 @@ Ts3AudioMode ts3_audio_get_mode(void) {
     return (Ts3AudioMode)InterlockedCompareExchange(&g_audioMode, 0, 0);
 }
 
-static void writer_lock_ensure(void) {
-    if (InterlockedCompareExchange(&g_writerLockReady, 0, 0)) {
-        return;
-    }
+static BOOL CALLBACK writer_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_writerLock);
-    InterlockedExchange(&g_writerLockReady, 1);
+    return TRUE;
+}
+
+static void writer_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_writerLockOnce, writer_lock_init_once, NULL, NULL);
 }
 
 static void snap_publish(anyID clientID, float gain, float panL, float panR,

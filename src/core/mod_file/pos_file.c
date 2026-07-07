@@ -134,14 +134,19 @@ static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
 
 /* ---- watcher thread ----------------------------------------------------- */
 
-/* Pos.txt path from config: automatic path when enabled and set, else manual. */
+/* Pos.txt path from config: automatic path when enabled and set, else manual.
+   Uses config_copy — the settings dialog may rewrite the path strings while
+   this thread reads them. */
 static void pos_resolve_file_path(wchar_t* out, size_t outLen) {
+    PluginConfig cfg;
+    config_copy(&cfg);
+
     const wchar_t* base = NULL;
-    if (g_config.automaticPatchFind && g_config.automaticSavedPath[0]) {
-        base = g_config.automaticSavedPath;
+    if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+        base = cfg.automaticSavedPath;
     }
-    else if (g_config.savedPath[0]) {
-        base = g_config.savedPath;
+    else if (cfg.savedPath[0]) {
+        base = cfg.savedPath;
     }
 
     if (base) {
