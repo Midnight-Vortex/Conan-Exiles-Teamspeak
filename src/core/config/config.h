@@ -44,6 +44,11 @@ typedef struct PluginConfig {
 
     /* Debug logging (log_debug on/off). */
     int debugMode;
+
+    /* Server whose [DEFAULT_SETTINGS] were already applied (virtual server
+       unique identifier). Defaults are applied ONCE per server; afterwards
+       the user's own key/distance changes are never overridden again. */
+    char defaultsAppliedServer[128];
 } PluginConfig;
 
 /* Global config instance — written on the callback thread only (via

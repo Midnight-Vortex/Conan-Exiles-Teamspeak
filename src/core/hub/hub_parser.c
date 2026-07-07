@@ -117,6 +117,109 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
 }
 
+/* ---- [RACE] section -------------------------------------------------------- */
+
+/* "SteamID=(name)7656..., (name2)7656..." — the "(name)" prefix is optional
+   and ignored; IDs are comma-separated SteamID64 values. */
+static void hub_parse_race_steamids(const char* list, HubRace* race) {
+    const char* p = list;
+    while (*p && race->steamIDCount < HUB_MAX_STEAMIDS_PER_RACE) {
+        while (*p == ' ' || *p == '\t' || *p == ',') {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+        if (*p == '(') {
+            const char* close = strchr(p, ')');
+            if (!close) {
+                break; /* malformed "(name" without ')' — stop safely */
+            }
+            p = close + 1;
+            while (*p == ' ' || *p == '\t') {
+                p++;
+            }
+        }
+        char* end = NULL;
+        const unsigned long long id = strtoull(p, &end, 10);
+        if (end == p) {
+            p++; /* no digits here — skip one char, never loop forever */
+            continue;
+        }
+        if (id > 0ULL) {
+            race->steamIDs[race->steamIDCount++] = id;
+        }
+        p = end;
+    }
+}
+
+static void hub_parse_race_line(const char* line, HubRace* race) {
+    const char* v;
+
+    if ((v = hub_value_for(line, "SteamID")) != NULL) {
+        hub_parse_race_steamids(v, race);
+    }
+    else if ((v = hub_value_for(line, "MinimumWhisper")) != NULL
+        || (v = hub_value_for(line, "MinimumWisper")) != NULL) {
+        race->minWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "MaximumWhisper")) != NULL
+        || (v = hub_value_for(line, "MaximumWisper")) != NULL) {
+        race->maxWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "MinimumNormal")) != NULL) {
+        race->minNormal = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "MaximumNormal")) != NULL) {
+        race->maxNormal = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "MinimumShout")) != NULL) {
+        race->minShout = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "MaximumShout")) != NULL) {
+        race->maxShout = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "listenAddDistance")) != NULL) {
+        race->listenAddDistance = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+}
+
+/* ---- [DEFAULT_SETTINGS] section --------------------------------------------- */
+
+static int hub_parse_key(const char* value) {
+    const int key = atoi(value);
+    return (key > 0 && key < 256) ? key : 0;
+}
+
+static void hub_parse_defaults_line(const char* line, HubDefaults* def) {
+    const char* v;
+
+    if ((v = hub_value_for(line, "EnableDefaultSettingsOnFirstConnection")) != NULL) {
+        def->enabled = hub_parse_bool(v);
+    }
+    else if ((v = hub_value_for(line, "DefaultWhisperKey")) != NULL) {
+        def->whisperKey = hub_parse_key(v);
+    }
+    else if ((v = hub_value_for(line, "DefaultNormalKey")) != NULL) {
+        def->normalKey = hub_parse_key(v);
+    }
+    else if ((v = hub_value_for(line, "DefaultShoutKey")) != NULL) {
+        def->shoutKey = hub_parse_key(v);
+    }
+    else if ((v = hub_value_for(line, "DefaultVoiceToggleKey")) != NULL) {
+        def->voiceToggleKey = hub_parse_key(v);
+    }
+    else if ((v = hub_value_for(line, "DefaultDistanceWhisper")) != NULL) {
+        def->distanceWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "DefaultDistanceNormal")) != NULL) {
+        def->distanceNormal = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+    else if ((v = hub_value_for(line, "DefaultDistanceShout")) != NULL) {
+        def->distanceShout = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    }
+}
+
 /* ---- [ZONES] section ------------------------------------------------------ */
 
 /* Zone header: "[ZoneName=X]", "[Zone=X]", "ZoneName=X" or "Zone=X".
@@ -182,8 +285,9 @@ int hub_parse_settings(const char* description, HubSettings* out) {
     char buf[HUB_DESC_MAX];
     hub_normalize_html(description, buf, sizeof(buf));
 
-    enum { SEC_NONE, SEC_GLOBAL, SEC_ZONES, SEC_OTHER } section = SEC_NONE;
+    enum { SEC_NONE, SEC_GLOBAL, SEC_ZONES, SEC_RACE, SEC_DEFAULTS, SEC_OTHER } section = SEC_NONE;
     HubZone* zone = NULL;
+    HubRace* race = NULL;
 
     char* context = NULL;
     for (char* raw = strtok_s(buf, delims, &context); raw != NULL;
@@ -208,9 +312,17 @@ int hub_parse_settings(const char* description, HubSettings* out) {
                 section = SEC_ZONES;
                 zone = NULL;
             }
+            else if (_strnicmp(line, "[RACE]", 6) == 0) {
+                section = SEC_RACE;
+                race = NULL;
+            }
+            else if (_strnicmp(line, "[DEFAULT_SETTINGS]", 18) == 0) {
+                section = SEC_DEFAULTS;
+            }
             else {
                 section = SEC_OTHER;
                 zone = NULL;
+                race = NULL;
             }
             continue;
         }
@@ -238,6 +350,33 @@ int hub_parse_settings(const char* description, HubSettings* out) {
             else if (zone) {
                 hub_parse_zone_line(line, zone);
             }
+        }
+        else if (section == SEC_RACE) {
+            const char* raceName = hub_value_for(line, "Race");
+            /* "Race=Name" starts a new race entry; every other line belongs
+               to the current one. */
+            if (raceName && _strnicmp(line, "Race", 4) == 0 && line[4] == '=') {
+                if (out->raceCount >= HUB_MAX_RACES) {
+                    race = NULL;
+                    continue;
+                }
+                race = &out->races[out->raceCount++];
+                memset(race, 0, sizeof(*race));
+                strncpy_s(race->name, sizeof(race->name), raceName, _TRUNCATE);
+                /* Race limits default to the global hub limits. */
+                race->minWhisper = out->minWhisper;
+                race->maxWhisper = out->maxWhisper;
+                race->minNormal = out->minNormal;
+                race->maxNormal = out->maxNormal;
+                race->minShout = out->minShout;
+                race->maxShout = out->maxShout;
+            }
+            else if (race) {
+                hub_parse_race_line(line, race);
+            }
+        }
+        else if (section == SEC_DEFAULTS) {
+            hub_parse_defaults_line(line, &out->defaults);
         }
     }
 

@@ -397,6 +397,55 @@ void plugin_ui_sync_live_state(void) {
         else {
             currentZoneIndex = -1;
         }
+
+        /* Races for the F10 dialog / HUD. The local player's race replaces
+           the hub limits (same behavior as the old plugin). */
+        steamID = server_profile_get_local_steam_id();
+        raceCount = (size_t)hub.raceCount;
+        if (raceCount > MAX_RACES) {
+            raceCount = MAX_RACES;
+        }
+        currentPlayerRaceIndex = -1;
+        for (size_t i = 0; i < raceCount; i++) {
+            const HubRace* src = &hub.races[i];
+            Race* dst = &races[i];
+            memset(dst, 0, sizeof(*dst));
+            snprintf(dst->name, sizeof(dst->name), "%s", src->name);
+            dst->steamIDCount = (size_t)src->steamIDCount;
+            if (dst->steamIDCount > MAX_STEAMIDS_PER_RACE) {
+                dst->steamIDCount = MAX_STEAMIDS_PER_RACE;
+            }
+            for (size_t j = 0; j < dst->steamIDCount; j++) {
+                dst->steamIDs[j] = src->steamIDs[j];
+            }
+            dst->minimumWhisper = src->minWhisper;
+            dst->maximumWhisper = src->maxWhisper;
+            dst->minimumNormal = src->minNormal;
+            dst->maximumNormal = src->maxNormal;
+            dst->minimumShout = src->minShout;
+            dst->maximumShout = src->maxShout;
+            dst->listenAddDistance = src->listenAddDistance;
+            dst->isActive = TRUE;
+        }
+        HubRace localRace;
+        if (server_profile_get_local_race(&localRace)) {
+            for (size_t i = 0; i < raceCount; i++) {
+                if (strcmp(races[i].name, localRace.name) == 0) {
+                    currentPlayerRaceIndex = (int)i;
+                    break;
+                }
+            }
+            currentListenAddDistance = localRace.listenAddDistance;
+            hubMinimumWhisper = localRace.minWhisper;
+            hubMaximumWhisper = localRace.maxWhisper;
+            hubMinimumNormal = localRace.minNormal;
+            hubMaximumNormal = localRace.maxNormal;
+            hubMinimumShout = localRace.minShout;
+            hubMaximumShout = localRace.maxShout;
+        }
+        else {
+            currentListenAddDistance = 0.0f;
+        }
     }
     else {
         hubDescriptionAvailable = FALSE;
@@ -404,6 +453,9 @@ void plugin_ui_sync_live_state(void) {
         rootChannelID = -1;
         zoneCount = 0;
         currentZoneIndex = -1;
+        raceCount = 0;
+        currentPlayerRaceIndex = -1;
+        currentListenAddDistance = 0.0f;
     }
     currentVoiceMode = (uint8_t)voice_mode_get_current();
 }

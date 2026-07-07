@@ -179,6 +179,16 @@ static void config_apply_line(PluginConfig* cfg, wchar_t* line) {
     else if (_wcsicmp(key, L"DebugMode") == 0) {
         cfg->debugMode = parse_bool(val);
     }
+    else if (_wcsicmp(key, L"DefaultsAppliedServer") == 0) {
+        /* Server UID is plain ASCII (base64 alphabet). */
+        size_t j = 0;
+        for (const wchar_t* src = val; *src && j + 1 < sizeof(cfg->defaultsAppliedServer); src++) {
+            if (*src < 128) {
+                cfg->defaultsAppliedServer[j++] = (char)*src;
+            }
+        }
+        cfg->defaultsAppliedServer[j] = '\0';
+    }
 }
 
 /* Clamp numeric values into safe ranges after load. */
@@ -272,6 +282,7 @@ int config_save(void) {
     fwprintf(f, L"HudPosition=%d\n", cfg.hudPosition);
     fwprintf(f, L"HudSize=%d\n", cfg.hudSize);
     fwprintf(f, L"DebugMode=%s\n", cfg.debugMode ? L"true" : L"false");
+    fwprintf(f, L"DefaultsAppliedServer=%hs\n", cfg.defaultsAppliedServer);
     fclose(f);
 
     log_debug("CONFIG: saved plugin.cfg");

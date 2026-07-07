@@ -31,6 +31,9 @@
 #define HUB_MAX_ZONES     16
 #define HUB_ZONE_NAME_LEN 64
 #define HUB_PASSWORD_LEN  128
+#define HUB_MAX_RACES     16
+#define HUB_RACE_NAME_LEN 64
+#define HUB_MAX_STEAMIDS_PER_RACE 32
 
 typedef struct HubZone {
     char name[HUB_ZONE_NAME_LEN];
@@ -41,6 +44,27 @@ typedef struct HubZone {
     int soundproof;
     int reverb;
 } HubZone;
+
+/* [RACE] entry: per-race voice limits + listener bonus, members by SteamID64.
+   Format: "Race=Name" starts an entry, "SteamID=(name)7656..,(name2)7656.."
+   lists members, Minimum.../Maximum... keys override the global limits. */
+typedef struct HubRace {
+    char name[HUB_RACE_NAME_LEN];
+    unsigned long long steamIDs[HUB_MAX_STEAMIDS_PER_RACE];
+    int steamIDCount;
+    float minWhisper, maxWhisper;
+    float minNormal, maxNormal;
+    float minShout, maxShout;
+    float listenAddDistance; /* meters added when LISTENING to others */
+} HubRace;
+
+/* [DEFAULT_SETTINGS]: one-time defaults applied on the first connection to
+   a server. 0 = key/distance absent (leave the user's value alone). */
+typedef struct HubDefaults {
+    int enabled;             /* EnableDefaultSettingsOnFirstConnection */
+    int whisperKey, normalKey, shoutKey, voiceToggleKey;
+    float distanceWhisper, distanceNormal, distanceShout;
+} HubDefaults;
 
 typedef struct HubSettings {
     int valid;              /* 1 when a [GLOBAL] section was found */
@@ -57,6 +81,11 @@ typedef struct HubSettings {
 
     int zoneCount;
     HubZone zones[HUB_MAX_ZONES];
+
+    int raceCount;
+    HubRace races[HUB_MAX_RACES];
+
+    HubDefaults defaults;
 } HubSettings;
 
 /* Fill out from description text. Returns 1 when a [GLOBAL] section was

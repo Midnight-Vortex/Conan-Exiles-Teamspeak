@@ -24,8 +24,9 @@
 void server_profile_tick(void);
 
 /* Channel description arrived (onChannelDescriptionUpdateEvent).
-   Fetches + parses + applies when it is the Root channel. Callback thread. */
-void server_profile_on_description_update(uint64 channelID);
+   Fetches + parses + applies when it is the Root channel. Returns 1 when a
+   profile was applied (callers refresh dependent state). Callback thread. */
+int server_profile_on_description_update(uint64 channelID);
 
 /* 9.3 activate a parsed profile (also used by the update handler). */
 void server_profile_apply(const HubSettings* settings);
@@ -41,6 +42,18 @@ int server_profile_force_auto_channel(void);
 
 /* Ingame channel password ("" when none). Callback thread. */
 const char* server_profile_get_ingame_password(void);
+
+/* SteamID64 of the logged-in Steam user (registry, cached after first read).
+   0 when Steam is not running. Any thread. */
+unsigned long long server_profile_get_local_steam_id(void);
+
+/* Race the local player belongs to (matched by SteamID during apply).
+   Returns 1 and fills out when in a race, 0 otherwise. Any thread. */
+int server_profile_get_local_race(HubRace* out);
+
+/* Listener distance bonus of the local player's race (0 when not in a
+   race / no profile). Any thread, lock-free. */
+float server_profile_get_listen_add_distance(void);
 
 /* Drop everything (disconnect / new connection). Callback thread. */
 void server_profile_reset(void);

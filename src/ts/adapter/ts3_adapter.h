@@ -122,6 +122,10 @@ int ts3_get_client_nickname(anyID clientID, char* outName, int outLen);
 /* Print a line into the current chat tab. TS callback thread ONLY. */
 void ts3_print_to_chat(const char* message);
 
+/* Virtual server unique identifier (stable per server). Returns 1 on
+   success. TS callback thread ONLY. */
+int ts3_get_server_uid(char* out, int outLen);
+
 /* Temporarily unmute clients for playback (batch, one API round trip).
    TS callback thread ONLY. Returns number of clients unmuted. */
 int ts3_unmute_clients_for_pcm(const anyID* clients, int count);

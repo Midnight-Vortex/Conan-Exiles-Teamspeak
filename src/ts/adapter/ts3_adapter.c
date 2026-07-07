@@ -430,6 +430,25 @@ int ts3_get_client_nickname(anyID clientID, char* outName, int outLen) {
     return 1;
 }
 
+int ts3_get_server_uid(char* out, int outLen) {
+    if (!ts3_require_callback_thread("getServerUid")) {
+        return 0;
+    }
+    if (!out || outLen <= 0 || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getServerVariableAsString || !g_ts3.freeMemory) {
+        return 0;
+    }
+
+    char* uid = NULL;
+    if (g_ts3.getServerVariableAsString(g_activeConnection,
+            VIRTUALSERVER_UNIQUE_IDENTIFIER, &uid) != ERROR_ok || !uid) {
+        return 0;
+    }
+    strncpy_s(out, (size_t)outLen, uid, _TRUNCATE);
+    g_ts3.freeMemory(uid);
+    return out[0] != '\0';
+}
+
 void ts3_print_to_chat(const char* message) {
     if (!ts3_require_callback_thread("printToChat")) {
         return;

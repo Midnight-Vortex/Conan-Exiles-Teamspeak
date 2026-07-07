@@ -266,9 +266,13 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     }
 
     const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
-    /* Gain cap from the server profile (1.0 without profile, Phase 9). */
+    /* Gain cap from the server profile (1.0 without profile, Phase 9).
+       Race listener bonus: the local player's race hears others further
+       (listenAddDistance extends the speaker's range on OUR side only). */
+    const float hearRange = remote.voiceDistance
+        + server_profile_get_listen_add_distance();
     const float gain = soundproof ? 0.0f
-        : prox_volume_from_distance(distance, remote.voiceDistance,
+        : prox_volume_from_distance(distance, hearRange,
             server_profile_get_max_volume());
 
     const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
@@ -621,7 +625,10 @@ void ts3_audio_flush_unmutes(void) {
     anyID batch[TS3_UNMUTE_BATCH_MAX];
     int batchCount = 0;
 
-    for (anyID i = 1; i < TS3_AUDIO_MAX_CLIENT && batchCount < TS3_UNMUTE_BATCH_MAX - 1; i++) {
+    /* Loop counter must be wider than anyID (uint16): i < 65536 would be
+       always true for a uint16 counter -> infinite loop on the callback
+       thread (TS froze at startup before the main window appeared). */
+    for (int i = 1; i < TS3_AUDIO_MAX_CLIENT && batchCount < TS3_UNMUTE_BATCH_MAX - 1; i++) {
         if (InterlockedCompareExchange(&g_pendingUnmute[i], 0, 0) == 0) {
             continue;
         }
@@ -630,7 +637,7 @@ void ts3_audio_flush_unmutes(void) {
         if (g_clientUnlocked[i] && now - g_lastUnmuteMs[i] < TS3_UNMUTE_REARM_MS) {
             continue;
         }
-        batch[batchCount++] = i;
+        batch[batchCount++] = (anyID)i;
     }
 
     if (batchCount == 0) {
@@ -699,11 +706,13 @@ int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
 }
 
 void ts3_audio_reset(void) {
-    for (anyID i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
-        ts3_audio_invalidate_client(i);
+    /* int counter, NOT anyID: anyID is uint16, so "i < 65536" never turns
+       false and the callback thread spins forever (startup freeze). */
+    for (int i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
+        ts3_audio_invalidate_client((anyID)i);
     }
     /* Reconcile any flags invalidate missed (counter/flag drift). */
-    for (anyID i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
+    for (int i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
         InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);

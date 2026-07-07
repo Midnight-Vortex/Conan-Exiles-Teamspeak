@@ -25,6 +25,35 @@
 #include "ui/plugin_ui_compat.h"
 
 #include <string.h>
+#include <process.h>
+
+/* Deferred overlay/key watcher: legacy createVoiceOverlay() builds a TOPMOST
+   HWND during ts3plugin_init and can prevent the Qt main window from appearing
+   (TS log stops after SERVERVIEW, process stays alive with no MainWindowTitle). */
+static volatile long g_overlay_armed = 0;
+
+static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
+    (void)arg;
+    Sleep(4000);
+    if (pluginShuttingDown || !InterlockedCompareExchange(&g_overlay_armed, 0, 0)) {
+        return 0;
+    }
+    overlay_start();
+    return 0;
+}
+
+static void overlay_schedule_start(void) {
+    if (InterlockedCompareExchange(&g_overlay_armed, 1, 0) != 0) {
+        return;
+    }
+    HANDLE thread = (HANDLE)_beginthreadex(NULL, 0, overlay_deferred_start_thread, NULL, 0, NULL);
+    if (thread) {
+        CloseHandle(thread);
+    }
+    else {
+        InterlockedExchange(&g_overlay_armed, 0);
+    }
+}
 
 /* Pos watcher tick (watcher thread): poll voice hotkeys, queue own CEPOS
    send and refresh the audio snapshots for all known speakers. No TS API
@@ -78,7 +107,7 @@ int ts3plugin_init(void) {
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
     pos_watcher_start();
-    overlay_start();
+    overlay_schedule_start();
     if (log_is_enabled()) {
         prox_math_self_test();
     }
@@ -97,6 +126,7 @@ void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     plugin_ui_shutdown();
+    InterlockedExchange(&g_overlay_armed, 0);
     overlay_stop();
     pos_watcher_stop();
     player_table_clear();
@@ -285,5 +315,25 @@ void ts3plugin_onChannelDescriptionUpdateEvent(uint64 serverConnectionHandlerID,
     if (serverConnectionHandlerID != ts3_get_active_connection()) {
         return;
     }
-    server_profile_on_description_update(channelID);
+    /* Profile apply may have written first-connection defaults into the
+       config — mirror them into the legacy UI globals (only when a profile
+       was really applied; this event fires for every channel edit). */
+    if (server_profile_on_description_update(channelID)) {
+        plugin_ui_sync_from_config();
+        plugin_ui_sync_live_state();
+    }
+}
+
+/* requestChannelDescription completes via onUpdateChannelEvent (SDK contract);
+   onChannelDescriptionUpdateEvent only fires on live edits. Without this
+   export the Root description request always timed out. */
+void ts3plugin_onUpdateChannelEvent(uint64 serverConnectionHandlerID, uint64 channelID) {
+    ts3_thread_mark_callback();
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
+    if (server_profile_on_description_update(channelID)) {
+        plugin_ui_sync_from_config();
+        plugin_ui_sync_live_state();
+    }
 }

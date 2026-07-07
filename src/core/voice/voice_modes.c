@@ -65,14 +65,28 @@ float voice_mode_get_distance(VoiceMode mode) {
         }
     }
 
-    /* Server profile min/max clamp per mode. */
+    /* Server profile min/max clamp per mode — the server-forced limits the
+       user cannot escape. A race the local player belongs to (SteamID match)
+       replaces the global limits with its own. */
     if (hubActive) {
         float minV = 0.0f, maxV = 0.0f;
-        switch (mode) {
-        case VOICE_MODE_WHISPER: minV = hub.minWhisper; maxV = hub.maxWhisper; break;
-        case VOICE_MODE_SHOUT:   minV = hub.minShout;   maxV = hub.maxShout;   break;
-        case VOICE_MODE_NORMAL:
-        default:                 minV = hub.minNormal;  maxV = hub.maxNormal;  break;
+
+        HubRace race;
+        if (server_profile_get_local_race(&race)) {
+            switch (mode) {
+            case VOICE_MODE_WHISPER: minV = race.minWhisper; maxV = race.maxWhisper; break;
+            case VOICE_MODE_SHOUT:   minV = race.minShout;   maxV = race.maxShout;   break;
+            case VOICE_MODE_NORMAL:
+            default:                 minV = race.minNormal;  maxV = race.maxNormal;  break;
+            }
+        }
+        else {
+            switch (mode) {
+            case VOICE_MODE_WHISPER: minV = hub.minWhisper; maxV = hub.maxWhisper; break;
+            case VOICE_MODE_SHOUT:   minV = hub.minShout;   maxV = hub.maxShout;   break;
+            case VOICE_MODE_NORMAL:
+            default:                 minV = hub.minNormal;  maxV = hub.maxNormal;  break;
+            }
         }
         if (minV > 0.0f && distance < minV) {
             distance = minV;
