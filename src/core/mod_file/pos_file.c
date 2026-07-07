@@ -1,0 +1,280 @@
+#include "core/mod_file/pos_file.h"
+#include "core/config/config.h"
+#include "core/util/log.h"
+
+#include <windows.h>
+#include <process.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define POS_POLL_INTERVAL_MS 50
+#define POS_STALE_MS         5000
+#define POS_LOG_THROTTLE_MS  30000
+
+/* Private lock guarding g_currentSample. Never shared with other modules. */
+static CRITICAL_SECTION g_posLock;
+static PosSample g_currentSample;
+static volatile long g_coordinatesValid = 0;
+
+static HANDLE g_watcherThread = NULL;
+static HANDLE g_stopEvent = NULL;
+static volatile long g_watcherRunning = 0;
+
+/* ---- 2.1 pure read function ------------------------------------------- */
+
+static int pos_read_raw(const wchar_t* filePath, char* buffer, size_t bufferSize) {
+    for (int attempt = 0; attempt < 6; attempt++) {
+        HANDLE hFile = CreateFileW(
+            filePath,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            DWORD err = GetLastError();
+            if (err == ERROR_SHARING_VIOLATION || err == ERROR_ACCESS_DENIED || err == ERROR_LOCK_VIOLATION) {
+                Sleep(attempt < 2 ? 1 : 5);
+                continue;
+            }
+            return 0;
+        }
+
+        DWORD bytesRead = 0;
+        BOOL ok = ReadFile(hFile, buffer, (DWORD)(bufferSize - 1), &bytesRead, NULL);
+        CloseHandle(hFile);
+        if (!ok || bytesRead == 0) {
+            Sleep(2);
+            continue;
+        }
+
+        buffer[bytesRead] = '\0';
+        /* DE locale writes comma decimals — normalize for strtod. */
+        for (char* p = buffer; *p; ++p) {
+            if (*p == ',') {
+                *p = '.';
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int pos_parse_field(const char* buffer, const char* key, float* out) {
+    const char* p = strstr(buffer, key);
+    if (!p) {
+        return 0;
+    }
+    *out = (float)strtod(p + strlen(key), NULL);
+    return 1;
+}
+
+int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
+    if (!filePath || !out || !filePath[0]) {
+        return 0;
+    }
+
+    char buffer[256];
+    if (!pos_read_raw(filePath, buffer, sizeof(buffer))) {
+        return 0;
+    }
+
+    float seq = 0.0f;
+    PosSample sample;
+    memset(&sample, 0, sizeof(sample));
+
+    if (!pos_parse_field(buffer, "SEQ=", &seq)
+        || !pos_parse_field(buffer, "X=", &sample.x)
+        || !pos_parse_field(buffer, "Y=", &sample.y)
+        || !pos_parse_field(buffer, "Z=", &sample.z)
+        || !pos_parse_field(buffer, "YAW=", &sample.yaw)) {
+        return 0;
+    }
+    sample.seq = (int)seq;
+
+    /* YAWY is optional (older mod versions). */
+    if (!pos_parse_field(buffer, "YAWY=", &sample.yawY)) {
+        sample.yawY = 0.0f;
+    }
+
+    *out = sample;
+    return 1;
+}
+
+/* ---- 2.3 staleness ------------------------------------------------------ */
+
+/* Milliseconds since Pos.txt was last written, or MAXULONGLONG if missing. */
+static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
+    WIN32_FIND_DATAW findData;
+    HANDLE hFind = FindFirstFileW(filePath, &findData);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return MAXULONGLONG;
+    }
+    FindClose(hFind);
+
+    FILETIME ftNow;
+    GetSystemTimeAsFileTime(&ftNow);
+    ULARGE_INTEGER now, written;
+    now.LowPart = ftNow.dwLowDateTime;
+    now.HighPart = ftNow.dwHighDateTime;
+    written.LowPart = findData.ftLastWriteTime.dwLowDateTime;
+    written.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+    if (written.QuadPart > now.QuadPart) {
+        return 0;
+    }
+    return (now.QuadPart - written.QuadPart) / 10000ULL;
+}
+
+/* ---- watcher thread ----------------------------------------------------- */
+
+/* Pos.txt path from config: automatic path when enabled and set, else manual. */
+static void pos_resolve_file_path(wchar_t* out, size_t outLen) {
+    const wchar_t* base = NULL;
+    if (g_config.automaticPatchFind && g_config.automaticSavedPath[0]) {
+        base = g_config.automaticSavedPath;
+    }
+    else if (g_config.savedPath[0]) {
+        base = g_config.savedPath;
+    }
+
+    if (base) {
+        swprintf(out, outLen, L"%s\\Pos.txt", base);
+    }
+    else {
+        out[0] = L'\0';
+    }
+}
+
+static unsigned __stdcall pos_watcher_thread(void* arg) {
+    (void)arg;
+
+    wchar_t filePath[CONFIG_MAX_PATH + 16];
+    ULONGLONG lastMissingLog = 0;
+    ULONGLONG lastValidLog = 0;
+    int lastSeq = -1;
+
+    log_write("POS: watcher started");
+
+    while (WaitForSingleObject(g_stopEvent, POS_POLL_INTERVAL_MS) == WAIT_TIMEOUT) {
+        pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
+
+        const ULONGLONG now = GetTickCount64();
+
+        if (!filePath[0]) {
+            if (now - lastMissingLog > POS_LOG_THROTTLE_MS) {
+                lastMissingLog = now;
+                log_debug("POS: no Pos.txt path configured");
+            }
+            InterlockedExchange(&g_coordinatesValid, 0);
+            continue;
+        }
+
+        const ULONGLONG age = pos_file_write_age_ms(filePath);
+        const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
+
+        PosSample sample;
+        if (fileActive && pos_file_read_once(filePath, &sample)) {
+            EnterCriticalSection(&g_posLock);
+            g_currentSample = sample;
+            LeaveCriticalSection(&g_posLock);
+
+            if (!InterlockedCompareExchange(&g_coordinatesValid, 0, 0)) {
+                log_write("POS: coordinates valid (seq=%d pos=%.1f/%.1f/%.1f yaw=%.1f)",
+                    sample.seq, sample.x, sample.y, sample.z, sample.yaw);
+            }
+            InterlockedExchange(&g_coordinatesValid, 1);
+
+            if (sample.seq != lastSeq || now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                    lastValidLog = now;
+                    log_debug("POS: seq=%d pos=%.1f/%.1f/%.1f yaw=%.1f yawY=%.1f age=%llums",
+                        sample.seq, sample.x, sample.y, sample.z,
+                        sample.yaw, sample.yawY, (unsigned long long)age);
+                }
+                lastSeq = sample.seq;
+            }
+        }
+        else {
+            if (InterlockedCompareExchange(&g_coordinatesValid, 0, 0)) {
+                log_write("POS: coordinates invalid (file %s, age=%llums)",
+                    age == MAXULONGLONG ? "missing" : "stale",
+                    age == MAXULONGLONG ? 0ULL : (unsigned long long)age);
+            }
+            InterlockedExchange(&g_coordinatesValid, 0);
+
+            if (age == MAXULONGLONG && now - lastMissingLog > POS_LOG_THROTTLE_MS) {
+                lastMissingLog = now;
+                log_debug("POS: Pos.txt missing at %ls", filePath);
+            }
+        }
+    }
+
+    log_write("POS: watcher stopped");
+    return 0;
+}
+
+/* ---- 2.2 start/stop ----------------------------------------------------- */
+
+void pos_watcher_start(void) {
+    if (InterlockedCompareExchange(&g_watcherRunning, 1, 0) != 0) {
+        return; /* already running */
+    }
+
+    InitializeCriticalSection(&g_posLock);
+    memset(&g_currentSample, 0, sizeof(g_currentSample));
+    InterlockedExchange(&g_coordinatesValid, 0);
+
+    g_stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_stopEvent) {
+        log_write("POS: failed to create stop event");
+        DeleteCriticalSection(&g_posLock);
+        InterlockedExchange(&g_watcherRunning, 0);
+        return;
+    }
+
+    g_watcherThread = (HANDLE)_beginthreadex(NULL, 0, pos_watcher_thread, NULL, 0, NULL);
+    if (!g_watcherThread) {
+        log_write("POS: failed to start watcher thread");
+        CloseHandle(g_stopEvent);
+        g_stopEvent = NULL;
+        DeleteCriticalSection(&g_posLock);
+        InterlockedExchange(&g_watcherRunning, 0);
+    }
+}
+
+void pos_watcher_stop(void) {
+    if (InterlockedCompareExchange(&g_watcherRunning, 0, 0) == 0) {
+        return; /* not running */
+    }
+
+    SetEvent(g_stopEvent);
+    WaitForSingleObject(g_watcherThread, 2000);
+    CloseHandle(g_watcherThread);
+    g_watcherThread = NULL;
+    CloseHandle(g_stopEvent);
+    g_stopEvent = NULL;
+
+    InterlockedExchange(&g_coordinatesValid, 0);
+    DeleteCriticalSection(&g_posLock);
+    InterlockedExchange(&g_watcherRunning, 0);
+}
+
+/* ---- readers ------------------------------------------------------------ */
+
+int pos_get_current(PosSample* out) {
+    if (!out || InterlockedCompareExchange(&g_watcherRunning, 0, 0) == 0) {
+        return 0;
+    }
+
+    EnterCriticalSection(&g_posLock);
+    *out = g_currentSample;
+    LeaveCriticalSection(&g_posLock);
+
+    return pos_coordinates_valid();
+}
+
+int pos_coordinates_valid(void) {
+    return InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
+}
