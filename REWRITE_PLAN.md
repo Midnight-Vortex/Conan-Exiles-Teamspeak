@@ -74,11 +74,12 @@ E:\programme\Conan-Exiles-Teamspeak\
 
 ## 📌 AKTUELLER STAND (Stand: 2026-07-07)
 
-**Phase 0–7 sind implementiert und kompilieren fehlerfrei (Release x64).**
-**Nächster Schritt: Phase 8 (Channel-Management hub ↔ ingame).**
+**Phase 0–8 sind implementiert und kompilieren fehlerfrei (Release x64).**
+**Nächster Schritt: Phase 9 (Hub-Parser / Server-Profil).**
 
-Noch offen vor dem Weiterbauen: Phasen 0–7 im echten TS-Client testen (Plugin laden,
-verbinden, mit 2 Clients Positionen austauschen, Lautstärke/Pan/Richtung prüfen).
+Noch offen vor dem Weiterbauen: Phasen 0–8 im echten TS-Client testen (Plugin laden,
+verbinden, mit 2 Clients Positionen austauschen, Lautstärke/Pan/Richtung prüfen,
+Auto-Move hub ↔ ingame, Hub-Stummschaltung).
 
 Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exiles-TeamSpeak.vcxproj`):
 
@@ -94,9 +95,10 @@ Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exile
 | Proximity-Mathe | `src\core\proximity\proximity_math.c/.h` (gleiche Kurve wie alt, Self-Test loggt Tabelle) | 5 |
 | PCM-Gain + Unmute | `src\ts\proximity\ts3_proximity_audio.c/.h` (Seqlock-Snapshots, Batch-Unmute, Gain-Ramp) | 6 |
 | 3D-Audio | `src\ts\proximity\ts3_3d.c/.h` (Settings-Dedup, Listener/Client-Epsilon-Dedup, neutraler Rolloff) | 7 |
+| Channel-Management | `src\core\channel\channel_manage.c/.h` (hub/ingame per Name, Move mit In-Flight+Cooldown, Playback-Gate) | 8 |
 
 Hinweis für neuen Chat / anderen PC: Einfach sagen „Führe REWRITE_PLAN.md fort,
-Phase 0–7 fertig, weiter mit Phase 8“. Build-Befehl: MSBuild auf
+Phase 0–8 fertig, weiter mit Phase 9“. Build-Befehl: MSBuild auf
 `project\Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) oder `build\build_msvc.ps1`.
 
 ---
@@ -113,8 +115,8 @@ Phase 0–7 fertig, weiter mit Phase 8“. Build-Befehl: MSBuild auf
 | 5 | Proximity-Mathe (pur) | Distanz/Volume-Rechnung, per Testwerte prüfbar | ✅ gebaut, Self-Test loggt bei DebugMode=true |
 | 6 | PCM-Gain + Unmute | Lautstärke fällt mit Distanz, keine Stumm-Hänger | ✅ gebaut, Test offen |
 | 7 | 3D-Audio / Stereo-Pan | Richtungshören funktioniert | ✅ gebaut (2026-07-07), Test offen |
-| 8 | Channel-Management | Auto-Move hub ↔ ingame | ⏳ nächster Schritt |
-| 9 | Hub-Parser / Server-Profil | Einstellungen aus Channel-Beschreibung | offen |
+| 8 | Channel-Management | Auto-Move hub ↔ ingame | ✅ gebaut (2026-07-07), Test offen |
+| 9 | Hub-Parser / Server-Profil | Einstellungen aus Channel-Beschreibung | ⏳ nächster Schritt |
 | 10 | Zonen-Effekte | Soundproof / Reverb / Lowpass | offen |
 | 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout | offen |
 | 12 | Nickname-Anonymisierung | Zufallsnummern ingame | offen |

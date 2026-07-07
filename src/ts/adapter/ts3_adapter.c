@@ -327,6 +327,24 @@ int ts3_unmute_clients_for_pcm(const anyID* clients, int count) {
     return n;
 }
 
+int ts3_request_client_move(anyID clientID, uint64 channelID) {
+    if (!ts3_require_callback_thread("requestClientMove")) {
+        return 0;
+    }
+    if (clientID == 0 || channelID == 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.requestClientMove) {
+        return 0;
+    }
+    const unsigned int err = g_ts3.requestClientMove(g_activeConnection, clientID, channelID, "", NULL);
+    if (err != ERROR_ok) {
+        log_write("TS-API: requestClientMove -> %llu failed err=%u",
+            (unsigned long long)channelID, err);
+        return 0;
+    }
+    return 1;
+}
+
 /* ---- 3D audio (raw API, callback thread only) ------------------------------- */
 
 int ts3_set_3d_settings(float distanceFactor, float rolloffScale) {

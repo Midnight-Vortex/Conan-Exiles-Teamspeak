@@ -12,10 +12,12 @@
 #include "core/config/config.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/proximity_math.h"
+#include "core/proximity/player_table.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
+#include "core/channel/channel_manage.h"
 
 #include <string.h>
 
@@ -89,12 +91,14 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         cepos_reset();
         ts3_audio_reset();
         ts3d_reset();
+        chan_reset();
         return;
     }
 
     if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
         cepos_reset();
         ts3d_reset();
+        chan_reset();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -118,6 +122,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
         ts3d_apply();
+        chan_tick();
         ts3_audio_flush_unmutes();
         return;
     }
@@ -126,6 +131,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         ts3_cmd_queue_drain();
         cepos_flush();
         ts3d_apply();
+        chan_tick();
         ts3_audio_flush_unmutes();
     }
 }
@@ -140,4 +146,38 @@ void ts3plugin_onCustom3dRolloffCalculationClientEvent(uint64 serverConnectionHa
     (void)serverConnectionHandlerID;
     /* Audio thread — pure function, no API calls, no locks. */
     ts3d_on_custom_rolloff(clientID, distance, volume);
+}
+
+/* Shared handler for both move event flavors (self move / moved by admin). */
+static void ts3_on_client_move(anyID clientID, uint64 newChannelID) {
+    ts3_thread_mark_callback();
+    if (clientID != 0 && clientID == ts3_get_local_client_id()) {
+        chan_on_own_move(newChannelID);
+        return;
+    }
+    /* Remote client left our visibility (channel 0 = disconnected). */
+    if (newChannelID == 0 && clientID != 0) {
+        player_table_remove(clientID);
+        ts3_audio_invalidate_client(clientID);
+    }
+    chan_tick();
+}
+
+void ts3plugin_onClientMoveEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, const char* moveMessage) {
+    (void)serverConnectionHandlerID;
+    (void)oldChannelID;
+    (void)visibility;
+    (void)moveMessage;
+    ts3_on_client_move(clientID, newChannelID);
+}
+
+void ts3plugin_onClientMoveMovedEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, anyID moverID, const char* moverName, const char* moverUniqueIdentifier, const char* moveMessage) {
+    (void)serverConnectionHandlerID;
+    (void)oldChannelID;
+    (void)visibility;
+    (void)moverID;
+    (void)moverName;
+    (void)moverUniqueIdentifier;
+    (void)moveMessage;
+    ts3_on_client_move(clientID, newChannelID);
 }

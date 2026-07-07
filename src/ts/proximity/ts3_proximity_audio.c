@@ -42,6 +42,23 @@ static ULONGLONG g_lastUnmuteMs[TS3_AUDIO_MAX_CLIENT];    /* callback thread onl
 
 static void audio_signal_unmute_flag_only(anyID clientID);
 
+/* ---- 8.4 playback gate ------------------------------------------------------ */
+
+static volatile long g_audioMode = TS3_AUDIO_PASSTHROUGH;
+
+void ts3_audio_set_mode(Ts3AudioMode mode) {
+    const long previous = InterlockedExchange(&g_audioMode, (long)mode);
+    if (previous != (long)mode) {
+        log_write("AUDIO: mode %ld -> %d (%s)", previous, (int)mode,
+            mode == TS3_AUDIO_MUTE ? "hub mute"
+            : mode == TS3_AUDIO_PROXIMITY ? "proximity" : "passthrough");
+    }
+}
+
+Ts3AudioMode ts3_audio_get_mode(void) {
+    return (Ts3AudioMode)InterlockedCompareExchange(&g_audioMode, 0, 0);
+}
+
 static void writer_lock_ensure(void) {
     if (InterlockedCompareExchange(&g_writerLockReady, 0, 0)) {
         return;
@@ -153,6 +170,18 @@ void ts3_audio_recompute_all(void) {
 void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount, int channels) {
     if (!samples || sampleCount <= 0 || channels <= 0
         || clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+        return;
+    }
+
+    const long mode = InterlockedCompareExchange(&g_audioMode, 0, 0);
+    if (mode == TS3_AUDIO_PASSTHROUGH) {
+        g_renderGain[clientID] = 1.0f;
+        return;
+    }
+    if (mode == TS3_AUDIO_MUTE) {
+        /* Hub: hard mute — zero the buffer so nothing is audible. */
+        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        g_renderGain[clientID] = 0.0f;
         return;
     }
 

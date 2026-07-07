@@ -19,6 +19,20 @@
 
 #include "sdk/include/teamspeak/public_definitions.h"
 
+/* 8.4 playback gate — decides what the audio thread does with incoming voice.
+   Set on the callback thread (channel_manage), read lock-free per PCM buffer. */
+typedef enum Ts3AudioMode {
+    TS3_AUDIO_PASSTHROUGH = 0, /* plugin inactive — normal TS behavior */
+    TS3_AUDIO_MUTE        = 1, /* hub/lobby — every voice hard-muted */
+    TS3_AUDIO_PROXIMITY   = 2  /* ingame — distance gain + pan (Phase 6) */
+} Ts3AudioMode;
+
+/* Change the gate. Deduplicated: only acts (and logs) on an actual change.
+   Any thread (atomic store), in practice the TS callback thread. */
+void ts3_audio_set_mode(Ts3AudioMode mode);
+
+Ts3AudioMode ts3_audio_get_mode(void);
+
 /* Recompute gain/pan snapshot for one client from the player table and the
    local position. Any thread (writers serialize on a private lock). */
 void ts3_audio_recompute_client(anyID clientID);

@@ -65,6 +65,7 @@
     <ClInclude Include="..\src\ts\proximity\ts3_cepos.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_proximity_audio.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_3d.h" />
+    <ClInclude Include="..\src\core\channel\channel_manage.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\ts\entry\ts3_entry.c" />
@@ -77,6 +78,7 @@
     <ClCompile Include="..\src\ts\proximity\ts3_cepos.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_proximity_audio.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_3d.c" />
+    <ClCompile Include="..\src\core\channel\channel_manage.c" />
   </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
