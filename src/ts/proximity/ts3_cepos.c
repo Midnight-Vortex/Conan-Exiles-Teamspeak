@@ -273,8 +273,16 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
         return 1;
     }
 
-    player_table_put(invokerClientID, safeName,
-        packet->x, packet->y, packet->z, packet->voiceDistance);
+    if (!player_table_put(invokerClientID, safeName,
+        packet->x, packet->y, packet->z, packet->voiceDistance)) {
+        static ULONGLONG s_lastTableFullLog = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (now - s_lastTableFullLog > 10000) {
+            s_lastTableFullLog = now;
+            log_write("CEPOS: player table full - dropped client %u", (unsigned)invokerClientID);
+        }
+        return 1;
+    }
 
     /* Refresh this speaker's gain/pan snapshot for the audio thread. */
     ts3_audio_recompute_client(invokerClientID);

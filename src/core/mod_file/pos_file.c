@@ -305,8 +305,8 @@ void pos_watcher_stop(void) {
     g_stopEvent = NULL;
 
     InterlockedExchange(&g_coordinatesValid, 0);
+    InterlockedExchange(&g_watcherRunning, 0); /* readers bail before lock teardown */
     DeleteCriticalSection(&g_posLock);
-    InterlockedExchange(&g_watcherRunning, 0);
 }
 
 /* ---- readers ------------------------------------------------------------ */

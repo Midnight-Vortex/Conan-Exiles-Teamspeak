@@ -667,9 +667,11 @@ void ts3_audio_invalidate_client(anyID clientID) {
 
 void ts3_audio_reset(void) {
     for (anyID i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
-        if (g_snap[i].valid || g_pendingUnmute[i] || g_clientUnlocked[i]) {
-            ts3_audio_invalidate_client(i);
-        }
+        ts3_audio_invalidate_client(i);
+    }
+    /* Reconcile any flags invalidate missed (counter/flag drift). */
+    for (anyID i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
+        InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);
 }

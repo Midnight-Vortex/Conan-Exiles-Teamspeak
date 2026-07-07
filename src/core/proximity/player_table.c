@@ -47,6 +47,26 @@ int player_table_put(unsigned short clientID, const char* name,
         slot = freeSlot;
     }
 
+    /* Table full of fresh entries — evict the stalest slot so new speakers are
+       never silently dropped (Bugbot: permanent silence when put fails). */
+    if (slot < 0) {
+        int oldest = -1;
+        ULONGLONG oldestMs = MAXULONGLONG;
+        for (int i = 0; i < PLAYER_TABLE_MAX_PLAYERS; i++) {
+            if (!g_players[i].valid) {
+                slot = i;
+                break;
+            }
+            if (g_players[i].lastUpdateMs < oldestMs) {
+                oldestMs = g_players[i].lastUpdateMs;
+                oldest = i;
+            }
+        }
+        if (slot < 0 && oldest >= 0) {
+            slot = oldest;
+        }
+    }
+
     if (slot >= 0) {
         PlayerEntry* e = &g_players[slot];
         e->clientID = clientID;
