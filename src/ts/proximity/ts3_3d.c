@@ -2,6 +2,8 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "core/proximity/player_table.h"
 #include "core/proximity/proximity_math.h"
+#include "core/mod_file/pos_file.h"
+#include "core/util/log.h"
 #include "ts/profile/ts3_server_profile.h"
 
 #include "ts/proximity/ts3_client_limits.h"
