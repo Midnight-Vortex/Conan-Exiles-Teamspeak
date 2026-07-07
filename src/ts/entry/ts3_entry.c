@@ -18,6 +18,7 @@
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
 #include "core/channel/channel_manage.h"
+#include "ts/profile/ts3_server_profile.h"
 
 #include <string.h>
 
@@ -92,6 +93,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         ts3_audio_reset();
         ts3d_reset();
         chan_reset();
+        server_profile_reset();
         return;
     }
 
@@ -99,6 +101,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         cepos_reset();
         ts3d_reset();
         chan_reset();
+        server_profile_reset();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -122,6 +125,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
         ts3d_apply();
+        server_profile_tick();
         chan_tick();
         ts3_audio_flush_unmutes();
         return;
@@ -131,6 +135,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         ts3_cmd_queue_drain();
         cepos_flush();
         ts3d_apply();
+        server_profile_tick();
         chan_tick();
         ts3_audio_flush_unmutes();
     }
@@ -180,4 +185,10 @@ void ts3plugin_onClientMoveMovedEvent(uint64 serverConnectionHandlerID, anyID cl
     (void)moverUniqueIdentifier;
     (void)moveMessage;
     ts3_on_client_move(clientID, newChannelID);
+}
+
+void ts3plugin_onChannelDescriptionUpdateEvent(uint64 serverConnectionHandlerID, uint64 channelID) {
+    (void)serverConnectionHandlerID;
+    ts3_thread_mark_callback();
+    server_profile_on_description_update(channelID);
 }

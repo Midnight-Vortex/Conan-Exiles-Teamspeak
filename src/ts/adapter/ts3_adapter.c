@@ -327,7 +327,7 @@ int ts3_unmute_clients_for_pcm(const anyID* clients, int count) {
     return n;
 }
 
-int ts3_request_client_move(anyID clientID, uint64 channelID) {
+int ts3_request_client_move(anyID clientID, uint64 channelID, const char* password) {
     if (!ts3_require_callback_thread("requestClientMove")) {
         return 0;
     }
@@ -336,12 +336,50 @@ int ts3_request_client_move(anyID clientID, uint64 channelID) {
         || !g_ts3.requestClientMove) {
         return 0;
     }
-    const unsigned int err = g_ts3.requestClientMove(g_activeConnection, clientID, channelID, "", NULL);
+    const unsigned int err = g_ts3.requestClientMove(g_activeConnection, clientID, channelID,
+        password ? password : "", NULL);
     if (err != ERROR_ok) {
         log_write("TS-API: requestClientMove -> %llu failed err=%u",
             (unsigned long long)channelID, err);
         return 0;
     }
+    return 1;
+}
+
+int ts3_request_channel_description(uint64 channelID) {
+    if (!ts3_require_callback_thread("requestChannelDescription")) {
+        return 0;
+    }
+    if (channelID == 0 || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.requestChannelDescription) {
+        return 0;
+    }
+    const unsigned int err = g_ts3.requestChannelDescription(g_activeConnection, channelID, NULL);
+    if (err != ERROR_ok) {
+        log_write("TS-API: requestChannelDescription %llu failed err=%u",
+            (unsigned long long)channelID, err);
+        return 0;
+    }
+    return 1;
+}
+
+int ts3_get_channel_description(uint64 channelID, char* out, int outLen) {
+    if (!ts3_require_callback_thread("getChannelDescription")) {
+        return 0;
+    }
+    if (!out || outLen <= 0 || channelID == 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getChannelVariableAsString || !g_ts3.freeMemory) {
+        return 0;
+    }
+
+    char* desc = NULL;
+    if (g_ts3.getChannelVariableAsString(g_activeConnection, channelID, CHANNEL_DESCRIPTION, &desc) != ERROR_ok
+        || !desc) {
+        return 0;
+    }
+    strncpy_s(out, (size_t)outLen, desc, _TRUNCATE);
+    g_ts3.freeMemory(desc);
     return 1;
 }
 

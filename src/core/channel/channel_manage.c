@@ -1,6 +1,7 @@
 #include "core/channel/channel_manage.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/proximity/ts3_proximity_audio.h"
+#include "ts/profile/ts3_server_profile.h"
 #include "core/mod_file/pos_file.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
@@ -88,7 +89,10 @@ int chan_request_move(uint64 targetChannelID) {
     if (localID == 0) {
         return 0;
     }
-    if (!ts3_request_client_move(localID, targetChannelID)) {
+    /* Ingame channel may be password-protected (server profile, Phase 9). */
+    const char* password = (targetChannelID == g_ingameChannelID)
+        ? server_profile_get_ingame_password() : "";
+    if (!ts3_request_client_move(localID, targetChannelID, password)) {
         return 0;
     }
 
@@ -129,7 +133,8 @@ void chan_tick(void) {
     }
     g_lastTickMs = now;
 
-    if (!g_config.enableAutomaticChannelChange) {
+    /* Server profile can force auto-move even when disabled locally. */
+    if (!g_config.enableAutomaticChannelChange && !server_profile_force_auto_channel()) {
         ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
         return;
     }

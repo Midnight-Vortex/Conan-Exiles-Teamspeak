@@ -99,10 +99,19 @@ int ts3_get_own_nickname(char* outName, int outLen);
    TS callback thread ONLY. Returns number of clients unmuted. */
 int ts3_unmute_clients_for_pcm(const anyID* clients, int count);
 
-/* Move the local client to a channel (no password). Returns 1 when the
-   request was sent. TS callback thread ONLY — flood protection lives in
+/* Move the local client to a channel (password "" when none). Returns 1 when
+   the request was sent. TS callback thread ONLY — flood protection lives in
    channel_manage (in-flight flag + cooldown). */
-int ts3_request_client_move(anyID clientID, uint64 channelID);
+int ts3_request_client_move(anyID clientID, uint64 channelID, const char* password);
+
+/* Ask the server for a channel's description (arrives via
+   onChannelDescriptionUpdateEvent). Returns 1 when the request was sent.
+   TS callback thread ONLY — rate limiting lives in ts3_server_profile. */
+int ts3_request_channel_description(uint64 channelID);
+
+/* Fetch a channel's description into the caller buffer. Returns 1 on
+   success. TS callback thread ONLY. */
+int ts3_get_channel_description(uint64 channelID, char* out, int outLen);
 
 /* ---- 3D audio (TS callback thread ONLY, raw calls — dedup lives in ts3_3d) */
 

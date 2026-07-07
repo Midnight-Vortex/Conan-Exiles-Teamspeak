@@ -1,5 +1,6 @@
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/adapter/ts3_adapter.h"
+#include "ts/profile/ts3_server_profile.h"
 #include "core/proximity/player_table.h"
 #include "core/proximity/proximity_math.h"
 #include "core/mod_file/pos_file.h"
@@ -117,7 +118,9 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     const float lz = local->z / 100.0f;
 
     const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
-    const float gain = prox_volume_from_distance(distance, remote.voiceDistance, 1.0f);
+    /* Gain cap from the server profile (1.0 without profile, Phase 9). */
+    const float gain = prox_volume_from_distance(distance, remote.voiceDistance,
+        server_profile_get_max_volume());
 
     const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
     const float dirX = -cosf(yawRad);

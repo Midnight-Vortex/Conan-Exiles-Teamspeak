@@ -1,6 +1,7 @@
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/adapter/ts3_adapter.h"
+#include "ts/profile/ts3_server_profile.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/player_table.h"
 #include "core/config/config.h"
@@ -109,8 +110,9 @@ static void cepos_build_local(const PosSample* sample, CeposPacket* out) {
     out->axisY = 1.0f;
     out->axisZ = 0.0f;
 
-    /* Voice modes come in a later phase — normal distance until then. */
-    out->voiceDistance = g_config.distanceNormal;
+    /* Voice modes come in a later phase — normal distance until then.
+       Server profile (Phase 9) clamps it to the hub min/max. */
+    out->voiceDistance = server_profile_clamp_normal_distance(g_config.distanceNormal);
 
     char nick[64] = "";
     if (ts3_get_own_nickname(nick, sizeof(nick)) && nick[0]) {
