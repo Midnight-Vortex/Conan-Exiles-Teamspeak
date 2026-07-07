@@ -122,6 +122,10 @@ int ts3_get_client_nickname(anyID clientID, char* outName, int outLen);
 /* Print a line into the current chat tab. TS callback thread ONLY. */
 void ts3_print_to_chat(const char* message);
 
+/* Write a line into the TeamSpeak client log (ts3client_*.log).
+   TS callback thread ONLY. */
+void ts3_log_client(const char* message);
+
 /* Virtual server unique identifier (stable per server). Returns 1 on
    success. TS callback thread ONLY. */
 int ts3_get_server_uid(char* out, int outLen);

@@ -24,6 +24,7 @@
 #include "ui/overlay/voice_overlay.h"
 #include "ui/plugin_ui_compat.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <process.h>
 
@@ -115,6 +116,13 @@ int ts3plugin_init(void) {
         prox_math_self_test();
     }
     log_write("BOOT: init done");
+    {
+        char bootMsg[160];
+        snprintf(bootMsg, sizeof(bootMsg),
+            "Conan Exiles proximity plugin loaded successfully (version %s)",
+            ts3plugin_version());
+        ts3_log_client(bootMsg);
+    }
     return 0;
 }
 

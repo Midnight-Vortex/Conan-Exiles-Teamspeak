@@ -459,6 +459,16 @@ void ts3_print_to_chat(const char* message) {
     g_ts3.printMessageToCurrentTab(message);
 }
 
+void ts3_log_client(const char* message) {
+    if (!ts3_require_callback_thread("logClient")) {
+        return;
+    }
+    if (!message || !g_ts3FunctionsSet || !g_ts3.logMessage) {
+        return;
+    }
+    g_ts3.logMessage(message, LogLevel_INFO, "Conan Exiles", 0);
+}
+
 int ts3_unmute_clients_for_pcm(const anyID* clients, int count) {
     if (!ts3_require_callback_thread("unmuteClients")) {
         return 0;
