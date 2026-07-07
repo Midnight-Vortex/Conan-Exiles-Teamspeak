@@ -110,6 +110,10 @@ void ts3plugin_shutdown(void) {
 
 /* Reset every per-connection cache (disconnect / server switch / tab change). */
 static void ts3_reset_connection_state(void) {
+    /* Quiesce PCM processing first — the audio thread may still be applying
+       the previous session's snapshots while the adapter publishes a new
+       active connection (Bugbot: stale gain/pan on tab switch). */
+    ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     player_table_clear();
     cepos_reset();
     ts3_audio_reset();
@@ -122,6 +126,10 @@ static void ts3_reset_connection_state(void) {
 void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int newStatus, unsigned int errorNumber) {
     (void)errorNumber;
     ts3_thread_mark_callback();
+
+    if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
+        ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
+    }
 
     /* Adapter decides whether this event concerns the active tab; events of
        background tabs (disconnect or connect) are ignored entirely. */
@@ -152,10 +160,14 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
 
 void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) {
     ts3_thread_mark_callback();
-    /* 14.2 the user switched server tabs: follow the new tab and drop all
-       state that belonged to the previous connection. */
+    if (serverConnectionHandlerID == 0
+        || serverConnectionHandlerID == ts3_get_active_connection()) {
+        return;
+    }
+    /* Drop stale audio/player state BEFORE adopting the new tab's connection
+       ID so the playback thread cannot apply the old session to the new tab. */
+    ts3_reset_connection_state();
     if (ts3_on_active_server_changed(serverConnectionHandlerID)) {
-        ts3_reset_connection_state();
         if (ts3_is_connected()) {
             nick_on_connected();
             ts3_request_wakeup();
