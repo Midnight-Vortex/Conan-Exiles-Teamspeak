@@ -6,6 +6,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #endif
 #include "core/proximity/proximity_math.h"
+#include "core/voice/voice_modes.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +56,7 @@ void keyMonitorThreadFunction(void* arg) {
         }
 
         lastKeyState = currentKeyState;
+        voice_mode_hotkey_poll();
         Sleep(30);
     }
 

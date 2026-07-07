@@ -22,9 +22,15 @@ void plugin_ui_sync_to_config(void);
 /* Refresh hub/zones/coordinates flags used by the legacy UI messages. */
 void plugin_ui_sync_live_state(void);
 
+/* Hub profile (zones/races) just applied — refresh HUD text and layout. */
+void plugin_ui_on_hub_profile_updated(void);
+
 /* Legacy overlay lifecycle wrappers used by ts3_entry. */
 void overlay_start(void);
 void overlay_stop(void);
+void overlay_ui_mark_thread(void);
+void overlay_ui_clear_thread(void);
+void overlay_ui_signal_quit(void);
 
 /* Called from the pos watcher (~30 ms) to keep legacy flags fresh. */
 void plugin_ui_on_position_tick(void);

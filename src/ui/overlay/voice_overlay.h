@@ -21,6 +21,7 @@ void overlay_start(void);
 void overlay_stop(void);
 
 void createVoiceOverlay(void);
+void updateVoiceOverlay(void);
 void updateVoiceOverlayVisibility(void);
 void voice_overlay_refresh_theme(void);
 void voice_overlay_refresh_position(void);

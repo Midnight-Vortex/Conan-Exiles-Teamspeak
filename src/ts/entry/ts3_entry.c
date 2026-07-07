@@ -19,27 +19,47 @@
 #include "ts/proximity/ts3_3d.h"
 #include "core/channel/channel_manage.h"
 #include "ts/profile/ts3_server_profile.h"
+#include "ts/info/ts3_plugin_version.h"
 #include "core/voice/voice_modes.h"
 #include "core/nick/nick_anonymize.h"
 #include "ui/overlay/voice_overlay.h"
 #include "ui/plugin_ui_compat.h"
+#include "plugin_modules.h"
+#include "plugin.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <process.h>
 
 /* Deferred overlay/key watcher: legacy createVoiceOverlay() builds a TOPMOST
    HWND during ts3plugin_init and can prevent the Qt main window from appearing
    (TS log stops after SERVERVIEW, process stays alive with no MainWindowTitle). */
 static volatile long g_overlay_armed = 0;
+static volatile long g_overlay_want_immediate = 0;
 
 static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
     (void)arg;
-    Sleep(4000);
+    for (int waited = 0; waited < 4000 && !pluginShuttingDown; waited += 50) {
+        if (InterlockedCompareExchange(&g_overlay_want_immediate, 0, 0)) {
+            break;
+        }
+        Sleep(50);
+    }
     if (pluginShuttingDown || !InterlockedCompareExchange(&g_overlay_armed, 0, 0)) {
         return 0;
     }
+    overlay_ui_mark_thread();
     overlay_start();
+
+    MSG msg;
+    while (!pluginShuttingDown && GetMessage(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    overlay_ui_clear_thread();
+    InterlockedExchange(&g_overlay_armed, 0);
     return 0;
 }
 
@@ -56,14 +76,17 @@ static void overlay_schedule_start(void) {
     }
 }
 
+static void overlay_request_immediate_start(void) {
+    InterlockedExchange(&g_overlay_want_immediate, 1);
+    overlay_schedule_start();
+}
+
 /* Pos watcher tick (watcher thread): poll voice hotkeys, queue own CEPOS
    send and refresh the audio snapshots for all known speakers. No TS API
    calls in here. */
 static void ts3_on_local_position_update(void) {
     plugin_ui_on_position_tick();
-    voice_mode_hotkey_poll();
-    /* Auto-move follows Pos.txt validity — wake the callback thread even when
-       CEPOS has nothing new to send (e.g. standing still in-game). */
+    /* Voice hotkeys are polled on the key-monitor thread (works without Pos.txt). */
     chan_signal_position_update();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
@@ -101,6 +124,76 @@ void ts3plugin_setFunctionPointers(const struct TS3Functions funcs) {
 
 void ts3plugin_registerPluginID(const char* id) {
     ts3_adapter_set_plugin_id(id);
+}
+
+static struct PluginHotkey* ts3_create_hotkey(const char* keyword, const char* description) {
+    struct PluginHotkey* hotkey = (struct PluginHotkey*)malloc(sizeof(struct PluginHotkey));
+    if (!hotkey) {
+        return NULL;
+    }
+    strncpy(hotkey->keyword, keyword, PLUGIN_HOTKEY_BUFSZ - 1);
+    hotkey->keyword[PLUGIN_HOTKEY_BUFSZ - 1] = '\0';
+    strncpy(hotkey->description, description, PLUGIN_HOTKEY_BUFSZ - 1);
+    hotkey->description[PLUGIN_HOTKEY_BUFSZ - 1] = '\0';
+    return hotkey;
+}
+
+void ts3plugin_initHotkeys(struct PluginHotkey*** hotkeys) {
+    struct PluginHotkey** list;
+
+    if (!hotkeys) {
+        return;
+    }
+    list = (struct PluginHotkey**)malloc(sizeof(struct PluginHotkey*) * 5);
+    if (!list) {
+        *hotkeys = NULL;
+        return;
+    }
+    list[0] = ts3_create_hotkey("voice_toggle", "Conan: Voice mode toggle");
+    list[1] = ts3_create_hotkey("voice_whisper", "Conan: Whisper mode");
+    list[2] = ts3_create_hotkey("voice_normal", "Conan: Normal mode");
+    list[3] = ts3_create_hotkey("voice_shout", "Conan: Shout mode");
+    list[4] = NULL;
+    if (!list[0] || !list[1] || !list[2] || !list[3]) {
+        for (int i = 0; i < 4; i++) {
+            if (list[i]) {
+                free(list[i]);
+            }
+        }
+        free(list);
+        *hotkeys = NULL;
+        return;
+    }
+    *hotkeys = list;
+}
+
+void ts3plugin_onHotkeyEvent(const char* keyword) {
+    if (!keyword || pluginShuttingDown) {
+        return;
+    }
+    ts3_thread_mark_callback();
+
+    if (strcmp(keyword, "voice_toggle") == 0) {
+        if (g_config.enableVoiceToggle) {
+            voice_mode_notify_hotkey(g_config.voiceToggleKey);
+            voice_mode_toggle();
+        }
+    }
+    else if (strcmp(keyword, "voice_whisper") == 0) {
+        voice_mode_notify_hotkey(g_config.whisperKey);
+        voice_mode_apply(VOICE_MODE_WHISPER);
+    }
+    else if (strcmp(keyword, "voice_normal") == 0) {
+        voice_mode_notify_hotkey(g_config.normalKey);
+        voice_mode_apply(VOICE_MODE_NORMAL);
+    }
+    else if (strcmp(keyword, "voice_shout") == 0) {
+        voice_mode_notify_hotkey(g_config.shoutKey);
+        voice_mode_apply(VOICE_MODE_SHOUT);
+    }
+    else {
+        return;
+    }
 }
 
 int ts3plugin_init(void) {
@@ -146,10 +239,28 @@ void ts3plugin_shutdown(void) {
     chan_reset();
     server_profile_reset();
     nick_reset();
+    ts3_version_reset();
     ts3_audio_reset();
     ts3_adapter_shutdown();
     log_write("SHUTDOWN: done");
     log_close();
+}
+
+static void ts3_sync_overlay_channel_state(uint64 knownChannelID) {
+    if (knownChannelID != 0) {
+        ts3LocalChannelID = (mumble_channelid_t)knownChannelID;
+    }
+    else if (ts3_is_connected()) {
+        const anyID localID = ts3_get_local_client_id();
+        const uint64 ch = localID ? ts3_get_channel_of_client(localID) : 0;
+        ts3LocalChannelID = ch ? (mumble_channelid_t)ch : -1;
+    }
+    else {
+        ts3LocalChannelID = -1;
+    }
+    plugin_ui_sync_live_state();
+    updateVoiceOverlayVisibility();
+    updateVoiceOverlay();
 }
 
 /* Reset every per-connection cache (disconnect / server switch / tab change). */
@@ -185,6 +296,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
 
     if (newStatus == STATUS_DISCONNECTED) {
         ts3_reset_connection_state();
+        ts3_sync_overlay_channel_state(0);
         return;
     }
 
@@ -199,6 +311,9 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         pos_autodetect_saved_path();
         plugin_ui_sync_from_config();
         chan_tick();
+        overlay_request_immediate_start();
+        ts3_sync_overlay_channel_state(0);
+        ts3_version_broadcast();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -223,6 +338,9 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
             plugin_ui_sync_from_config();
             plugin_ui_sync_live_state();
             chan_tick();
+            overlay_request_immediate_start();
+            ts3_sync_overlay_channel_state(0);
+            ts3_version_broadcast();
             ts3_request_wakeup();
         }
     }
@@ -236,6 +354,11 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
 
     /* 14.2 multi-tab hardening: only the active connection drives the plugin. */
     if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
+
+    if (ts3_version_on_plugin_command(pluginName, pluginCommand, invokerClientID,
+            invokerName, invokerUniqueIdentity)) {
         return;
     }
 
@@ -296,10 +419,11 @@ static void ts3_on_client_move(uint64 serverConnectionHandlerID, anyID clientID,
     }
     if (clientID != 0 && clientID == ts3_get_local_client_id()) {
         chan_on_own_move(newChannelID);
+        ts3_sync_overlay_channel_state(newChannelID);
         return;
     }
-    /* Remote client left our visibility (channel 0 = disconnected). */
     if (newChannelID == 0 && clientID != 0) {
+        ts3_version_clear_client(clientID);
         player_table_remove(clientID);
         ts3_audio_invalidate_client(clientID);
     }
@@ -333,7 +457,7 @@ void ts3plugin_onChannelDescriptionUpdateEvent(uint64 serverConnectionHandlerID,
        was really applied; this event fires for every channel edit). */
     if (server_profile_on_description_update(channelID)) {
         plugin_ui_sync_from_config();
-        plugin_ui_sync_live_state();
+        plugin_ui_on_hub_profile_updated();
     }
 }
 
@@ -347,6 +471,6 @@ void ts3plugin_onUpdateChannelEvent(uint64 serverConnectionHandlerID, uint64 cha
     }
     if (server_profile_on_description_update(channelID)) {
         plugin_ui_sync_from_config();
-        plugin_ui_sync_live_state();
+        plugin_ui_on_hub_profile_updated();
     }
 }

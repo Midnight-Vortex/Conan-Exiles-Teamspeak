@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <process.h>
 
 static mumble_error_t compat_mumble_log(mumble_plugin_id_t callerID, const char* message) {
     (void)callerID;
@@ -22,25 +23,6 @@ static mumble_error_t compat_mumble_log(mumble_plugin_id_t callerID, const char*
     return MUMBLE_STATUS_OK;
 }
 
-static int hud_pos_from_legacy(int legacy) {
-    switch (legacy) {
-    case VOICE_HUD_POSITION_TOP_RIGHT: return 1;
-    case VOICE_HUD_POSITION_BOTTOM_LEFT: return 2;
-    case VOICE_HUD_POSITION_BOTTOM_RIGHT: return 3;
-    case VOICE_HUD_POSITION_TOP_CENTER: return 4;
-    default: return 0;
-    }
-}
-
-static int hud_pos_to_legacy(int cfg) {
-    switch (cfg) {
-    case 1: return VOICE_HUD_POSITION_TOP_RIGHT;
-    case 2: return VOICE_HUD_POSITION_BOTTOM_LEFT;
-    case 3: return VOICE_HUD_POSITION_BOTTOM_RIGHT;
-    case 4: return VOICE_HUD_POSITION_TOP_CENTER;
-    default: return VOICE_HUD_POSITION_TOP_LEFT;
-    }
-}
 // Background image
 HBITMAP hBackgroundBitmap = NULL;
 HBITMAP hBackgroundAdvancedBitmap = NULL;
@@ -299,7 +281,7 @@ void plugin_ui_sync_from_config(void) {
     enableAutomaticPatchFind = cfg.automaticPatchFind ? TRUE : FALSE;
     enableLogGeneral = cfg.debugMode ? TRUE : FALSE;
     voiceHudTheme = cfg.hudTheme;
-    voiceHudPosition = hud_pos_to_legacy(cfg.hudPosition);
+    voiceHudPosition = cfg.hudPosition;
     voiceHudSize = cfg.hudSize;
     /* Legacy savedPath global = ACTIVE Pos.txt base path (same selection as
        pos_resolve_file_path): automatic path when enabled and set, else manual. */
@@ -331,7 +313,7 @@ void plugin_ui_sync_to_config(void) {
     cfg.automaticPatchFind = enableAutomaticPatchFind ? 1 : 0;
     cfg.debugMode = enableLogGeneral ? 1 : 0;
     cfg.hudTheme = voiceHudTheme;
-    cfg.hudPosition = hud_pos_from_legacy(voiceHudPosition);
+    cfg.hudPosition = voiceHudPosition;
     cfg.hudSize = voiceHudSize;
     /* Active-path routing — see plugin_ui_on_settings_saved. */
     if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
@@ -482,6 +464,12 @@ void plugin_ui_sync_live_state(void) {
     currentVoiceMode = (uint8_t)voice_mode_get_current();
 }
 
+void plugin_ui_on_hub_profile_updated(void) {
+    plugin_ui_sync_live_state();
+    voice_overlay_refresh_position();
+    updateVoiceOverlay();
+}
+
 float getVoiceDistanceForMode(uint8_t voiceMode) {
     if (voiceMode > 2) {
         voiceMode = 1;
@@ -503,6 +491,9 @@ float getVoiceDistanceForMode(uint8_t voiceMode) {
 void plugin_ui_on_position_tick(void) {
     plugin_ui_sync_live_state();
     localVoiceData.voiceDistance = voice_mode_get_current_distance();
+    if (enableVoiceOverlay && hVoiceOverlay) {
+        updateVoiceOverlay();
+    }
 }
 
 #define POS_TXT_TO_WORLD_SCALE 0.01f
@@ -656,16 +647,50 @@ void plugin_ui_shutdown(void) {
     pluginShuttingDown = TRUE;
 }
 
+static volatile unsigned long g_overlayUiThreadId = 0;
+static HANDLE g_overlayMonitorHandle = NULL;
+
+void overlay_ui_mark_thread(void) {
+    g_overlayUiThreadId = GetCurrentThreadId();
+}
+
+void overlay_ui_clear_thread(void) {
+    g_overlayUiThreadId = 0;
+}
+
+void overlay_ui_signal_quit(void) {
+    const unsigned long tid = g_overlayUiThreadId;
+    if (tid != 0) {
+        PostThreadMessage(tid, WM_QUIT, 0, 0);
+    }
+}
+
 void overlay_start(void) {
     if (!enableVoiceOverlay) {
         return;
     }
     createVoiceOverlay();
+    updateVoiceOverlay();
     installKeyMonitoring();
+    if (!g_overlayMonitorHandle) {
+        overlayThreadRunning = TRUE;
+        g_overlayMonitorHandle = (HANDLE)_beginthreadex(NULL, 0, overlayMonitorThreadEx, NULL, 0, NULL);
+        if (!g_overlayMonitorHandle) {
+            overlayThreadRunning = FALSE;
+            log_write("OVERLAY: monitor thread start failed");
+        }
+    }
 }
 
 void overlay_stop(void) {
     removeKeyMonitoring();
+    overlayThreadRunning = FALSE;
+    if (g_overlayMonitorHandle) {
+        WaitForSingleObject(g_overlayMonitorHandle, 3000);
+        CloseHandle(g_overlayMonitorHandle);
+        g_overlayMonitorHandle = NULL;
+    }
+    overlay_ui_signal_quit();
     plugin_destroy_voice_overlay_safely();
     if (InterlockedCompareExchange(&overlayTextLockInitialized, 0, 0)) {
         DeleteCriticalSection(&overlayTextLock);
@@ -739,7 +764,7 @@ void plugin_ui_on_settings_saved(void) {
     cfg.automaticPatchFind = enableAutomaticPatchFind ? 1 : 0;
     cfg.debugMode = enableLogGeneral ? 1 : 0;
     cfg.hudTheme = voiceHudTheme;
-    cfg.hudPosition = hud_pos_from_legacy(voiceHudPosition);
+    cfg.hudPosition = voiceHudPosition;
     cfg.hudSize = voiceHudSize;
     /* The legacy savedPath global holds the ACTIVE path: auto-detected in
        automatic mode, user-chosen in manual mode. Route it into the matching
@@ -772,5 +797,5 @@ void plugin_ui_on_settings_saved(void) {
 }
 
 unsigned long overlay_ui_thread_id(void) {
-    return 0;
+    return g_overlayUiThreadId;
 }

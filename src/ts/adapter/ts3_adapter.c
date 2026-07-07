@@ -410,6 +410,26 @@ int ts3_get_channel_client_list(uint64 channelID, anyID* outClients, int maxClie
     return count;
 }
 
+int ts3_get_connected_client_ids(anyID* outClients, int maxClients) {
+    /* ts3plugin_infoData runs on the TS UI thread — no callback-thread guard here. */
+    if (!outClients || maxClients <= 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getClientList || !g_ts3.freeMemory) {
+        return 0;
+    }
+
+    anyID* list = NULL;
+    if (g_ts3.getClientList(g_activeConnection, &list) != ERROR_ok || !list) {
+        return 0;
+    }
+    int count = 0;
+    for (int i = 0; list[i] != 0 && count < maxClients; i++) {
+        outClients[count++] = list[i];
+    }
+    g_ts3.freeMemory(list);
+    return count;
+}
+
 int ts3_get_client_nickname(anyID clientID, char* outName, int outLen) {
     if (!ts3_require_callback_thread("getClientNickname")) {
         return 0;

@@ -3,6 +3,7 @@
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
 #include "core/util/log.h"
+#include "ui/overlay/voice_overlay.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/proximity/ts3_cepos.h"
@@ -121,6 +122,10 @@ void voice_mode_apply(VoiceMode mode) {
 
     InterlockedExchange(&g_pendingNotify, (long)mode + 1);
     ts3_request_wakeup();
+    if (ts3_thread_is_callback()) {
+        voice_mode_flush_notify();
+    }
+    updateVoiceOverlay();
 }
 
 void voice_mode_toggle(void) {
@@ -182,6 +187,13 @@ void voice_mode_reset_key_tracking(void) {
     memset(g_keySuppressUntil, 0, sizeof(g_keySuppressUntil));
 }
 
+void voice_mode_notify_hotkey(int vkCode) {
+    if (vkCode > 0 && vkCode < 256) {
+        g_keySuppressUntil[vkCode] = GetTickCount64() + VOICE_POLL_SUPPRESS_MS;
+        g_keyArmed[vkCode] = 0;
+    }
+}
+
 /* ---- chat notify (callback thread) ----------------------------------------------- */
 
 void voice_mode_flush_notify(void) {
@@ -198,7 +210,7 @@ void voice_mode_flush_notify(void) {
     const float distance = voice_mode_get_distance((VoiceMode)mode);
 
     char message[128];
-    snprintf(message, sizeof(message), "Voice mode: %s - Distance: %.1f m",
+    snprintf(message, sizeof(message), "[Conan Exiles] Voice mode: %s - Distance: %.1f m",
         modeNames[mode >= 0 && mode <= 2 ? mode : 1], distance);
     ts3_print_to_chat(message);
     log_write("VOICE: mode=%s distance=%.1f", modeNames[mode >= 0 && mode <= 2 ? mode : 1], distance);

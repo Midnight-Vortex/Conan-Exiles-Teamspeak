@@ -53,4 +53,7 @@ int voice_mode_has_pending_notify(void);
 /* Clear hotkey debounce state (e.g. after loading a preset). Pos watcher thread. */
 void voice_mode_reset_key_tracking(void);
 
+/* Suppress duplicate poll trigger after TS hotkey event handled the same VK. */
+void voice_mode_notify_hotkey(int vkCode);
+
 #endif /* CORE_VOICE_VOICE_MODES_H */

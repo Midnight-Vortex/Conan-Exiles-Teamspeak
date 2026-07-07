@@ -6,6 +6,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #endif
 #include "core/proximity/proximity_math.h"
+#include "core/voice/voice_modes.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -266,16 +267,22 @@ static void overlay_request_repaint(HWND hwnd) {
     InvalidateRect(hwnd, NULL, FALSE);
 }
 
-static int plugin_is_ingame_for_hud(void) {
-    /* Ingame = Pos.txt liefert aktive Koordinaten (Conan läuft), unabhängig vom TS-Kanal. */
-    return coordinatesValid ? 1 : 0;
+static int plugin_is_ingame_channel_for_hud(void) {
+    /* Non-debug HUD: only while seated in the TS ingame channel. */
+    if (ingameChannelID == -1 || ts3LocalChannelID == -1) {
+        return 0;
+    }
+    return ts3LocalChannelID == ingameChannelID;
 }
 
 int plugin_should_show_voice_overlay(void) {
     if (!enableVoiceOverlay) {
         return 0;
     }
-    return plugin_is_ingame_for_hud();
+    if (enableLogGeneral) {
+        return 1;
+    }
+    return plugin_is_ingame_channel_for_hud();
 }
 
 void updateVoiceOverlayVisibility(void) {
@@ -370,12 +377,11 @@ void setOverlayHighlightState(mumble_userid_t userID, mumble_connection_t connec
 
 // Get current voice mode text | Obtenir le texte du mode de voix actuel
 const char* getCurrentVoiceModeText() {
-    // Use the absolute truth stored globally | Utiliser la vérité absolue stockée globalement
-    switch (currentVoiceMode) {
-    case 0: return "WHISPER";
-    case 1: return "NORMAL";
-    case 2: return "SHOUT";
-    default: return "NORMAL";
+    switch (voice_mode_get_current()) {
+    case VOICE_MODE_WHISPER: return "WHISPER";
+    case VOICE_MODE_SHOUT:   return "SHOUT";
+    case VOICE_MODE_NORMAL:
+    default:                 return "NORMAL";
     }
 }
 
@@ -479,9 +485,13 @@ LRESULT CALLBACK VoiceOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         char zoneText[96];
         COLORREF zoneColor;
         int zi = currentZoneIndex;
-        if (zoneCount == 0) {
-            snprintf(zoneText, sizeof(zoneText), "Zonen nicht geladen");
-            zoneColor = RGB(220, 140, 160);
+        if (!hubDescriptionAvailable && isConnectedToServer) {
+            snprintf(zoneText, sizeof(zoneText), "Server-Parameter laden...");
+            zoneColor = RGB(190, 190, 210);
+        }
+        else if (zoneCount == 0) {
+            snprintf(zoneText, sizeof(zoneText), "Keine Zonen");
+            zoneColor = RGB(170, 170, 180);
         }
         else if (zi >= 0 && (size_t)zi < zoneCount) {
             if (zones[zi].isSoundproof && zones[zi].isReverb) {
@@ -566,7 +576,7 @@ LRESULT CALLBACK VoiceOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         DeleteDC(memDC);
 
         g_overlayLastZone = currentZoneIndex;
-        g_overlayLastMode = currentVoiceMode;
+        g_overlayLastMode = voice_mode_get_current();
         g_overlayLastHighlight = overlayBorderHighlight ? 1 : 0;
         g_overlayLastRepaintTick = GetTickCount64();
 
@@ -735,7 +745,7 @@ void updateVoiceOverlay() {
     }
 
     int contentChanged = (currentZoneIndex != g_overlayLastZone
-        || currentVoiceMode != g_overlayLastMode
+        || voice_mode_get_current() != g_overlayLastMode
         || (overlayBorderHighlight ? 1 : 0) != g_overlayLastHighlight);
     ULONGLONG now = GetTickCount64();
     if (!contentChanged && now - g_overlayLastRepaintTick < 400) {

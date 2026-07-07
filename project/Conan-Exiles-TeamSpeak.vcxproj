@@ -55,6 +55,7 @@
     <TargetName>conan_exiles</TargetName>
   </PropertyGroup>
   <ItemGroup>
+    <ClInclude Include="..\src\ts\info\ts3_plugin_version.h" />
     <ClInclude Include="..\src\ts\entry\ts3_exports.h" />
     <ClInclude Include="..\src\core\util\log.h" />
     <ClInclude Include="..\src\core\config\config.h" />
@@ -82,6 +83,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\ts\entry\ts3_entry.c" />
+    <ClCompile Include="..\src\ts\entry\ts3_info.c" />
+    <ClCompile Include="..\src\ts\info\ts3_plugin_version.c" />
     <ClCompile Include="..\src\core\util\log.c" />
     <ClCompile Include="..\src\core\config\config.c" />
     <ClCompile Include="..\src\core\mod_file\path_detect.c" />

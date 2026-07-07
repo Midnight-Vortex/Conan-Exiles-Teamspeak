@@ -139,6 +139,10 @@ int ts3_unmute_clients_for_pcm(const anyID* clients, int count);
    channel_manage (in-flight flag + cooldown). */
 int ts3_request_client_move(anyID clientID, uint64 channelID, const char* password);
 
+/* Connected client IDs into caller buffer; returns count (0 on error).
+   TS callback thread ONLY. */
+int ts3_get_connected_client_ids(anyID* outClients, int maxClients);
+
 /* Ask the server for a channel's description (arrives via
    onChannelDescriptionUpdateEvent). Returns 1 when the request was sent.
    TS callback thread ONLY — rate limiting lives in ts3_server_profile. */
