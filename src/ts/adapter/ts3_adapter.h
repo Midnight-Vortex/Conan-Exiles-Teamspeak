@@ -77,6 +77,9 @@ int ts3_cmd_queue_push(const Ts3Command* cmd);
    returns immediately (logging once) when called from a wrong thread. */
 void ts3_cmd_queue_drain(void);
 
+/* 1 when the command queue has at least one entry. Any thread. */
+int ts3_cmd_queue_nonempty(void);
+
 /* ---- 3.3 wakeup ---------------------------------------------------------- */
 
 /* Ask the TS callback thread to run ts3_cmd_queue_drain() soon. Any thread.

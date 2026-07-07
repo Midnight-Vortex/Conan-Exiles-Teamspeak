@@ -49,6 +49,9 @@ void ts3_audio_signal_unmute(anyID clientID);
 /* 6.4 batch-flush pending unmutes. TS callback thread ONLY. */
 void ts3_audio_flush_unmutes(void);
 
+/* 1 when the audio thread flagged clients needing a TS unmute. Any thread. */
+int ts3_audio_has_pending_unmutes(void);
+
 /* Drop one client (left server). Callback thread. */
 void ts3_audio_invalidate_client(anyID clientID);
 

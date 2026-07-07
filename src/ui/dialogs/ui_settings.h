@@ -30,4 +30,7 @@ void ui_settings_destroy(void);
 /* Apply a pending "Speichern" to g_config + plugin.cfg. TS callback thread. */
 void ui_settings_flush_apply(void);
 
+/* 1 when the dialog saved and the callback thread has not applied yet. */
+int ui_settings_has_pending_apply(void);
+
 #endif /* UI_DIALOGS_UI_SETTINGS_H */

@@ -641,6 +641,10 @@ void ts3_audio_flush_unmutes(void) {
     log_debug("AUDIO: unmuted %d client(s)", unmuted);
 }
 
+int ts3_audio_has_pending_unmutes(void) {
+    return InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0;
+}
+
 /* ---- cleanup ----------------------------------------------------------------- */
 
 void ts3_audio_invalidate_client(anyID clientID) {

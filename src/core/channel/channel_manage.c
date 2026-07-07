@@ -101,6 +101,9 @@ int chan_request_move(uint64 targetChannelID) {
     }
 
     if (!ts3_request_client_move(localID, targetChannelID, password)) {
+        if (targetChannelID == g_ingameChannelID) {
+            nick_restore_in_hub(); /* move failed — roll back pre-anonymize */
+        }
         return 0;
     }
 

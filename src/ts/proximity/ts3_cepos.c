@@ -151,8 +151,15 @@ static int cepos_payload_changed(const CeposPacket* cur) {
 /* ---- 4.2 send --------------------------------------------------------------- */
 
 void cepos_signal_send_pending(void) {
-    InterlockedExchange(&g_sendPending, 1);
-    ts3_request_wakeup();
+    /* Only one server-wide CEDRAIN round trip per pending cycle — re-armed
+       from cepos_flush when rate-limited or keepalive still due. */
+    if (InterlockedCompareExchange(&g_sendPending, 1, 0) == 0) {
+        ts3_request_wakeup();
+    }
+}
+
+int cepos_send_pending(void) {
+    return InterlockedCompareExchange(&g_sendPending, 0, 0) != 0;
 }
 
 void cepos_flush(void) {
@@ -165,7 +172,8 @@ void cepos_flush(void) {
 
     const ULONGLONG now = GetTickCount64();
     if (now - g_lastSendMs < CEPOS_SEND_MIN_MS) {
-        return; /* keep pending, next wakeup retries */
+        ts3_request_wakeup(); /* retry after rate limit (already throttled) */
+        return;
     }
 
     PosSample sample;

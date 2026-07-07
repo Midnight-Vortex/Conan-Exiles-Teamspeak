@@ -183,14 +183,26 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
-        ts3_cmd_queue_drain();
-        ui_settings_flush_apply();
-        cepos_flush();
-        ts3d_apply();
+        /* Each step is gated — foreign clients' wakeups must not run our full
+           drain (cepos/3D/unmute) when this client has nothing pending. */
+        if (ts3_cmd_queue_nonempty()) {
+            ts3_cmd_queue_drain();
+        }
+        if (ui_settings_has_pending_apply()) {
+            ui_settings_flush_apply();
+        }
+        if (voice_mode_has_pending_notify()) {
+            voice_mode_flush_notify();
+        }
+        if (cepos_send_pending()) {
+            cepos_flush();
+            ts3d_apply();
+        }
         server_profile_tick();
         chan_tick();
-        voice_mode_flush_notify();
-        ts3_audio_flush_unmutes();
+        if (ts3_audio_has_pending_unmutes()) {
+            ts3_audio_flush_unmutes();
+        }
     }
 }
 

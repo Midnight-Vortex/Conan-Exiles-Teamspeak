@@ -293,6 +293,15 @@ void ts3_cmd_queue_drain(void) {
     }
 }
 
+int ts3_cmd_queue_nonempty(void) {
+    ts3_cmd_lock_ensure();
+    int nonempty = 0;
+    EnterCriticalSection(&g_cmdLock);
+    nonempty = g_cmdCount > 0;
+    LeaveCriticalSection(&g_cmdLock);
+    return nonempty;
+}
+
 /* ---- 3.3 wakeup ----------------------------------------------------------- */
 
 void ts3_request_wakeup(void) {

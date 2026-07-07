@@ -47,4 +47,7 @@ void voice_mode_hotkey_poll(void);
    TS callback thread ONLY. */
 void voice_mode_flush_notify(void);
 
+/* 1 when a mode-change chat line is waiting. Any thread. */
+int voice_mode_has_pending_notify(void);
+
 #endif /* CORE_VOICE_VOICE_MODES_H */

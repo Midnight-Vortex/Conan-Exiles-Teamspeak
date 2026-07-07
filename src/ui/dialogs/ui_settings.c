@@ -406,3 +406,7 @@ void ui_settings_flush_apply(void) {
     log_write("UI: settings applied (whisper=%.1f normal=%.1f shout=%.1f)",
         g_config.distanceWhisper, g_config.distanceNormal, g_config.distanceShout);
 }
+
+int ui_settings_has_pending_apply(void) {
+    return InterlockedCompareExchange(&g_pendingValid, 0, 0) != 0;
+}

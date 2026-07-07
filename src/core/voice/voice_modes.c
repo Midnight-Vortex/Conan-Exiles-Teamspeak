@@ -184,3 +184,7 @@ void voice_mode_flush_notify(void) {
     ts3_print_to_chat(message);
     log_write("VOICE: mode=%s distance=%.1f", modeNames[mode >= 0 && mode <= 2 ? mode : 1], distance);
 }
+
+int voice_mode_has_pending_notify(void) {
+    return InterlockedCompareExchange(&g_pendingNotify, 0, 0) != 0;
+}

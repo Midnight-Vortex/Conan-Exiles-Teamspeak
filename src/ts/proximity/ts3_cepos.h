@@ -46,4 +46,7 @@ void cepos_invalidate_send_cache(void);
 /* Clear send cache (disconnect / reconnect). */
 void cepos_reset(void);
 
+/* 1 when a send may be due (set by cepos_signal_send_pending). Any thread. */
+int cepos_send_pending(void);
+
 #endif /* TS3_PROXIMITY_TS3_CEPOS_H */
