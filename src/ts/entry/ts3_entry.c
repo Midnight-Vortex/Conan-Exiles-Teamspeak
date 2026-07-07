@@ -20,6 +20,7 @@
 #include "core/channel/channel_manage.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "core/voice/voice_modes.h"
+#include "core/nick/nick_anonymize.h"
 
 #include <string.h>
 
@@ -97,6 +98,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         ts3d_reset();
         chan_reset();
         server_profile_reset();
+        nick_reset();
         return;
     }
 
@@ -105,6 +107,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         ts3d_reset();
         chan_reset();
         server_profile_reset();
+        nick_reset();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));

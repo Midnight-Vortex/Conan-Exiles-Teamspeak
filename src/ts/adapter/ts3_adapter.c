@@ -297,6 +297,72 @@ int ts3_get_own_nickname(char* outName, int outLen) {
     return 1;
 }
 
+int ts3_set_own_nickname(const char* nickname) {
+    if (!ts3_require_callback_thread("setOwnNickname")) {
+        return 0;
+    }
+    if (!nickname || !nickname[0]
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.setClientSelfVariableAsString || !g_ts3.flushClientSelfUpdates) {
+        return 0;
+    }
+    if (strlen(nickname) < TS3_MIN_SIZE_CLIENT_NICKNAME) {
+        return 0;
+    }
+    unsigned int err = g_ts3.setClientSelfVariableAsString(g_activeConnection,
+        CLIENT_NICKNAME, nickname);
+    if (err == ERROR_ok) {
+        err = g_ts3.flushClientSelfUpdates(g_activeConnection, NULL);
+    }
+    if (err != ERROR_ok) {
+        log_write("TS-API: setOwnNickname failed err=%u", err);
+        return 0;
+    }
+    return 1;
+}
+
+int ts3_get_channel_client_list(uint64 channelID, anyID* outClients, int maxClients) {
+    if (!ts3_require_callback_thread("getChannelClientList")) {
+        return 0;
+    }
+    if (!outClients || maxClients <= 0 || channelID == 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getChannelClientList || !g_ts3.freeMemory) {
+        return 0;
+    }
+
+    anyID* list = NULL;
+    if (g_ts3.getChannelClientList(g_activeConnection, channelID, &list) != ERROR_ok || !list) {
+        return 0;
+    }
+    int count = 0;
+    for (int i = 0; list[i] != 0 && count < maxClients; i++) {
+        outClients[count++] = list[i];
+    }
+    g_ts3.freeMemory(list);
+    return count;
+}
+
+int ts3_get_client_nickname(anyID clientID, char* outName, int outLen) {
+    if (!ts3_require_callback_thread("getClientNickname")) {
+        return 0;
+    }
+    if (!outName || outLen <= 0 || clientID == 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getClientVariableAsString || !g_ts3.freeMemory) {
+        return 0;
+    }
+
+    char* name = NULL;
+    if (g_ts3.getClientVariableAsString(g_activeConnection, clientID, CLIENT_NICKNAME, &name) != ERROR_ok
+        || !name) {
+        return 0;
+    }
+    strncpy_s(outName, (size_t)outLen, name, _TRUNCATE);
+    g_ts3.freeMemory(name);
+    return 1;
+}
+
 void ts3_print_to_chat(const char* message) {
     if (!ts3_require_callback_thread("printToChat")) {
         return;

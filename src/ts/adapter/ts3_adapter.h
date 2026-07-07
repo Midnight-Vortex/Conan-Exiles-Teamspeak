@@ -95,6 +95,17 @@ int ts3_send_plugin_command_server(const char* command);
 /* Own TS nickname, returns 1 on success. */
 int ts3_get_own_nickname(char* outName, int outLen);
 
+/* Rename the own client (flushes immediately). Returns 1 on success.
+   TS callback thread ONLY. */
+int ts3_set_own_nickname(const char* nickname);
+
+/* Clients in a channel into caller buffer; returns count (0 on error).
+   TS callback thread ONLY. */
+int ts3_get_channel_client_list(uint64 channelID, anyID* outClients, int maxClients);
+
+/* Nickname of any client, returns 1 on success. TS callback thread ONLY. */
+int ts3_get_client_nickname(anyID clientID, char* outName, int outLen);
+
 /* Print a line into the current chat tab. TS callback thread ONLY. */
 void ts3_print_to_chat(const char* message);
 

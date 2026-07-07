@@ -3,6 +3,7 @@
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "core/mod_file/pos_file.h"
+#include "core/nick/nick_anonymize.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
 
@@ -92,6 +93,13 @@ int chan_request_move(uint64 targetChannelID) {
     /* Ingame channel may be password-protected (server profile, Phase 9). */
     const char* password = (targetChannelID == g_ingameChannelID)
         ? server_profile_get_ingame_password() : "";
+
+    /* Rename while still in the hub so ingame clients never see the
+       "realName -> digits" rename event (Phase 12). */
+    if (targetChannelID == g_ingameChannelID) {
+        nick_anonymize_before_ingame(g_ingameChannelID);
+    }
+
     if (!ts3_request_client_move(localID, targetChannelID, password)) {
         return 0;
     }
@@ -168,6 +176,10 @@ void chan_tick(void) {
             moveWanted = 1;
             chan_request_move(g_ingameChannelID);
         }
+        else {
+            /* Already ingame (relog / manual join) but maybe with real name. */
+            nick_anonymize_before_ingame(g_ingameChannelID);
+        }
     }
     else if (ownChannel == g_ingameChannelID) {
         /* Game closed while ingame -> back to hub. Users sitting in other
@@ -193,6 +205,12 @@ void chan_on_own_move(uint64 newChannelID) {
     g_moveInFlight = 0;
     g_moveInFlightSince = 0;
     chan_update_audio_mode(newChannelID);
+
+    /* Back outside the ingame channel -> real name again (Phase 12). */
+    if (g_ingameChannelID == 0 || newChannelID != g_ingameChannelID) {
+        nick_restore_in_hub();
+    }
+
     log_debug("CHAN: own move -> channel %llu", (unsigned long long)newChannelID);
 }
 

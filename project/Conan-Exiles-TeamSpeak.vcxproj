@@ -70,6 +70,7 @@
     <ClInclude Include="..\src\ts\profile\ts3_server_profile.h" />
     <ClInclude Include="..\src\core\proximity\zone_resolve.h" />
     <ClInclude Include="..\src\core\voice\voice_modes.h" />
+    <ClInclude Include="..\src\core\nick\nick_anonymize.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\ts\entry\ts3_entry.c" />
@@ -87,6 +88,7 @@
     <ClCompile Include="..\src\ts\profile\ts3_server_profile.c" />
     <ClCompile Include="..\src\core\proximity\zone_resolve.c" />
     <ClCompile Include="..\src\core\voice\voice_modes.c" />
+    <ClCompile Include="..\src\core\nick\nick_anonymize.c" />
   </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
