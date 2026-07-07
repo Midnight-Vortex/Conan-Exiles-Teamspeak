@@ -115,34 +115,38 @@ static void dlg_set_check(int id, int checked) {
 /* ---- load current config into the controls -------------------------------------- */
 
 static void dlg_load_values(void) {
-    SetWindowTextW(GetDlgItem(g_dlg, IDC_PATH), g_config.savedPath);
-    dlg_set_check(IDC_AUTOPATH, g_config.automaticPatchFind);
+    PluginConfig cfg;
+    config_copy(&cfg);
 
-    dlg_set_float(IDC_DIST_WHISPER, g_config.distanceWhisper);
-    dlg_set_float(IDC_DIST_NORMAL, g_config.distanceNormal);
-    dlg_set_float(IDC_DIST_SHOUT, g_config.distanceShout);
+    SetWindowTextW(GetDlgItem(g_dlg, IDC_PATH), cfg.savedPath);
+    dlg_set_check(IDC_AUTOPATH, cfg.automaticPatchFind);
 
-    dlg_set_int(IDC_KEY_WHISPER, g_config.whisperKey);
-    dlg_set_int(IDC_KEY_NORMAL, g_config.normalKey);
-    dlg_set_int(IDC_KEY_SHOUT, g_config.shoutKey);
-    dlg_set_int(IDC_KEY_TOGGLE, g_config.voiceToggleKey);
-    dlg_set_int(IDC_KEY_CONFIG, g_config.configUIKey);
+    dlg_set_float(IDC_DIST_WHISPER, cfg.distanceWhisper);
+    dlg_set_float(IDC_DIST_NORMAL, cfg.distanceNormal);
+    dlg_set_float(IDC_DIST_SHOUT, cfg.distanceShout);
 
-    dlg_set_check(IDC_CHK_MUTING, g_config.enableDistanceMuting);
-    dlg_set_check(IDC_CHK_AUTOCHAN, g_config.enableAutomaticChannelChange);
-    dlg_set_check(IDC_CHK_TOGGLE, g_config.enableVoiceToggle);
-    dlg_set_check(IDC_CHK_OVERLAY, g_config.enableVoiceOverlay);
-    dlg_set_check(IDC_CHK_DEBUG, g_config.debugMode);
+    dlg_set_int(IDC_KEY_WHISPER, cfg.whisperKey);
+    dlg_set_int(IDC_KEY_NORMAL, cfg.normalKey);
+    dlg_set_int(IDC_KEY_SHOUT, cfg.shoutKey);
+    dlg_set_int(IDC_KEY_TOGGLE, cfg.voiceToggleKey);
+    dlg_set_int(IDC_KEY_CONFIG, cfg.configUIKey);
 
-    SendMessageW(GetDlgItem(g_dlg, IDC_CMB_THEME), CB_SETCURSEL, g_config.hudTheme, 0);
-    SendMessageW(GetDlgItem(g_dlg, IDC_CMB_POSITION), CB_SETCURSEL, g_config.hudPosition, 0);
-    SendMessageW(GetDlgItem(g_dlg, IDC_CMB_SIZE), CB_SETCURSEL, g_config.hudSize, 0);
+    dlg_set_check(IDC_CHK_MUTING, cfg.enableDistanceMuting);
+    dlg_set_check(IDC_CHK_AUTOCHAN, cfg.enableAutomaticChannelChange);
+    dlg_set_check(IDC_CHK_TOGGLE, cfg.enableVoiceToggle);
+    dlg_set_check(IDC_CHK_OVERLAY, cfg.enableVoiceOverlay);
+    dlg_set_check(IDC_CHK_DEBUG, cfg.debugMode);
+
+    SendMessageW(GetDlgItem(g_dlg, IDC_CMB_THEME), CB_SETCURSEL, cfg.hudTheme, 0);
+    SendMessageW(GetDlgItem(g_dlg, IDC_CMB_POSITION), CB_SETCURSEL, cfg.hudPosition, 0);
+    SendMessageW(GetDlgItem(g_dlg, IDC_CMB_SIZE), CB_SETCURSEL, cfg.hudSize, 0);
 }
 
 /* ---- save: publish staging copy for the callback thread --------------------------- */
 
 static void dlg_save_values(void) {
-    PluginConfig cfg = g_config; /* keep fields the dialog does not edit */
+    PluginConfig cfg;
+    config_copy(&cfg); /* preserve fields the dialog does not edit */
 
     GetWindowTextW(GetDlgItem(g_dlg, IDC_PATH), cfg.savedPath, CONFIG_MAX_PATH);
     cfg.automaticPatchFind = dlg_get_check(IDC_AUTOPATH);

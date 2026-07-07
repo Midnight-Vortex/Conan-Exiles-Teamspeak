@@ -291,7 +291,14 @@ void pos_watcher_stop(void) {
     }
 
     SetEvent(g_stopEvent);
-    WaitForSingleObject(g_watcherThread, 2000);
+    if (WaitForSingleObject(g_watcherThread, 5000) != WAIT_OBJECT_0) {
+        /* The watcher may be inside a slow callback or file I/O — do NOT
+           delete g_posLock while the thread still runs (use-after-free). */
+        log_write("POS: watcher thread stuck - terminating");
+#pragma warning(suppress: 6258)
+        TerminateThread(g_watcherThread, 1);
+        WaitForSingleObject(g_watcherThread, 1000);
+    }
     CloseHandle(g_watcherThread);
     g_watcherThread = NULL;
     CloseHandle(g_stopEvent);

@@ -160,15 +160,18 @@ void nick_restore_in_hub(void) {
         nick_reset();
         return;
     }
-    if (g_savedNickname[0]) {
-        if (ts3_set_own_nickname(g_savedNickname)) {
-            log_write("NICK: hub restore -> '%s'", g_savedNickname);
-        }
-        else {
-            log_write("NICK: hub restore of '%s' failed", g_savedNickname);
-        }
+    if (!g_savedNickname[0]) {
+        nick_reset();
+        return;
     }
-    nick_reset();
+    if (ts3_set_own_nickname(g_savedNickname)) {
+        log_write("NICK: hub restore -> '%s'", g_savedNickname);
+        nick_reset();
+    }
+    else {
+        /* Keep g_anonymized + g_savedNickname so the next hub move retries. */
+        log_write("NICK: hub restore of '%s' failed - will retry", g_savedNickname);
+    }
 }
 
 void nick_reset(void) {
