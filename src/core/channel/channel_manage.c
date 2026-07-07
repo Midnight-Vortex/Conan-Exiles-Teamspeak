@@ -9,12 +9,15 @@
 
 #include <windows.h>
 #include <string.h>
+#include <ctype.h>
 
 #define CHAN_TICK_MIN_MS          500   /* max tick rate (called per TS event) */
 #define CHAN_FIND_RETRY_MS        5000  /* re-resolve missing channels */
 #define CHAN_MOVE_COOLDOWN_MS     2000  /* min gap between two move requests */
 #define CHAN_MOVE_INFLIGHT_MAX_MS 5000  /* stuck in-flight flag times out */
 #define CHAN_MAX_CHANNELS         128
+#define CHAN_IGNORE_CACHE_SIZE    16
+#define CHAN_IGNORE_CACHE_TTL_MS  30000
 
 /* All state is TS callback thread only — no locks needed. */
 static uint64 g_hubChannelID = 0;
@@ -27,6 +30,39 @@ static ULONGLONG g_lastMoveMs = 0;
 static ULONGLONG g_lastTickMs = 0;
 static volatile long g_positionUpdatePending = 0;
 static ULONGLONG g_lastMoveSkipLogMs = 0;
+
+static struct {
+    uint64_t channelID;
+    int ignored;
+    ULONGLONG cachedAt;
+} g_ignoreCache[CHAN_IGNORE_CACHE_SIZE];
+
+/* SaltyChat-style: channels whose name contains "event" or "plot" as a whole
+   word suspend auto-move (Event, [Event] Halle, Plot Nord — not Development). */
+static int chan_name_has_ignore_keyword(const char* name) {
+    static const char* const keywords[] = { "event", "plot" };
+
+    if (!name || !name[0]) {
+        return 0;
+    }
+
+    for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
+        const char* kw = keywords[k];
+        const size_t kwLen = strlen(kw);
+
+        for (const char* p = name; *p; p++) {
+            if (_strnicmp(p, kw, kwLen) != 0) {
+                continue;
+            }
+            const int startOk = (p == name) || !isalpha((unsigned char)p[-1]);
+            const int endOk = !isalpha((unsigned char)p[kwLen]);
+            if (startOk && endOk) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
 
 /* ---- 8.1 find hub + ingame channels ----------------------------------------- */
 
@@ -91,6 +127,60 @@ static int chan_is_ingame_channel(uint64 channelID) {
     return chan_channel_name_is(channelID, "ingame");
 }
 
+static int chan_is_root_channel(uint64 channelID) {
+    return chan_channel_name_is(channelID, "root");
+}
+
+static int chan_is_ignored_channel(uint64 channelID) {
+    if (channelID == 0) {
+        return 0;
+    }
+    /* Managed channels are never ignore channels. */
+    if (chan_is_hub_channel(channelID) || chan_is_ingame_channel(channelID)
+        || chan_is_root_channel(channelID)) {
+        return 0;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    size_t slot = 0;
+    ULONGLONG oldest = (ULONGLONG)-1;
+
+    for (size_t i = 0; i < CHAN_IGNORE_CACHE_SIZE; i++) {
+        if (g_ignoreCache[i].channelID == channelID) {
+            if (now - g_ignoreCache[i].cachedAt < CHAN_IGNORE_CACHE_TTL_MS) {
+                return g_ignoreCache[i].ignored;
+            }
+            slot = i;
+            oldest = 0;
+            break;
+        }
+        if (g_ignoreCache[i].cachedAt < oldest) {
+            oldest = g_ignoreCache[i].cachedAt;
+            slot = i;
+        }
+    }
+
+    char name[128] = "";
+    int ignored = 0;
+    if (ts3_get_channel_name(channelID, name, sizeof(name))) {
+        ignored = chan_name_has_ignore_keyword(name);
+        if (ignored) {
+            static ULONGLONG lastIgnLog = 0;
+            if (now - lastIgnLog >= 10000) {
+                lastIgnLog = now;
+                log_debug("CHAN: channel %llu '%s' is ignore channel (no auto-move)",
+                    (unsigned long long)channelID, name);
+            }
+        }
+    }
+
+    g_ignoreCache[slot].channelID = 0;
+    g_ignoreCache[slot].ignored = ignored;
+    g_ignoreCache[slot].cachedAt = now;
+    g_ignoreCache[slot].channelID = channelID;
+    return ignored;
+}
+
 /* ---- 8.3 move request (in-flight + cooldown) ----------------------------------- */
 
 int chan_request_move(uint64 targetChannelID) {
@@ -145,7 +235,10 @@ int chan_request_move(uint64 targetChannelID) {
 /* ---- 8.4 playback gate from current channel ------------------------------------- */
 
 static void chan_update_audio_mode(uint64 ownChannelID) {
-    if (chan_is_ingame_channel(ownChannelID)) {
+    if (chan_is_ignored_channel(ownChannelID)) {
+        ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
+    }
+    else if (chan_is_ingame_channel(ownChannelID)) {
         ts3_audio_set_mode(TS3_AUDIO_PROXIMITY);
     }
     else if (chan_is_hub_channel(ownChannelID)) {
@@ -222,6 +315,11 @@ void chan_tick(void) {
         return;
     }
 
+    /* Event/Plot channels: user joined deliberately — no auto-move either way. */
+    if (chan_is_ignored_channel(ownChannel)) {
+        return;
+    }
+
     int moveWanted = 0;
     const int wantIngame = chan_should_be_ingame();
 
@@ -291,6 +389,7 @@ void chan_on_own_move(uint64 newChannelID) {
     }
     g_moveInFlight = 0;
     g_moveInFlightSince = 0;
+    g_lastTickMs = 0; /* bypass tick throttle — placement must re-check now */
     chan_update_audio_mode(newChannelID);
 
     /* Back outside the ingame channel -> real name again (Phase 12). */
@@ -311,7 +410,12 @@ void chan_reset(void) {
     g_lastTickMs = 0;
     InterlockedExchange(&g_positionUpdatePending, 0);
     g_lastMoveSkipLogMs = 0;
+    memset(g_ignoreCache, 0, sizeof(g_ignoreCache));
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
+}
+
+int chan_has_pending_work(void) {
+    return g_moveInFlight != 0;
 }
 
 uint64 chan_get_hub_channel_id(void) {

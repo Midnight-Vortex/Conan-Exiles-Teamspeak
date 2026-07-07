@@ -673,7 +673,6 @@ void overlay_start(void) {
     }
     createVoiceOverlay();
     updateVoiceOverlay();
-    installKeyMonitoring();
     if (!g_overlayMonitorHandle) {
         overlayThreadRunning = TRUE;
         g_overlayMonitorHandle = (HANDLE)_beginthreadex(NULL, 0, overlayMonitorThreadEx, NULL, 0, NULL);

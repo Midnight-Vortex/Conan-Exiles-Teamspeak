@@ -12,6 +12,7 @@
 #define TS3D_POS_EPS     0.25f  /* meters — skip API call below this move */
 #define TS3D_FWD_EPS     0.02f  /* direction component change threshold */
 #define TS3D_PI          3.14159265f
+#define TS3D_APPLY_MIN_MS 30     /* 20 Hz cap — enough for smooth pan at scale */
 
 /* All state below is TS callback thread only — no locks needed. */
 
@@ -179,6 +180,13 @@ void ts3d_apply(void) {
     if (!ts3_thread_is_callback() || !ts3_is_connected()) {
         return;
     }
+
+    static ULONGLONG s_lastApplyMs = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_lastApplyMs < TS3D_APPLY_MIN_MS) {
+        return;
+    }
+    s_lastApplyMs = now;
 
     PosSample local;
     if (!pos_get_current(&local)) {

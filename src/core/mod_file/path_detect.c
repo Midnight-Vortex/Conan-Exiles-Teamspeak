@@ -110,7 +110,11 @@ int path_detect_conan_saved(wchar_t* out, size_t outLen) {
 
     wchar_t steamPath[MAX_PATH] = L"";
     if (!detect_steam_install_path(steamPath, MAX_PATH)) {
-        log_debug("PATH: Steam not found in registry");
+        static int s_loggedSteamMissing = 0;
+        if (!s_loggedSteamMissing) {
+            s_loggedSteamMissing = 1;
+            log_debug("PATH: Steam not found in registry");
+        }
         return 0;
     }
 

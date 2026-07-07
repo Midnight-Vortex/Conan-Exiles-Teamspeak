@@ -105,6 +105,11 @@ int ts3_plugin_has_pending_chat(void) {
     return head != tail;
 }
 
+void ts3_plugin_clear_pending_chat(void) {
+    InterlockedExchange(&ts3ChatQueueHead, 0);
+    InterlockedExchange(&ts3ChatQueueTail, 0);
+}
+
 void ts3_plugin_flush_pending_chat(void) {
     if (!ts3_plugin_is_on_callback_thread()) {
         return;

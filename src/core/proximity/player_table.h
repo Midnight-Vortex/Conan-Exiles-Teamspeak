@@ -9,9 +9,10 @@
  * struct copy — never while calling other modules).
  *
  * Entries expire after PLAYER_TABLE_STALE_MS without an update.
+ * Sized for 200+ concurrent proximity speakers (LRU eviction when full).
  */
 
-#define PLAYER_TABLE_MAX_PLAYERS 64
+#define PLAYER_TABLE_MAX_PLAYERS 512
 #define PLAYER_TABLE_STALE_MS    120000
 #define PLAYER_NAME_LEN          17 /* 16 chars + NUL, matches CEPOS field */
 

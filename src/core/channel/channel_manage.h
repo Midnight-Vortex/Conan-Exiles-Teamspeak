@@ -7,6 +7,8 @@
  * Game running (Pos.txt fresh)  -> player belongs in the "ingame" channel.
  * Game closed  (Pos.txt stale)  -> player belongs in the "hub" channel.
  * Hub is hard-muted (nobody audible), ingame runs the proximity path.
+ * Event/Plot channels suspend auto-move in both directions (SaltyChat rule).
+ * Root and other non-hub channels without coords still get moved back to hub.
  *
  * Rules (lessons from the old plugin):
  *  - Never two moves in parallel: one in-flight flag with timeout, plus a
@@ -46,6 +48,9 @@ void chan_on_own_move(uint64 newChannelID);
 
 /* Drop all state (disconnect / new connection). */
 void chan_reset(void);
+
+/* 1 when a channel move is in-flight (CEDRAIN should keep ticking). */
+int chan_has_pending_work(void);
 
 /* Read-only channel IDs resolved by chan_find_hub_and_ingame (0 when unknown). */
 uint64 chan_get_hub_channel_id(void);

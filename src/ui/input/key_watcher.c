@@ -100,13 +100,6 @@ void stopKeyMonitorThread() {
 
 // Install key monitoring | Installer la surveillance des touches
 void installKeyMonitoring() {
-    if (enableLogGeneral) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "Installing key monitoring for: %s (VK:%d)",
-            getKeyName(configUIKey), configUIKey);
-        mumbleAPI.log(ownID, msg);
-    }
-
     startKeyMonitorThread();
 }
 

@@ -9,7 +9,7 @@
 #define NICK_MIN_DIGITS   8
 #define NICK_MAX_DIGITS   10
 #define NICK_MAX_ATTEMPTS 32
-#define NICK_MAX_CLIENTS  128
+#define NICK_MAX_CLIENTS  256
 
 /* Callback thread only. */
 static char g_savedNickname[64] = "";

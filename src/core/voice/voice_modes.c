@@ -74,9 +74,15 @@ static void voice_mode_notify_mode(VoiceMode mode) {
         "[Conan Exiles] Voice mode: %s - Distance: %.1f m",
         modeNames[mode >= 0 && mode <= 2 ? mode : 1],
         voice_mode_get_distance(mode));
-    displayInChat(message);
     log_write("VOICE: mode=%s distance=%.1f",
         modeNames[mode >= 0 && mode <= 2 ? mode : 1], voice_mode_get_distance(mode));
+#ifdef CONAN_EXILES_TS_EXPORTS
+    if (ts3_is_connected()) {
+        displayInChat(message);
+    }
+#else
+    displayInChat(message);
+#endif
 }
 
 /* ---- 11.1 distance ---------------------------------------------------------- */
@@ -165,6 +171,9 @@ VoiceMode voice_mode_get_current(void) {
 void voice_mode_apply(VoiceMode mode) {
     if (mode != VOICE_MODE_WHISPER && mode != VOICE_MODE_SHOUT) {
         mode = VOICE_MODE_NORMAL;
+    }
+    if (voice_mode_get_current() == mode) {
+        return;
     }
     InterlockedExchange(&g_currentMode, (long)mode);
 

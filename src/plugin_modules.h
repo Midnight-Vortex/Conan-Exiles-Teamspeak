@@ -48,6 +48,7 @@ int countSignificantDigits(float value);
 BOOL getServerHashForTracking(mumble_connection_t connection, char* outHash, size_t hashSize);
 void ts3_queue_chat_message(const char* message);
 int ts3_plugin_has_pending_chat(void);
+void ts3_plugin_clear_pending_chat(void);
 void ts3_plugin_flush_pending_chat(void);
 
 /* config_files.c */

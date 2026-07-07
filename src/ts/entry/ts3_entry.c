@@ -329,9 +329,8 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         overlay_request_immediate_start();
         ts3_sync_overlay_channel_state(0);
         ts3_version_broadcast();
-        if (ts3_plugin_has_pending_chat()) {
-            ts3_plugin_flush_pending_chat();
-        }
+        /* Drop stale offline chat (e.g. voice keys pressed before connect). */
+        ts3_plugin_clear_pending_chat();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -381,21 +380,25 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
-        if (cepos_send_pending()) {
-            cepos_flush();
-        }
-        ts3d_apply();
-        server_profile_tick();
-        chan_tick();
-        if (ts3_audio_has_pending_unmutes()) {
-            ts3_audio_flush_unmutes();
+        /* cepos_on_plugin_command already updates the table and recomputes the
+           invoker's audio snapshot. Defer own send, 3D, channel, and unmute
+           work to CEDRAIN — never run the full drain per packet (200+ players
+           @ 1 Hz CEPOS would flood the callback thread). */
+        if (cepos_send_pending() || ts3_audio_has_pending_unmutes()) {
+            ts3_request_wakeup();
         }
         return;
     }
 
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
-        /* Each step is gated — foreign clients' wakeups must not run our full
-           drain (cepos/3D/unmute) when this client has nothing pending. */
+        if (!ts3_cmd_queue_nonempty()
+            && !voice_mode_has_pending_notify()
+            && !ts3_plugin_has_pending_chat()
+            && !cepos_send_pending()
+            && !ts3_audio_has_pending_unmutes()
+            && !chan_has_pending_work()) {
+            return;
+        }
         if (ts3_cmd_queue_nonempty()) {
             ts3_cmd_queue_drain();
         }
@@ -441,6 +444,7 @@ static void ts3_on_client_move(uint64 serverConnectionHandlerID, anyID clientID,
     if (clientID != 0 && clientID == ts3_get_local_client_id()) {
         chan_on_own_move(newChannelID);
         ts3_sync_overlay_channel_state(newChannelID);
+        chan_tick(); /* re-evaluate hub/ingame placement after manual moves */
         return;
     }
     if (newChannelID == 0 && clientID != 0) {

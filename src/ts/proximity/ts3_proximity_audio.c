@@ -14,6 +14,7 @@
 #define TS3_AUDIO_MAX_CLIENT   65536  /* anyID is uint16 — index by clientID directly */
 #define TS3_UNMUTE_REARM_MS    2000
 #define TS3_UNMUTE_BATCH_MAX   64
+#define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue — avoids O(65536) scan */
 #define TS3_AUDIBLE_GAIN       0.001f
 #define TS3_CEPOS_PI           3.14159265f
 #define TS3_LPF_BYPASS_HZ      19000.0f
@@ -44,8 +45,16 @@ static float g_renderGain[TS3_AUDIO_MAX_CLIENT];
 /* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
 static volatile long g_pendingUnmute[TS3_AUDIO_MAX_CLIENT];
 static volatile long g_pendingUnmuteCount = 0;
+static anyID g_unmuteRing[TS3_UNMUTE_RING_SIZE];
+static volatile long g_unmuteRingWrite = 0;
+static volatile long g_unmuteRingRead = 0;
 static char g_clientUnlocked[TS3_AUDIO_MAX_CLIENT];       /* callback thread only */
 static ULONGLONG g_lastUnmuteMs[TS3_AUDIO_MAX_CLIENT];    /* callback thread only */
+
+static void unmute_ring_push(anyID clientID) {
+    const long w = InterlockedIncrement(&g_unmuteRingWrite) - 1;
+    g_unmuteRing[w % TS3_UNMUTE_RING_SIZE] = clientID;
+}
 
 static void audio_signal_unmute_flag_only(anyID clientID);
 
@@ -142,7 +151,7 @@ static LpfState g_lpf[TS3_AUDIO_MAX_CLIENT];
 /* Schroeder cave reverb (comb + allpass), same tuning as the old plugin.
    Fixed static pool — no malloc anywhere near the audio path. Slots are
    assigned/released on the writer side; the audio thread only indexes. */
-#define CAVE_SLOTS        8
+#define CAVE_SLOTS        32
 #define CAVE_COMBS        4
 #define CAVE_ALLPASS      2
 #define CAVE_PREDELAY     1680  /* ~35 ms */
@@ -647,6 +656,7 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
 static void audio_signal_unmute_flag_only(anyID clientID) {
     if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 1, 0) == 0) {
         InterlockedIncrement(&g_pendingUnmuteCount);
+        unmute_ring_push(clientID);
     }
 }
 
@@ -656,6 +666,7 @@ void ts3_audio_signal_unmute(anyID clientID) {
     }
     if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 1, 0) == 0) {
         InterlockedIncrement(&g_pendingUnmuteCount);
+        unmute_ring_push(clientID);
         /* Wakeup sends a plugin command — never do that from the audio thread.
            Audio-thread callers use the flag-only path below. */
         ts3_request_wakeup();
@@ -676,19 +687,50 @@ void ts3_audio_flush_unmutes(void) {
     anyID batch[TS3_UNMUTE_BATCH_MAX];
     int batchCount = 0;
 
-    /* Loop counter must be wider than anyID (uint16): i < 65536 would be
-       always true for a uint16 counter -> infinite loop on the callback
-       thread (TS froze at startup before the main window appeared). */
-    for (int i = 1; i < TS3_AUDIO_MAX_CLIENT && batchCount < TS3_UNMUTE_BATCH_MAX - 1; i++) {
-        if (InterlockedCompareExchange(&g_pendingUnmute[i], 0, 0) == 0) {
+    const long writeIdx = InterlockedCompareExchange(&g_unmuteRingWrite, 0, 0);
+    long readIdx = InterlockedCompareExchange(&g_unmuteRingRead, 0, 0);
+
+    while (readIdx < writeIdx && batchCount < TS3_UNMUTE_BATCH_MAX - 1) {
+        const anyID id = g_unmuteRing[readIdx % TS3_UNMUTE_RING_SIZE];
+        readIdx++;
+        if (id == 0 || id >= TS3_AUDIO_MAX_CLIENT) {
             continue;
         }
-        /* First unmute is immediate; re-unmute of an already unlocked client is
-           rate-limited. Pending flag stays set until the API call really runs. */
-        if (g_clientUnlocked[i] && now - g_lastUnmuteMs[i] < TS3_UNMUTE_REARM_MS) {
+        if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 0) == 0) {
             continue;
         }
-        batch[batchCount++] = (anyID)i;
+        if (g_clientUnlocked[id] && now - g_lastUnmuteMs[id] < TS3_UNMUTE_REARM_MS) {
+            continue;
+        }
+        batch[batchCount++] = id;
+    }
+    InterlockedExchange(&g_unmuteRingRead, readIdx);
+
+    /* Ring may have wrapped while flags remain — scan ring slots once. */
+    if (batchCount == 0
+        && InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0) {
+        for (int i = 0; i < TS3_UNMUTE_RING_SIZE && batchCount < TS3_UNMUTE_BATCH_MAX - 1; i++) {
+            const anyID id = g_unmuteRing[i];
+            if (id == 0 || id >= TS3_AUDIO_MAX_CLIENT) {
+                continue;
+            }
+            if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 0) == 0) {
+                continue;
+            }
+            if (g_clientUnlocked[id] && now - g_lastUnmuteMs[id] < TS3_UNMUTE_REARM_MS) {
+                continue;
+            }
+            int dup = 0;
+            for (int j = 0; j < batchCount; j++) {
+                if (batch[j] == id) {
+                    dup = 1;
+                    break;
+                }
+            }
+            if (!dup) {
+                batch[batchCount++] = id;
+            }
+        }
     }
 
     if (batchCount == 0) {
@@ -767,4 +809,7 @@ void ts3_audio_reset(void) {
         InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);
+    InterlockedExchange(&g_unmuteRingWrite, 0);
+    InterlockedExchange(&g_unmuteRingRead, 0);
+    memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
 }
