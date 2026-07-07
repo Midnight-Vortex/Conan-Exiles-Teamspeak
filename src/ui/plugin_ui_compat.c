@@ -734,7 +734,7 @@ void ts3_adapter_print_chat(const char* message) {
     }
     ts3_queue_chat_message(message);
     if (ts3_is_connected()) {
-        ts3_request_wakeup();
+        ts3_request_wakeup_urgent();
     }
 }
 

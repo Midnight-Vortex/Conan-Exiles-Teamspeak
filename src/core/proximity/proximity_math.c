@@ -1,7 +1,11 @@
 #include "core/proximity/proximity_math.h"
 #include "core/util/log.h"
+#include "core/util/poll_interval.h"
 
 #include <math.h>
+
+/* Match ts3_cepos.c — movement self-test models discrete CEPOS sends. */
+#define PROX_TEST_CEPOS_EPS_M       0.08f
 
 float prox_distance(float x1, float y1, float z1, float x2, float y2, float z2) {
     const float dx = x2 - x1;
@@ -169,6 +173,112 @@ float prox_direct_reverb_ratio(float distanceMeters, float referenceDistanceMete
     return drr;
 }
 
+typedef struct ProxMoveProfile {
+    const char* label;
+    float speedMps;
+} ProxMoveProfile;
+
+/* Approximate Conan Exiles horizontal speeds (m/s). */
+static const ProxMoveProfile s_moveProfiles[] = {
+    { "walk",   3.0f },
+    { "jog",    5.5f },
+    { "sprint", 7.5f },
+    { "mount",  12.0f },
+    { "fly",    25.0f },
+};
+
+static void prox_test_flyby(float voiceDist, float cpaMeters) {
+    const float dt = PLUGIN_POLL_INTERVAL_MS / 1000.0f;
+    const float startZ = -(voiceDist * 1.15f + 10.0f);
+    const float endZ = -startZ;
+
+    log_write("PROX-TEST: fly-by CPA=%.0fm voice=%.0fm (dt=%dms eps=%.2fm)",
+        cpaMeters, voiceDist, PLUGIN_POLL_INTERVAL_MS, PROX_TEST_CEPOS_EPS_M);
+
+    for (int p = 0; p < (int)(sizeof(s_moveProfiles) / sizeof(s_moveProfiles[0])); p++) {
+        const ProxMoveProfile* profile = &s_moveProfiles[p];
+        float z = startZ;
+        float lastSentZ = startZ - PROX_TEST_CEPOS_EPS_M * 2.0f;
+        int ceposUpdates = 0;
+        float audibleMs = 0.0f;
+        float peakVol = 0.0f;
+        float minDist = 1e9f;
+        float volAtCpa = 0.0f;
+        int loggedCpa = 0;
+
+        while (z <= endZ + 1e-4f) {
+            const float dist = sqrtf(cpaMeters * cpaMeters + z * z);
+            const float vol = prox_volume_from_distance(dist, voiceDist, 1.0f);
+
+            if (dist < minDist) {
+                minDist = dist;
+            }
+            if (!loggedCpa && z >= -PROX_TEST_CEPOS_EPS_M) {
+                volAtCpa = vol;
+                loggedCpa = 1;
+            }
+            if (vol > 0.001f) {
+                audibleMs += dt * 1000.0f;
+            }
+            if (vol > peakVol) {
+                peakVol = vol;
+            }
+            if (fabsf(z - lastSentZ) >= PROX_TEST_CEPOS_EPS_M) {
+                ceposUpdates++;
+                lastSentZ = z;
+            }
+
+            z += profile->speedMps * dt;
+        }
+
+        log_write("PROX-TEST:   %-6s %4.1f m/s -> audible %4.0fms peak=%.3f cpaVol=%.3f minDist=%.1fm cepos=%d",
+            profile->label, profile->speedMps, audibleMs, peakVol, volAtCpa, minDist, ceposUpdates);
+    }
+}
+
+static void prox_test_approach(float voiceDist) {
+    const float dt = PLUGIN_POLL_INTERVAL_MS / 1000.0f;
+    const float startDist = voiceDist * 1.25f + 5.0f;
+
+    log_write("PROX-TEST: head-on approach from %.0fm voice=%.0fm (dt=%dms eps=%.2fm)",
+        startDist, voiceDist, PLUGIN_POLL_INTERVAL_MS, PROX_TEST_CEPOS_EPS_M);
+
+    for (int p = 0; p < (int)(sizeof(s_moveProfiles) / sizeof(s_moveProfiles[0])); p++) {
+        const ProxMoveProfile* profile = &s_moveProfiles[p];
+        float dist = startDist;
+        float lastSentDist = startDist + PROX_TEST_CEPOS_EPS_M;
+        int ceposUpdates = 0;
+        float timeToAudibleMs = -1.0f;
+        float timeToPeakMs = 0.0f;
+        float peakVol = 0.0f;
+        float elapsedMs = 0.0f;
+
+        while (dist > 0.5f) {
+            const float vol = prox_volume_from_distance(dist, voiceDist, 1.0f);
+
+            if (fabsf(dist - lastSentDist) >= PROX_TEST_CEPOS_EPS_M) {
+                ceposUpdates++;
+                lastSentDist = dist;
+            }
+            if (timeToAudibleMs < 0.0f && vol > 0.001f) {
+                timeToAudibleMs = elapsedMs;
+            }
+            if (vol >= peakVol) {
+                peakVol = vol;
+                timeToPeakMs = elapsedMs;
+            }
+
+            dist -= profile->speedMps * dt;
+            elapsedMs += dt * 1000.0f;
+        }
+
+        log_write("PROX-TEST:   %-6s %4.1f m/s -> toAudible %4.0fms toPeak %4.0fms peak=%.3f cepos=%d",
+            profile->label, profile->speedMps,
+            timeToAudibleMs < 0.0f ? 0.0f : timeToAudibleMs,
+            timeToPeakMs, peakVol, ceposUpdates);
+    }
+}
+
 void prox_math_self_test(void) {
     const float voiceDist = 13.0f;
     log_write("PROX-TEST: volume curve (voiceDistance=%.1f, maxVolume=1.0)", voiceDist);
@@ -191,4 +301,11 @@ void prox_math_self_test(void) {
 
     log_write("PROX-TEST: distance (0,0,0)->(3,4,0) = %.1f (expect 5.0)",
         prox_distance(0, 0, 0, 3, 4, 0));
+
+  {
+    const float normalVoice = 15.0f;
+    prox_test_flyby(normalVoice, 5.0f);
+    prox_test_flyby(normalVoice, 10.0f);
+    prox_test_approach(normalVoice);
+  }
 }

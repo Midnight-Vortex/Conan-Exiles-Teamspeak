@@ -177,12 +177,12 @@ void voice_mode_apply(VoiceMode mode) {
     }
     InterlockedExchange(&g_currentMode, (long)mode);
 
+    voice_mode_notify_mode(mode);
+
     /* New distance must reach the other clients right away. */
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
 
-    voice_mode_notify_mode(mode);
-    ts3_request_wakeup();
     updateVoiceOverlay();
 }
 

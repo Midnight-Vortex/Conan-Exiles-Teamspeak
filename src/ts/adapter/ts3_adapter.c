@@ -305,26 +305,39 @@ int ts3_cmd_queue_nonempty(void) {
 
 /* ---- 3.3 wakeup ----------------------------------------------------------- */
 
-void ts3_request_wakeup(void) {
-    static volatile LONG64 s_lastWakeMs = 0;
+static volatile LONG64 s_lastWakeMs = 0;
 
+static void ts3_send_wakeup(int urgent) {
     if (!g_ts3FunctionsSet || !ts3_is_connected()
         || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
         return;
     }
 
-    /* Rate limit: one wakeup round trip per PLUGIN_POLL_INTERVAL_MS. */
     LONG64 now = (LONG64)GetTickCount64();
-    LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
-    if (now - last < PLUGIN_POLL_INTERVAL_MS) {
-        return;
+    if (!urgent) {
+        /* Rate limit: one wakeup round trip per PLUGIN_POLL_INTERVAL_MS. */
+        LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
+        if (now - last < PLUGIN_POLL_INTERVAL_MS) {
+            return;
+        }
+        if (InterlockedCompareExchange64(&s_lastWakeMs, now, last) != last) {
+            return; /* someone else just sent one */
+        }
     }
-    if (InterlockedCompareExchange64(&s_lastWakeMs, now, last) != last) {
-        return; /* someone else just sent one */
+    else {
+        InterlockedExchange64(&s_lastWakeMs, now);
     }
 
     g_ts3.sendPluginCommand(g_activeConnection, g_pluginID, "CEDRAIN:1",
         PluginCommandTarget_SERVER, NULL, NULL);
+}
+
+void ts3_request_wakeup(void) {
+    ts3_send_wakeup(0);
+}
+
+void ts3_request_wakeup_urgent(void) {
+    ts3_send_wakeup(1);
 }
 
 /* ---- plugin commands -------------------------------------------------------- */

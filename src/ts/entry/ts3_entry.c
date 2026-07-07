@@ -417,6 +417,10 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         if (ts3_audio_has_pending_unmutes()) {
             ts3_audio_flush_unmutes();
         }
+        /* Chat may be queued from a hotkey thread while we were draining. */
+        if (ts3_plugin_has_pending_chat()) {
+            ts3_request_wakeup_urgent();
+        }
     }
 }
 

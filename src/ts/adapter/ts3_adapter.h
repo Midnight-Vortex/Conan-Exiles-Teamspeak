@@ -86,6 +86,10 @@ int ts3_cmd_queue_nonempty(void);
    Rate-limited to one server round trip per PLUGIN_POLL_INTERVAL_MS. */
 void ts3_request_wakeup(void);
 
+/* Same as ts3_request_wakeup but bypasses the rate limit — for chat/UI
+   feedback that must not wait for the next CEPOS/CEDRAIN cycle. */
+void ts3_request_wakeup_urgent(void);
+
 /* ---- 3.4 channel queries (TS callback thread ONLY) ----------------------- */
 
 /* Channel of a client, 0 on error. */
