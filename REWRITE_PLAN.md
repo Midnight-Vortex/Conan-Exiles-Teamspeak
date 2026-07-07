@@ -74,10 +74,10 @@ E:\programme\Conan-Exiles-Teamspeak\
 
 ## 📌 AKTUELLER STAND (Stand: 2026-07-07)
 
-**Phase 0–13 sind implementiert und kompilieren fehlerfrei (Release x64).**
-**Nächster Schritt: Phase 14 (Cleanup / Härtetest).**
+**Phase 0–14 sind implementiert und kompilieren fehlerfrei (Release x64).**
+**Der Code-Teil des Rewrites ist damit KOMPLETT. Nächster Schritt: Tests im echten TS-Client (inkl. 14.3 Lasttest mit 20+ Spielern).**
 
-Noch offen vor dem Weiterbauen: Phasen 0–13 im echten TS-Client testen (Plugin laden,
+Noch offen: Phasen 0–14 im echten TS-Client testen (Plugin laden,
 verbinden, mit 2 Clients Positionen austauschen, Lautstärke/Pan/Richtung prüfen,
 Auto-Move hub ↔ ingame, Hub-Stummschaltung, Root-Beschreibung ändern → Werte im Log,
 Zonen: Soundproof-Mute + Höhlen-Hall + Lowpass, Voice-Modes per Hotkey wechseln,
@@ -106,9 +106,10 @@ Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exile
 | Nickname-Anonymisierung | `src\core\nick\nick_anonymize.c/.h` (8–10 Zufallsziffern, Rename VOR dem Ingame-Move, Kollisionscheck im Zielchannel, Hub-Restore) | 12 |
 | Voice-Overlay (HUD) | `src\ui\overlay\voice_overlay.c/.h` (eigener UI-Thread + Message-Loop, Click-Through, Modus + Zone, Themes/Position/Größe aus plugin.cfg) | 13 |
 | Einstellungs-Dialog | `src\ui\dialogs\ui_settings.c/.h` (F10, Pfad/Distanzen/Hotkeys/Toggles/HUD; Staging-Config, Anwendung auf Callback-Thread via CEDRAIN) | 13 |
+| Cleanup / Härtung | in `ts3_entry.c` (dokumentierte Shutdown-Sequenz 14.1, Reconnect-/Serverwechsel-Reset aller Caches, Multi-Tab-Guard: fremde Verbindungen werden ignoriert) | 14 |
 
-Hinweis für neuen Chat / anderen PC: Einfach sagen „Führe REWRITE_PLAN.md fort,
-Phase 0–13 fertig, weiter mit Phase 14“. Build-Befehl: MSBuild auf
+Hinweis für neuen Chat / anderen PC: Phase 0–14 sind fertig gebaut — es bleibt
+das Testen im echten TS-Client. Build-Befehl: MSBuild auf
 `project\Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) oder `build\build_msvc.ps1`.
 
 ---
@@ -131,7 +132,7 @@ Phase 0–13 fertig, weiter mit Phase 14“. Build-Befehl: MSBuild auf
 | 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout | ✅ gebaut (2026-07-07), Test offen |
 | 12 | Nickname-Anonymisierung | Zufallsnummern ingame | ✅ gebaut (2026-07-07), Test offen |
 | 13 | UI (Dialoge + Overlay) | Einstellungsfenster + Overlay | ✅ gebaut (2026-07-07), Test offen |
-| 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler | ⏳ nächster Schritt |
+| 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler | ✅ 14.1+14.2 gebaut (2026-07-07); 14.3 Lasttest offen |
 
 **Reihenfolge ist bindend.** Keine Phase beginnt, bevor die vorherige im echten TS-Client getestet wurde.
 

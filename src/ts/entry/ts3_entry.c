@@ -83,11 +83,27 @@ int ts3plugin_init(void) {
     return 0;
 }
 
+/* 14.1 fixed shutdown sequence:
+   1. audio gate -> passthrough (PCM path inert, no snapshot reads matter)
+   2. UI thread down (overlay + settings dialog)
+   3. pos watcher thread down (no more update callbacks)
+   4. module state cleared (no TS API calls in any of these)
+   5. adapter down (command queue emptied, connection flags cleared)
+   6. log closed LAST so every step above can still log. */
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
+    ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     overlay_stop();
     pos_watcher_stop();
+    player_table_clear();
+    cepos_reset();
+    ts3d_reset();
+    chan_reset();
+    server_profile_reset();
+    nick_reset();
+    ts3_audio_reset();
     ts3_adapter_shutdown();
+    log_write("SHUTDOWN: done");
     log_close();
 }
 
@@ -97,6 +113,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
     ts3_on_connect_status_changed(serverConnectionHandlerID, newStatus);
 
     if (newStatus == STATUS_DISCONNECTED) {
+        player_table_clear();
         cepos_reset();
         ts3_audio_reset();
         ts3d_reset();
@@ -107,7 +124,10 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
     }
 
     if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
+        /* 14.2 server switch: every per-connection cache starts empty. */
+        player_table_clear();
         cepos_reset();
+        ts3_audio_reset();
         ts3d_reset();
         chan_reset();
         server_profile_reset();
@@ -127,11 +147,15 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
 }
 
 void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char* pluginName, const char* pluginCommand, anyID invokerClientID, const char* invokerName, const char* invokerUniqueIdentity) {
-    (void)serverConnectionHandlerID;
     (void)invokerName;
     (void)invokerUniqueIdentity;
 
     ts3_thread_mark_callback();
+
+    /* 14.2 multi-tab hardening: only the active connection drives the plugin. */
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
         ts3d_apply();
@@ -154,8 +178,11 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
 }
 
 void ts3plugin_onEditPlaybackVoiceDataEvent(uint64 serverConnectionHandlerID, anyID clientID, short* samples, int sampleCount, int channels) {
-    (void)serverConnectionHandlerID;
-    /* Audio thread — no API calls, no locks, snapshot reads only. */
+    /* Audio thread — no API calls, no locks, snapshot reads only. Voice from
+       other server tabs passes through untouched (14.2). */
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
     ts3_audio_process_playback(clientID, samples, sampleCount, channels);
 }
 
@@ -166,8 +193,11 @@ void ts3plugin_onCustom3dRolloffCalculationClientEvent(uint64 serverConnectionHa
 }
 
 /* Shared handler for both move event flavors (self move / moved by admin). */
-static void ts3_on_client_move(anyID clientID, uint64 newChannelID) {
+static void ts3_on_client_move(uint64 serverConnectionHandlerID, anyID clientID, uint64 newChannelID) {
     ts3_thread_mark_callback();
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
     if (clientID != 0 && clientID == ts3_get_local_client_id()) {
         chan_on_own_move(newChannelID);
         return;
@@ -181,26 +211,26 @@ static void ts3_on_client_move(anyID clientID, uint64 newChannelID) {
 }
 
 void ts3plugin_onClientMoveEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, const char* moveMessage) {
-    (void)serverConnectionHandlerID;
     (void)oldChannelID;
     (void)visibility;
     (void)moveMessage;
-    ts3_on_client_move(clientID, newChannelID);
+    ts3_on_client_move(serverConnectionHandlerID, clientID, newChannelID);
 }
 
 void ts3plugin_onClientMoveMovedEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, anyID moverID, const char* moverName, const char* moverUniqueIdentifier, const char* moveMessage) {
-    (void)serverConnectionHandlerID;
     (void)oldChannelID;
     (void)visibility;
     (void)moverID;
     (void)moverName;
     (void)moverUniqueIdentifier;
     (void)moveMessage;
-    ts3_on_client_move(clientID, newChannelID);
+    ts3_on_client_move(serverConnectionHandlerID, clientID, newChannelID);
 }
 
 void ts3plugin_onChannelDescriptionUpdateEvent(uint64 serverConnectionHandlerID, uint64 channelID) {
-    (void)serverConnectionHandlerID;
     ts3_thread_mark_callback();
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
     server_profile_on_description_update(channelID);
 }
