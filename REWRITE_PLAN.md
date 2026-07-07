@@ -74,12 +74,13 @@ E:\programme\Conan-Exiles-Teamspeak\
 
 ## 📌 AKTUELLER STAND (Stand: 2026-07-07)
 
-**Phase 0–9 sind implementiert und kompilieren fehlerfrei (Release x64).**
-**Nächster Schritt: Phase 10 (Zonen-Effekte).**
+**Phase 0–10 sind implementiert und kompilieren fehlerfrei (Release x64).**
+**Nächster Schritt: Phase 11 (Voice-Modes + Hotkeys).**
 
-Noch offen vor dem Weiterbauen: Phasen 0–9 im echten TS-Client testen (Plugin laden,
+Noch offen vor dem Weiterbauen: Phasen 0–10 im echten TS-Client testen (Plugin laden,
 verbinden, mit 2 Clients Positionen austauschen, Lautstärke/Pan/Richtung prüfen,
-Auto-Move hub ↔ ingame, Hub-Stummschaltung, Root-Beschreibung ändern → Werte im Log).
+Auto-Move hub ↔ ingame, Hub-Stummschaltung, Root-Beschreibung ändern → Werte im Log,
+Zonen: Soundproof-Mute + Höhlen-Hall + Lowpass).
 
 Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exiles-TeamSpeak.vcxproj`):
 
@@ -98,9 +99,11 @@ Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exile
 | Channel-Management | `src\core\channel\channel_manage.c/.h` (hub/ingame per Name, Move mit In-Flight+Cooldown, Playback-Gate) | 8 |
 | Hub-Parser | `src\core\hub\hub_parser.c/.h` (reine Parse-Funktion: [GLOBAL] + [ZONES], validiert) | 9 |
 | Server-Profil | `src\ts\profile\ts3_server_profile.c/.h` (Root-Beschreibung anfordern, max 1 in-flight, Profil aktiv halten) | 9 |
+| Zonen | `src\core\proximity\zone_resolve.c/.h` (Punkt-in-Quad + Höhenband, Soundproof/Reverb-Regeln, pur) | 10 |
+| Zonen-FX | in `ts3_proximity_audio.c` (Snapshot-Felder cutoff/soundproof/reverbSlot, LPF + Cave-Reverb, statischer Pool) | 10 |
 
 Hinweis für neuen Chat / anderen PC: Einfach sagen „Führe REWRITE_PLAN.md fort,
-Phase 0–9 fertig, weiter mit Phase 10“. Build-Befehl: MSBuild auf
+Phase 0–10 fertig, weiter mit Phase 11“. Build-Befehl: MSBuild auf
 `project\Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) oder `build\build_msvc.ps1`.
 
 ---
@@ -119,8 +122,8 @@ Phase 0–9 fertig, weiter mit Phase 10“. Build-Befehl: MSBuild auf
 | 7 | 3D-Audio / Stereo-Pan | Richtungshören funktioniert | ✅ gebaut (2026-07-07), Test offen |
 | 8 | Channel-Management | Auto-Move hub ↔ ingame | ✅ gebaut (2026-07-07), Test offen |
 | 9 | Hub-Parser / Server-Profil | Einstellungen aus Channel-Beschreibung | ✅ gebaut (2026-07-07), Test offen |
-| 10 | Zonen-Effekte | Soundproof / Reverb / Lowpass | ⏳ nächster Schritt |
-| 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout | offen |
+| 10 | Zonen-Effekte | Soundproof / Reverb / Lowpass | ✅ gebaut (2026-07-07), Test offen |
+| 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout | ⏳ nächster Schritt |
 | 12 | Nickname-Anonymisierung | Zufallsnummern ingame | offen |
 | 13 | UI (Dialoge + Overlay) | Einstellungsfenster + Overlay | offen |
 | 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler | offen |

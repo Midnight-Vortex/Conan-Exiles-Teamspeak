@@ -74,6 +74,7 @@ static float hub_parse_clamped(const char* value, float minV, float maxV) {
 static void hub_defaults(HubSettings* out) {
     memset(out, 0, sizeof(*out));
     out->audioMaxVolume = 1.0f;
+    out->audioMinDistance = 1.0f;
 }
 
 /* ---- [GLOBAL] section ---------------------------------------------------- */
@@ -83,6 +84,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
 
     if ((v = hub_value_for(line, "AudioMaxVolume")) != NULL) {
         out->audioMaxVolume = hub_parse_clamped(v, 0.0f, 1.0f);
+    }
+    else if ((v = hub_value_for(line, "AudioMinDistance")) != NULL) {
+        out->audioMinDistance = hub_parse_clamped(v, 0.1f, HUB_DIST_MAX);
     }
     else if ((v = hub_value_for(line, "MinimumWisper")) != NULL) {
         out->minWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
@@ -153,6 +157,7 @@ static void hub_parse_zone_line(const char* line, HubZone* zone) {
     else if ((v = hub_value_for(line, "Z3")) != NULL) zone->z3 = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "X4")) != NULL) zone->x4 = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "Z4")) != NULL) zone->z4 = hub_parse_clamped(v, -1e7f, 1e7f);
+    else if ((v = hub_value_for(line, "AudioMinDistance")) != NULL) zone->audioMinDistance = hub_parse_clamped(v, 0.1f, HUB_DIST_MAX);
     else if ((v = hub_value_for(line, "GroundY")) != NULL) zone->groundY = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "TopY")) != NULL) zone->topY = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "Wisper")) != NULL) zone->whisperDist = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);

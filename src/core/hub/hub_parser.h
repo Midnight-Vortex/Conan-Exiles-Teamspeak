@@ -37,6 +37,7 @@ typedef struct HubZone {
     float x1, z1, x2, z2, x3, z3, x4, z4; /* quad corners, world meters */
     float groundY, topY;                  /* 0/0 = unbounded */
     float whisperDist, normalDist, shoutDist; /* 0 = no override */
+    float audioMinDistance;               /* DRR reference, 0 = use global */
     int soundproof;
     int reverb;
 } HubZone;
@@ -44,7 +45,8 @@ typedef struct HubZone {
 typedef struct HubSettings {
     int valid;              /* 1 when a [GLOBAL] section was found */
 
-    float audioMaxVolume;   /* gain cap 0..1; 1.0 when absent */
+    float audioMaxVolume;    /* gain cap 0..1; 1.0 when absent */
+    float audioMinDistance;  /* DRR reference distance, meters; 1.0 default */
     float minWhisper, maxWhisper;
     float minNormal, maxNormal;
     float minShout, maxShout;

@@ -112,6 +112,25 @@ void prox_stereo_pan(float localDirX, float localDirZ,
     *outRight = sinf(angle);
 }
 
+float prox_lowpass_cutoff_hz(float distanceMeters) {
+    const float MAX_CUTOFF = 8000.0f;
+    const float MIN_CUTOFF = 900.0f;
+
+    float d = distanceMeters;
+    if (d < 1.0f) {
+        d = 1.0f;
+    }
+
+    float cutoff = MAX_CUTOFF * expf(-0.15f * logf(d + 1.0f));
+    if (cutoff < MIN_CUTOFF) {
+        cutoff = MIN_CUTOFF;
+    }
+    if (cutoff > MAX_CUTOFF) {
+        cutoff = MAX_CUTOFF;
+    }
+    return cutoff;
+}
+
 void prox_math_self_test(void) {
     const float voiceDist = 13.0f;
     log_write("PROX-TEST: volume curve (voiceDistance=%.1f, maxVolume=1.0)", voiceDist);

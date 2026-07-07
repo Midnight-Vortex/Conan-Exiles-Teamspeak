@@ -27,6 +27,10 @@ void prox_stereo_pan(float localDirX, float localDirZ,
     float toRemoteX, float toRemoteZ,
     float* outLeft, float* outRight);
 
+/* Phase 10.3: low-pass cutoff vs distance (same curve as the old plugin,
+   ~8 kHz close up down to 900 Hz far away). Pure, any thread. */
+float prox_lowpass_cutoff_hz(float distanceMeters);
+
 /* Log a fixed-value table through log_write (Phase 5 test aid). */
 void prox_math_self_test(void);
 
