@@ -11,6 +11,8 @@
 #include <string.h>
 
 #define POS_STALE_MS            5000
+#define POS_COORD_GRACE_MS      15000  /* keep valid after last good read when file goes stale */
+#define POS_FRESH_ACCEPT_MS     2000   /* cold-start: accept without write-change only when very fresh */
 #define POS_LOG_THROTTLE_MS     30000
 #define POS_AUTODETECT_RETRY_MS 15000
 
@@ -18,6 +20,8 @@
 static CRITICAL_SECTION g_posLock;
 static PosSample g_currentSample;
 static volatile long g_coordinatesValid = 0;
+static ULONGLONG g_lastValidTick = 0;
+static ULONGLONG g_lastFileWriteQuad = 0;
 
 static HANDLE g_watcherThread = NULL;
 static HANDLE g_stopEvent = NULL;
@@ -117,26 +121,37 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
 
 /* ---- 2.3 staleness ------------------------------------------------------ */
 
-/* Milliseconds since Pos.txt was last written, or MAXULONGLONG if missing. */
-static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
+static int pos_get_file_write_quad(const wchar_t* filePath, ULONGLONG* outQuad) {
     WIN32_FIND_DATAW findData;
     HANDLE hFind = FindFirstFileW(filePath, &findData);
     if (hFind == INVALID_HANDLE_VALUE) {
-        return MAXULONGLONG;
+        return 0;
     }
     FindClose(hFind);
 
-    FILETIME ftNow;
-    GetSystemTimeAsFileTime(&ftNow);
-    ULARGE_INTEGER now, written;
-    now.LowPart = ftNow.dwLowDateTime;
-    now.HighPart = ftNow.dwHighDateTime;
+    ULARGE_INTEGER written;
     written.LowPart = findData.ftLastWriteTime.dwLowDateTime;
     written.HighPart = findData.ftLastWriteTime.dwHighDateTime;
-    if (written.QuadPart > now.QuadPart) {
+    *outQuad = written.QuadPart;
+    return 1;
+}
+
+/* Milliseconds since Pos.txt was last written, or MAXULONGLONG if missing. */
+static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
+    ULONGLONG writtenQuad = 0;
+    if (!pos_get_file_write_quad(filePath, &writtenQuad)) {
+        return MAXULONGLONG;
+    }
+
+    FILETIME ftNow;
+    GetSystemTimeAsFileTime(&ftNow);
+    ULARGE_INTEGER now;
+    now.LowPart = ftNow.dwLowDateTime;
+    now.HighPart = ftNow.dwHighDateTime;
+    if (writtenQuad > now.QuadPart) {
         return 0;
     }
-    return (now.QuadPart - written.QuadPart) / 10000ULL;
+    return (now.QuadPart - writtenQuad) / 10000ULL;
 }
 
 /* ---- path validation ---------------------------------------------------- */
@@ -242,13 +257,33 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
         const ULONGLONG age = pos_file_write_age_ms(filePath);
         const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
 
+        ULONGLONG writeQuad = 0;
+        int writeChanged = 0;
+        if (pos_get_file_write_quad(filePath, &writeQuad)) {
+            writeChanged = (g_lastFileWriteQuad != 0 && writeQuad != g_lastFileWriteQuad);
+            g_lastFileWriteQuad = writeQuad;
+        }
+
         PosSample sample;
-        if (fileActive && pos_file_read_once(filePath, &sample)) {
+        memset(&sample, 0, sizeof(sample));
+        const int readOk = fileActive && pos_file_read_once(filePath, &sample);
+        const int currentlyValid = InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
+        int acceptRead = readOk;
+        if (readOk && !currentlyValid) {
+            /* Reject leftover Pos.txt from a previous session (old plugin rule). */
+            acceptRead = writeChanged
+                || age <= POS_FRESH_ACCEPT_MS
+                || (lastSeq >= 0 && sample.seq != lastSeq);
+        }
+
+        if (acceptRead) {
             EnterCriticalSection(&g_posLock);
             g_currentSample = sample;
             LeaveCriticalSection(&g_posLock);
 
-            if (!InterlockedCompareExchange(&g_coordinatesValid, 0, 0)) {
+            g_lastValidTick = now;
+
+            if (!currentlyValid) {
                 log_write("POS: coordinates valid (seq=%d pos=%.1f/%.1f/%.1f yaw=%.1f)",
                     sample.seq, sample.x, sample.y, sample.z, sample.yaw);
             }
@@ -269,16 +304,33 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             }
         }
         else {
-            if (InterlockedCompareExchange(&g_coordinatesValid, 0, 0)) {
-                log_write("POS: coordinates invalid (file %s, age=%llums)",
+            const int inGrace = currentlyValid
+                && g_lastValidTick != 0
+                && now - g_lastValidTick < POS_COORD_GRACE_MS;
+
+            if (inGrace) {
+                /* File stale/missing briefly — keep last good coords (login tolerance). */
+            }
+            else if (currentlyValid) {
+                log_write("POS: coordinates invalid (file %s, age=%llums, grace=%llums)",
                     age == MAXULONGLONG ? "missing" : "stale",
-                    age == MAXULONGLONG ? 0ULL : (unsigned long long)age);
+                    age == MAXULONGLONG ? 0ULL : (unsigned long long)age,
+                    g_lastValidTick != 0 ? (unsigned long long)(now - g_lastValidTick) : 0ULL);
                 InterlockedExchange(&g_coordinatesValid, 0);
+                g_lastValidTick = 0;
                 if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
                     g_updateCallback(); /* one shot on the valid->invalid edge */
                 }
             }
-            InterlockedExchange(&g_coordinatesValid, 0);
+            else {
+                InterlockedExchange(&g_coordinatesValid, 0);
+            }
+
+            if (readOk && !acceptRead && now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                lastValidLog = now;
+                log_debug("POS: read rejected (stale leftover? age=%llums seq=%d writeChanged=%d)",
+                    (unsigned long long)age, sample.seq, writeChanged);
+            }
 
             if (age == MAXULONGLONG && now - lastMissingLog > POS_LOG_THROTTLE_MS) {
                 lastMissingLog = now;
@@ -305,6 +357,8 @@ void pos_watcher_start(void) {
     InitializeCriticalSection(&g_posLock);
     memset(&g_currentSample, 0, sizeof(g_currentSample));
     InterlockedExchange(&g_coordinatesValid, 0);
+    g_lastValidTick = 0;
+    g_lastFileWriteQuad = 0;
 
     g_stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!g_stopEvent) {

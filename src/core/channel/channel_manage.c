@@ -15,6 +15,7 @@
 #define CHAN_FIND_RETRY_MS        5000  /* re-resolve missing channels */
 #define CHAN_MOVE_COOLDOWN_MS     2000  /* min gap between two move requests */
 #define CHAN_MOVE_INFLIGHT_MAX_MS 5000  /* stuck in-flight flag times out */
+#define CHAN_INGAME_DWELL_MS      30000 /* after ingame arrival: no hub bounce during login */
 #define CHAN_MAX_CHANNELS         128
 #define CHAN_IGNORE_CACHE_SIZE    16
 #define CHAN_IGNORE_CACHE_TTL_MS  30000
@@ -30,6 +31,7 @@ static ULONGLONG g_lastMoveMs = 0;
 static ULONGLONG g_lastTickMs = 0;
 static volatile long g_positionUpdatePending = 0;
 static ULONGLONG g_lastMoveSkipLogMs = 0;
+static ULONGLONG g_ingameArrivalMs = 0;
 
 static struct {
     uint64_t channelID;
@@ -101,7 +103,17 @@ int chan_find_hub_and_ingame(void) {
 /* ---- 8.2 decision (pure) ------------------------------------------------------ */
 
 int chan_should_be_ingame(void) {
-    return pos_coordinates_valid();
+    if (pos_coordinates_valid()) {
+        return 1;
+    }
+    /* Conan login can pause Pos.txt briefly — stay ingame instead of hub bounce. */
+    if (g_ingameArrivalMs != 0) {
+        const ULONGLONG now = GetTickCount64();
+        if (now - g_ingameArrivalMs < CHAN_INGAME_DWELL_MS) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* ---- channel identity (numeric ID or name fallback) --------------------------- */
@@ -205,8 +217,15 @@ int chan_request_move(uint64 targetChannelID) {
     if (localID == 0) {
         return 0;
     }
-    /* Ingame channel may be password-protected (server profile, Phase 9). */
+    /* Ingame channel may be password-protected (server profile, Phase 9).
+       Never send requestClientMove before Root is loaded — empty password
+       triggers a visible TS error on reconnect (old plugin hub-read gate). */
     const int toIngame = chan_is_ingame_channel(targetChannelID);
+    if (toIngame && !server_profile_is_active()) {
+        log_debug("CHAN: ingame move deferred - waiting for Root profile");
+        return 0;
+    }
+
     const char* password = toIngame ? server_profile_get_ingame_password() : "";
 
     /* Rename while still in the hub so ingame clients never see the
@@ -333,10 +352,11 @@ void chan_tick(void) {
                 if (!chan_request_move(g_ingameChannelID)
                     && now - g_lastMoveSkipLogMs >= 5000) {
                     g_lastMoveSkipLogMs = now;
-                    log_write("CHAN: auto-move to ingame blocked (in-flight=%d cooldown=%llums coords=%d)",
+                    log_write("CHAN: auto-move to ingame blocked (in-flight=%d cooldown=%llums coords=%d profile=%d)",
                         g_moveInFlight,
                         (unsigned long long)(now - g_lastMoveMs),
-                        pos_coordinates_valid());
+                        pos_coordinates_valid(),
+                        server_profile_is_active());
                 }
             }
             else if (now - g_lastMoveSkipLogMs >= 5000) {
@@ -392,6 +412,13 @@ void chan_on_own_move(uint64 newChannelID) {
     g_lastTickMs = 0; /* bypass tick throttle — placement must re-check now */
     chan_update_audio_mode(newChannelID);
 
+    if (chan_is_ingame_channel(newChannelID)) {
+        g_ingameArrivalMs = GetTickCount64();
+    }
+    else {
+        g_ingameArrivalMs = 0;
+    }
+
     /* Back outside the ingame channel -> real name again (Phase 12). */
     if (!chan_is_ingame_channel(newChannelID)) {
         nick_restore_in_hub();
@@ -410,6 +437,7 @@ void chan_reset(void) {
     g_lastTickMs = 0;
     InterlockedExchange(&g_positionUpdatePending, 0);
     g_lastMoveSkipLogMs = 0;
+    g_ingameArrivalMs = 0;
     memset(g_ignoreCache, 0, sizeof(g_ignoreCache));
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
 }

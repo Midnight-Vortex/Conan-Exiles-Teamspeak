@@ -784,15 +784,21 @@ void ts3_audio_flush_unmutes(void) {
         return; /* pending flags stay set; next flush retries */
     }
 
+    int newlyUnmuted = 0;
     for (int i = 0; i < unmuted; i++) {
         const anyID id = batch[i];
+        if (!g_clientUnlocked[id]) {
+            newlyUnmuted++;
+        }
         if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 1) == 1) {
             InterlockedDecrement(&g_pendingUnmuteCount);
         }
         g_clientUnlocked[id] = 1;
         g_lastUnmuteMs[id] = now;
     }
-    log_debug("AUDIO: unmuted %d client(s)", unmuted);
+    if (newlyUnmuted > 0) {
+        log_debug("AUDIO: unmuted %d client(s)", newlyUnmuted);
+    }
     if (ts3_audio_has_pending_unmutes()) {
         ts3_request_wakeup();
     }

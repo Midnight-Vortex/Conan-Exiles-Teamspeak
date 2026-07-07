@@ -13,6 +13,7 @@
 
 /* Callback thread only. */
 static char g_savedNickname[64] = "";
+static char g_reuseAnonNickname[16] = "";
 static int g_anonymized = 0;
 
 /* ---- 12.1 random digits (pure) ---------------------------------------------- */
@@ -97,6 +98,7 @@ void nick_on_connected(void) {
     if (!nick_looks_anonymized(current)) {
         snprintf(g_savedNickname, sizeof(g_savedNickname), "%s", current);
         g_anonymized = 0;
+        g_reuseAnonNickname[0] = '\0';
         return;
     }
 
@@ -135,6 +137,15 @@ void nick_anonymize_before_ingame(uint64 ingameChannelID) {
 
     snprintf(g_savedNickname, sizeof(g_savedNickname), "%s", current);
 
+    if (g_reuseAnonNickname[0]
+        && !nick_taken_in_channel(ingameChannelID, g_reuseAnonNickname)
+        && ts3_set_own_nickname(g_reuseAnonNickname)) {
+        g_anonymized = 1;
+        log_write("NICK: reusing anonymized nick -> %s (was '%s')",
+            g_reuseAnonNickname, g_savedNickname);
+        return;
+    }
+
     for (int attempt = 0; attempt < NICK_MAX_ATTEMPTS; attempt++) {
         const int digits = NICK_MIN_DIGITS
             + (int)(nick_rand() % (NICK_MAX_DIGITS - NICK_MIN_DIGITS + 1));
@@ -146,6 +157,7 @@ void nick_anonymize_before_ingame(uint64 ingameChannelID) {
         }
         if (ts3_set_own_nickname(candidate)) {
             g_anonymized = 1;
+            snprintf(g_reuseAnonNickname, sizeof(g_reuseAnonNickname), "%s", candidate);
             log_write("NICK: pre-ingame anonymized -> %s (was '%s')", candidate, g_savedNickname);
             return;
         }

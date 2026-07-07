@@ -106,7 +106,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "7.0.0-dev";
+    return "7.0.1";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -325,6 +325,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         plugin_ui_sync_live_state();
         pos_autodetect_saved_path();
         plugin_ui_sync_from_config();
+        server_profile_tick();
         chan_tick();
         overlay_request_immediate_start();
         ts3_sync_overlay_channel_state(0);
@@ -354,6 +355,7 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
             nick_on_connected();
             plugin_ui_sync_from_config();
             plugin_ui_sync_live_state();
+            server_profile_tick();
             chan_tick();
             overlay_request_immediate_start();
             ts3_sync_overlay_channel_state(0);
@@ -502,4 +504,36 @@ void ts3plugin_onUpdateChannelEvent(uint64 serverConnectionHandlerID, uint64 cha
         plugin_ui_sync_from_config();
         plugin_ui_on_hub_profile_updated();
     }
+}
+
+void ts3plugin_onUpdateChannelEditedEvent(uint64 serverConnectionHandlerID, uint64 channelID, anyID invokerID, const char* invokerName, const char* invokerUniqueIdentifier) {
+    (void)invokerID;
+    (void)invokerName;
+    (void)invokerUniqueIdentifier;
+
+    ts3_thread_mark_callback();
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
+    if (server_profile_on_channel_edited(channelID)) {
+        plugin_ui_sync_from_config();
+        plugin_ui_on_hub_profile_updated();
+    }
+}
+
+/* PTT indicator on the range HUD: highlight border while the local client
+   is transmitting (STATUS_TALKING / STATUS_TALKING_WHILE_DISABLED). */
+void ts3plugin_onTalkStatusChangeEvent(uint64 serverConnectionHandlerID, int status, int isReceivedWhisper, anyID clientID) {
+    (void)isReceivedWhisper;
+
+    ts3_thread_mark_callback();
+    if (pluginShuttingDown || serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
+    if (clientID == 0 || clientID != ts3_get_local_client_id()) {
+        return;
+    }
+
+    const BOOL talking = (status == STATUS_TALKING || status == STATUS_TALKING_WHILE_DISABLED);
+    setOverlayHighlightState(clientID, serverConnectionHandlerID, talking);
 }

@@ -469,6 +469,7 @@ void plugin_ui_on_hub_profile_updated(void) {
     ts3_audio_recompute_all();
     voice_overlay_refresh_position();
     updateVoiceOverlay();
+    chan_signal_position_update();
 }
 
 float getVoiceDistanceForMode(uint8_t voiceMode) {

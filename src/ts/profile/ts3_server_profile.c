@@ -191,13 +191,53 @@ static void profile_announce(const HubSettings* settings, int raceIndex) {
     ts3_print_to_chat(line);
 }
 
-/* ---- 9.3 apply ---------------------------------------------------------- */
+static void profile_announce_reload(const HubSettings* settings, int raceIndex) {
+    (void)settings;
+    (void)raceIndex;
+    if (!ts3_thread_is_callback()) {
+        return;
+    }
+    ts3_print_to_chat("[Conan Exiles] Root parameters reloaded.");
+}
+
+/* Server force flags -> plugin.cfg (keys untouched). Same rule as the old
+   plugin: only force ON, never undo a user-enabled option when the server
+   stops forcing. */
+static void profile_apply_hub_forces(const HubSettings* settings) {
+    if (!settings || !ts3_thread_is_callback()) {
+        return;
+    }
+
+    PluginConfig cfg;
+    config_copy(&cfg);
+    int changed = 0;
+
+    if (settings->forceDistanceMuting && !cfg.enableDistanceMuting) {
+        cfg.enableDistanceMuting = 1;
+        changed = 1;
+    }
+    if (settings->forceAutoChannelSwitch && !cfg.enableAutomaticChannelChange) {
+        cfg.enableAutomaticChannelChange = 1;
+        changed = 1;
+    }
+    if (!changed) {
+        return;
+    }
+
+    config_clamp(&cfg);
+    config_apply(&cfg);
+    config_save();
+    log_write("PROFILE: server force flags saved (muting=%d autoChan=%d)",
+        cfg.enableDistanceMuting, cfg.enableAutomaticChannelChange);
+}
 
 void server_profile_apply(const HubSettings* settings) {
     if (!settings || !settings->valid) {
         return;
     }
     profile_lock_ensure();
+
+    const int wasActive = InterlockedCompareExchange(&g_profileActive, 0, 0) != 0;
 
     /* Resolve the local race BEFORE publishing, so readers never see a new
        profile with a stale race index. */
@@ -218,8 +258,14 @@ void server_profile_apply(const HubSettings* settings) {
     strncpy_s(g_ingamePassword, sizeof(g_ingamePassword),
         settings->ingameChannelPassword, _TRUNCATE);
 
-    profile_apply_defaults_once(settings);
-    profile_announce(settings, raceIndex);
+    profile_apply_hub_forces(settings);
+    if (!wasActive) {
+        profile_apply_defaults_once(settings);
+        profile_announce(settings, raceIndex);
+    }
+    else {
+        profile_announce_reload(settings, raceIndex);
+    }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
         "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d pw=%s zones=%d races=%d "
@@ -265,6 +311,10 @@ int server_profile_get(HubSettings* out) {
         out->audioMaxVolume = 1.0f;
     }
     return active;
+}
+
+int server_profile_is_active(void) {
+    return InterlockedCompareExchange(&g_profileActive, 0, 0) != 0;
 }
 
 float server_profile_get_max_volume(void) {
@@ -382,18 +432,30 @@ void server_profile_tick(void) {
     }
 }
 
-int server_profile_on_description_update(uint64 channelID) {
-    if (!ts3_thread_is_callback() || !ts3_is_connected()) {
+static unsigned int profile_desc_hash(const char* desc) {
+    unsigned int h = 2166136261u;
+    if (!desc) {
         return 0;
     }
-    if (g_rootChannelID == 0 || channelID != g_rootChannelID) {
-        return 0;
+    for (const unsigned char* p = (const unsigned char*)desc; *p; p++) {
+        h ^= *p;
+        h *= 16777619u;
     }
-    g_requestInFlight = 0;
+    return h;
+}
 
+static unsigned int g_lastAppliedDescHash = 0;
+
+static int profile_try_apply_root_description(uint64 channelID) {
     static char desc[PROFILE_DESC_MAX]; /* callback thread only — no reentry */
     if (!ts3_get_channel_description(channelID, desc, sizeof(desc))) {
-        log_write("PROFILE: failed to fetch Root description");
+        return 0;
+    }
+
+    const unsigned int hash = profile_desc_hash(desc);
+    if (hash == g_lastAppliedDescHash
+        && InterlockedCompareExchange(&g_profileActive, 0, 0) != 0) {
+        log_debug("PROFILE: Root description unchanged - skip reload");
         return 0;
     }
 
@@ -404,8 +466,54 @@ int server_profile_on_description_update(uint64 channelID) {
         log_write("PROFILE: Root description has no [GLOBAL] section - ignored");
         return 0;
     }
+    g_lastAppliedDescHash = hash;
     server_profile_apply(&parsed);
     return 1;
+}
+
+static int profile_ensure_root_channel_id(void) {
+    if (g_rootChannelID != 0) {
+        return 1;
+    }
+    g_rootChannelID = profile_find_root_channel();
+    return g_rootChannelID != 0;
+}
+
+int server_profile_on_description_update(uint64 channelID) {
+    if (!ts3_thread_is_callback() || !ts3_is_connected()) {
+        return 0;
+    }
+    if (!profile_ensure_root_channel_id() || channelID != g_rootChannelID) {
+        return 0;
+    }
+    g_requestInFlight = 0;
+    return profile_try_apply_root_description(channelID);
+}
+
+int server_profile_on_channel_edited(uint64 channelID) {
+    if (!ts3_thread_is_callback() || !ts3_is_connected()) {
+        return 0;
+    }
+    if (!profile_ensure_root_channel_id() || channelID != g_rootChannelID) {
+        return 0;
+    }
+
+    log_write("PROFILE: Root channel edited - reloading settings");
+    g_requestInFlight = 0;
+
+    const int applied = profile_try_apply_root_description(channelID);
+
+    /* Description may not be in the local cache yet — request from server. */
+    const ULONGLONG now = GetTickCount64();
+    if (!g_requestInFlight && now - g_lastRequestMs >= 500) {
+        if (ts3_request_channel_description(g_rootChannelID)) {
+            g_requestInFlight = 1;
+            g_requestSentMs = now;
+            g_lastRequestMs = now;
+            log_debug("PROFILE: description refresh requested after Root edit");
+        }
+    }
+    return applied;
 }
 
 /* ---- reset ---------------------------------------------------------------------- */
@@ -418,6 +526,7 @@ void server_profile_reset(void) {
     g_lastRequestMs = 0;
     g_ingamePassword[0] = '\0';
     g_announced = 0; /* next profile after (re)connect announces again */
+    g_lastAppliedDescHash = 0;
     /* Clear flag under the lock so a concurrent server_profile_get can
        never copy the profile after it was invalidated. */
     profile_lock_ensure();

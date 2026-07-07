@@ -55,7 +55,7 @@ void pos_autodetect_saved_path(void);
 /* Latest sample. Returns 1 when coordinates are valid (fresh). */
 int pos_get_current(PosSample* out);
 
-/* 1 while Pos.txt is actively written (last write <= 5 s ago and parsed ok). */
+/* 1 while Pos.txt is actively written or within the post-read grace window. */
 int pos_coordinates_valid(void);
 
 #endif /* CORE_MOD_FILE_POS_FILE_H */

@@ -23,16 +23,24 @@
    Called from the CEDRAIN drain path. TS callback thread ONLY. */
 void server_profile_tick(void);
 
-/* Channel description arrived (onChannelDescriptionUpdateEvent).
+/* Channel description arrived (onChannelDescriptionUpdateEvent) or
+   requestChannelDescription completed (onUpdateChannelEvent).
    Fetches + parses + applies when it is the Root channel. Returns 1 when a
    profile was applied (callers refresh dependent state). Callback thread. */
 int server_profile_on_description_update(uint64 channelID);
+
+/* Root channel edited in the TS client (onUpdateChannelEditedEvent).
+   Reloads and applies immediately; hotkeys are left unchanged. */
+int server_profile_on_channel_edited(uint64 channelID);
 
 /* 9.3 activate a parsed profile (also used by the update handler). */
 void server_profile_apply(const HubSettings* settings);
 
 /* Copy of the active settings. Returns 1 when a profile is active. Any thread. */
 int server_profile_get(HubSettings* out);
+
+/* 1 when the Root description was parsed and is active. Any thread. */
+int server_profile_is_active(void);
 
 /* Gain cap from the profile (1.0 without profile). Any thread. */
 float server_profile_get_max_volume(void);
