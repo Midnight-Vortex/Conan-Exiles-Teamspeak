@@ -5,6 +5,7 @@
 #include "core/voice/voice_modes.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/player_table.h"
+#include "ts/proximity/ts3_client_limits.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
 #include "core/util/poll_interval.h"
@@ -244,6 +245,9 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
 
     /* Own broadcast comes back to us too — skip it. */
     if (invokerClientID != 0 && invokerClientID == ts3_get_local_client_id()) {
+        return 1;
+    }
+    if (!ts3_client_id_valid(invokerClientID)) {
         return 1;
     }
 

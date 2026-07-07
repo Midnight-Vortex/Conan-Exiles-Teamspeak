@@ -8,7 +8,7 @@
 #include <string.h>
 #include <windows.h>
 
-#define VERSION_MAX_CLIENTS   4096
+#define VERSION_MAP_SLOTS     512
 #define VERSION_TEXT_MAX      24
 #define VERSION_NAME_MAX      48
 #define VERSION_UID_MAX       48
@@ -23,7 +23,12 @@ typedef struct VersionClientSlot {
     unsigned char hasVersion;
 } VersionClientSlot;
 
-static VersionClientSlot g_slots[VERSION_MAX_CLIENTS];
+typedef struct VersionMapEntry {
+    anyID clientID;
+    VersionClientSlot slot;
+} VersionMapEntry;
+
+static VersionMapEntry g_versionMap[VERSION_MAP_SLOTS];
 static CRITICAL_SECTION g_lock;
 static INIT_ONCE g_lockOnce = INIT_ONCE_STATIC_INIT;
 
@@ -39,8 +44,45 @@ static void version_lock_ensure(void) {
     InitOnceExecuteOnce(&g_lockOnce, version_lock_init, NULL, NULL);
 }
 
-static int version_slot_valid(anyID clientID) {
-    return clientID > 0 && clientID < VERSION_MAX_CLIENTS;
+static int version_client_id_ok(anyID clientID) {
+    return clientID > 0;
+}
+
+static VersionMapEntry* version_map_find(anyID clientID) {
+    if (!version_client_id_ok(clientID)) {
+        return NULL;
+    }
+    const size_t start = (size_t)clientID % VERSION_MAP_SLOTS;
+    for (size_t i = 0; i < VERSION_MAP_SLOTS; i++) {
+        VersionMapEntry* entry = &g_versionMap[(start + i) % VERSION_MAP_SLOTS];
+        if (entry->clientID == clientID) {
+            return entry;
+        }
+        if (entry->clientID == 0) {
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+static VersionClientSlot* version_map_get(anyID clientID, int create) {
+    VersionMapEntry* entry = version_map_find(clientID);
+    if (entry) {
+        return &entry->slot;
+    }
+    if (!create || !version_client_id_ok(clientID)) {
+        return NULL;
+    }
+    const size_t start = (size_t)clientID % VERSION_MAP_SLOTS;
+    for (size_t i = 0; i < VERSION_MAP_SLOTS; i++) {
+        entry = &g_versionMap[(start + i) % VERSION_MAP_SLOTS];
+        if (entry->clientID == 0) {
+            entry->clientID = clientID;
+            memset(&entry->slot, 0, sizeof(entry->slot));
+            return &entry->slot;
+        }
+    }
+    return NULL;
 }
 
 static int version_plugin_name_ok(const char* pluginName) {
@@ -81,29 +123,30 @@ static int version_text_ok(const char* text) {
 }
 
 static void version_clear_slot_locked(anyID clientID) {
-    if (!version_slot_valid(clientID)) {
-        return;
+    VersionMapEntry* entry = version_map_find(clientID);
+    if (entry) {
+        memset(entry, 0, sizeof(*entry));
     }
-    memset(&g_slots[clientID], 0, sizeof(g_slots[clientID]));
 }
 
 static void version_purge_stale_locked(anyID keepClientID,
     const char* uniqueId, const char* displayName) {
-    for (anyID i = 1; i < VERSION_MAX_CLIENTS; i++) {
+    for (size_t i = 0; i < VERSION_MAP_SLOTS; i++) {
+        VersionMapEntry* entry = &g_versionMap[i];
         VersionClientSlot* slot;
 
-        if (i == keepClientID || !g_slots[i].hasVersion) {
+        if (entry->clientID == 0 || entry->clientID == keepClientID || !entry->slot.hasVersion) {
             continue;
         }
-        slot = &g_slots[i];
+        slot = &entry->slot;
         if (uniqueId && uniqueId[0] && slot->uniqueId[0]
             && strcmp(slot->uniqueId, uniqueId) == 0) {
-            version_clear_slot_locked(i);
+            memset(entry, 0, sizeof(*entry));
             continue;
         }
         if (displayName && displayName[0] && slot->displayName[0]
             && strcmp(slot->displayName, displayName) == 0) {
-            version_clear_slot_locked(i);
+            memset(entry, 0, sizeof(*entry));
         }
     }
 }
@@ -112,10 +155,13 @@ static void version_store_locked(anyID clientID, const char* versionText,
     const char* displayName, const char* uniqueId) {
     VersionClientSlot* slot;
 
-    if (!version_slot_valid(clientID) || !version_text_ok(versionText)) {
+    if (!version_text_ok(versionText)) {
         return;
     }
-    slot = &g_slots[clientID];
+    slot = version_map_get(clientID, 1);
+    if (!slot) {
+        return;
+    }
     strncpy_s(slot->version, sizeof(slot->version), versionText, _TRUNCATE);
     slot->hasVersion = 1;
     if (displayName && displayName[0]) {
@@ -146,7 +192,7 @@ static int version_send_broadcast(void) {
     }
 
     localId = ts3_get_local_client_id();
-    if (version_slot_valid(localId)) {
+    if (version_client_id_ok(localId)) {
         version_lock_ensure();
         EnterCriticalSection(&g_lock);
         version_store_locked(localId, ver, NULL, NULL);
@@ -158,7 +204,7 @@ static int version_send_broadcast(void) {
 void ts3_version_reset(void) {
     version_lock_ensure();
     EnterCriticalSection(&g_lock);
-    memset(g_slots, 0, sizeof(g_slots));
+    memset(g_versionMap, 0, sizeof(g_versionMap));
     LeaveCriticalSection(&g_lock);
 }
 
@@ -195,7 +241,7 @@ int ts3_version_on_plugin_command(const char* pluginName, const char* pluginComm
     }
 
     versionText = pluginCommand + strlen(VERSION_CMD_PREFIX);
-    if (!version_slot_valid(invokerClientID) || !version_text_ok(versionText)) {
+    if (!version_text_ok(versionText)) {
         return 1;
     }
 
@@ -203,9 +249,12 @@ int ts3_version_on_plugin_command(const char* pluginName, const char* pluginComm
     EnterCriticalSection(&g_lock);
     version_purge_stale_locked(invokerClientID, invokerUniqueIdentity, invokerDisplayName);
     version_store_locked(invokerClientID, versionText, invokerDisplayName, invokerUniqueIdentity);
-    needReply = !g_slots[invokerClientID].replied;
-    if (needReply) {
-        g_slots[invokerClientID].replied = 1;
+    {
+        VersionClientSlot* invokerSlot = version_map_get(invokerClientID, 0);
+        needReply = invokerSlot && !invokerSlot->replied;
+        if (needReply && invokerSlot) {
+            invokerSlot->replied = 1;
+        }
     }
     LeaveCriticalSection(&g_lock);
 
@@ -220,13 +269,21 @@ static int version_format_one_client(anyID clientID, char* buf, size_t bufSize) 
     VersionClientSlot slot;
     int written;
 
-    if (!buf || bufSize < 32 || !version_slot_valid(clientID)) {
+    if (!buf || bufSize < 32 || !version_client_id_ok(clientID)) {
         return 0;
     }
 
     version_lock_ensure();
     EnterCriticalSection(&g_lock);
-    slot = g_slots[clientID];
+    {
+        VersionMapEntry* entry = version_map_find(clientID);
+        if (entry) {
+            slot = entry->slot;
+        }
+        else {
+            memset(&slot, 0, sizeof(slot));
+        }
+    }
     LeaveCriticalSection(&g_lock);
 
     if (slot.hasVersion) {
@@ -272,12 +329,13 @@ static int version_format_server_list(char* buf, size_t bufSize) {
 
     version_lock_ensure();
     EnterCriticalSection(&g_lock);
-    for (anyID cid = 1; cid < VERSION_MAX_CLIENTS && remain > 48; cid++) {
-        const VersionClientSlot* slot = &g_slots[cid];
+    for (size_t i = 0; i < VERSION_MAP_SLOTS && remain > 48; i++) {
+        const VersionMapEntry* entry = &g_versionMap[i];
+        const VersionClientSlot* slot = &entry->slot;
         const char* status;
         int lineLen;
 
-        if (!slot->hasVersion) {
+        if (entry->clientID == 0 || !slot->hasVersion) {
             continue;
         }
         anyListed = 1;
@@ -288,7 +346,7 @@ static int version_format_server_list(char* buf, size_t bufSize) {
         }
         else {
             lineLen = snprintf(line, remain, "  Client %u: %s (%s)\n",
-                (unsigned)cid, slot->version, status);
+                (unsigned)entry->clientID, slot->version, status);
         }
         if (lineLen <= 0 || (size_t)lineLen >= remain) {
             break;

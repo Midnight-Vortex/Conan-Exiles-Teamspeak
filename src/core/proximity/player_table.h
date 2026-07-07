@@ -13,6 +13,9 @@
  */
 
 #define PLAYER_TABLE_MAX_PLAYERS 512
+
+/* Legacy UI overlay/cache arrays — keep in sync with proximity table size. */
+#define PLAYER_UI_LEGACY_MAX   PLAYER_TABLE_MAX_PLAYERS
 #define PLAYER_TABLE_STALE_MS    120000
 #define PLAYER_NAME_LEN          17 /* 16 chars + NUL, matches CEPOS field */
 

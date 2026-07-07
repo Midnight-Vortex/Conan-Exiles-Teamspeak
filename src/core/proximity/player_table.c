@@ -1,5 +1,7 @@
 #include "core/proximity/player_table.h"
 
+#include "core/util/log.h"
+
 #include <windows.h>
 #include <string.h>
 
@@ -7,6 +9,7 @@
 static CRITICAL_SECTION g_tableLock;
 static INIT_ONCE g_tableLockOnce = INIT_ONCE_STATIC_INIT;
 static PlayerEntry g_players[PLAYER_TABLE_MAX_PLAYERS];
+static volatile long g_evictionCount = 0;
 
 static BOOL CALLBACK table_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
     (void)once; (void)param; (void)ctx;
@@ -75,6 +78,11 @@ int player_table_put(unsigned short clientID, const char* name,
         PlayerEntry* e = &g_players[slot];
         if (evictedClientID && e->valid && e->clientID != clientID) {
             *evictedClientID = e->clientID;
+            const long evictions = InterlockedIncrement(&g_evictionCount);
+            if (evictions == 1 || (evictions % 16) == 0) {
+                log_debug("PLAYER-TABLE: LRU eviction #%ld (dropped client %u for %u)",
+                    evictions, (unsigned)e->clientID, (unsigned)clientID);
+            }
         }
         e->clientID = clientID;
         if (name && name[0]) {

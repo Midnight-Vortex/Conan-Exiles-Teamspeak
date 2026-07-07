@@ -7,14 +7,17 @@
 #include "core/mod_file/pos_file.h"
 #include "core/util/log.h"
 
+#include "ts/proximity/ts3_client_limits.h"
+
 #include <windows.h>
 #include <math.h>
 #include <string.h>
 
-#define TS3_AUDIO_MAX_CLIENT   65536  /* anyID is uint16 — index by clientID directly */
 #define TS3_UNMUTE_REARM_MS    2000
 #define TS3_UNMUTE_BATCH_MAX   64
-#define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue — avoids O(65536) scan */
+#define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue */
+#define TS3_AUDIO_CULL_MARGIN  1.25f /* hear-range multiplier for recompute culling */
+#define TS3_AUDIO_CULL_PAD_M   2.0f  /* meters beyond nominal range */
 #define TS3_AUDIBLE_GAIN       0.001f
 #define TS3_CEPOS_PI           3.14159265f
 #define TS3_LPF_BYPASS_HZ      19000.0f
@@ -33,23 +36,23 @@ typedef struct AudioSnap {
     int valid;
 } AudioSnap;
 
-static AudioSnap g_snap[TS3_AUDIO_MAX_CLIENT];
+static AudioSnap g_snap[TS3_MAX_CLIENT_ID];
 
 /* Writer-side lock (callback thread + pos watcher). Audio thread never takes it. */
 static CRITICAL_SECTION g_writerLock;
 static INIT_ONCE g_writerLockOnce = INIT_ONCE_STATIC_INIT;
 
 /* Render gain per client — audio thread private (ramping state). */
-static float g_renderGain[TS3_AUDIO_MAX_CLIENT];
+static float g_renderGain[TS3_MAX_CLIENT_ID];
 
 /* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
-static volatile long g_pendingUnmute[TS3_AUDIO_MAX_CLIENT];
+static volatile long g_pendingUnmute[TS3_MAX_CLIENT_ID];
 static volatile long g_pendingUnmuteCount = 0;
 static anyID g_unmuteRing[TS3_UNMUTE_RING_SIZE];
 static volatile long g_unmuteRingWrite = 0;
 static volatile long g_unmuteRingRead = 0;
-static char g_clientUnlocked[TS3_AUDIO_MAX_CLIENT];       /* callback thread only */
-static ULONGLONG g_lastUnmuteMs[TS3_AUDIO_MAX_CLIENT];    /* callback thread only */
+static char g_clientUnlocked[TS3_MAX_CLIENT_ID];       /* callback thread only */
+static ULONGLONG g_lastUnmuteMs[TS3_MAX_CLIENT_ID];    /* callback thread only */
 
 static void unmute_ring_push(anyID clientID) {
     const long w = InterlockedIncrement(&g_unmuteRingWrite) - 1;
@@ -146,7 +149,7 @@ typedef struct LpfState {
     int initialized;
 } LpfState;
 
-static LpfState g_lpf[TS3_AUDIO_MAX_CLIENT];
+static LpfState g_lpf[TS3_MAX_CLIENT_ID];
 
 /* Schroeder cave reverb (comb + allpass), same tuning as the old plugin.
    Fixed static pool — no malloc anywhere near the audio path. Slots are
@@ -186,12 +189,12 @@ typedef struct CaveState {
 static CaveState g_cave[CAVE_SLOTS];
 
 /* Writer-side slot per client (guarded by g_writerLock), -1 = none. */
-static short g_reverbSlotByClient[TS3_AUDIO_MAX_CLIENT];
+static short g_reverbSlotByClient[TS3_MAX_CLIENT_ID];
 static int g_reverbSlotsInit = 0;
 
 static void cave_slots_ensure_init(void) {
     if (!g_reverbSlotsInit) {
-        for (int i = 0; i < TS3_AUDIO_MAX_CLIENT; i++) {
+        for (int i = 0; i < TS3_MAX_CLIENT_ID; i++) {
             g_reverbSlotByClient[i] = -1;
         }
         g_reverbSlotsInit = 1;
@@ -360,8 +363,21 @@ static int audio_local_zone(const HubSettings* hub, const PosSample* local,
     return zone_resolve(hub, local->x / 100.0f, local->y / 100.0f, local->z / 100.0f);
 }
 
+static int audio_in_hear_range(const PosSample* local, int localValid,
+    const PlayerEntry* remote, float listenAdd) {
+    if (!localValid || !remote) {
+        return 1;
+    }
+    const float lx = local->x / 100.0f;
+    const float ly = local->y / 100.0f;
+    const float lz = local->z / 100.0f;
+    const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
+    const float hearRange = remote->voiceDistance + listenAdd;
+    return dist <= hearRange * TS3_AUDIO_CULL_MARGIN + TS3_AUDIO_CULL_PAD_M;
+}
+
 void ts3_audio_recompute_client(anyID clientID) {
-    if (clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+    if (!ts3_client_id_valid(clientID)) {
         return;
     }
     writer_lock_ensure();
@@ -395,13 +411,21 @@ void ts3_audio_recompute_all(void) {
 
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
+    const float listenAdd = server_profile_get_listen_add_distance();
 
     EnterCriticalSection(&g_writerLock);
     for (int i = 0; i < count; i++) {
-        if (players[i].clientID != 0 && players[i].clientID < TS3_AUDIO_MAX_CLIENT) {
-            audio_compute_and_publish(players[i].clientID, &local, localValid,
-                hubActive ? &hub : NULL, localZone);
+        const anyID cid = (anyID)players[i].clientID;
+        if (!ts3_client_id_valid(players[i].clientID)) {
+            continue;
         }
+        if (!audio_in_hear_range(&local, localValid, &players[i], listenAdd)) {
+            cave_slot_release(cid);
+            snap_publish_neutral(cid, 0);
+            continue;
+        }
+        audio_compute_and_publish(cid, &local, localValid,
+            hubActive ? &hub : NULL, localZone);
     }
     LeaveCriticalSection(&g_writerLock);
 
@@ -547,7 +571,7 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
 
 void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount, int channels) {
     if (!samples || sampleCount <= 0 || channels <= 0
-        || clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+        || !ts3_client_id_valid(clientID)) {
         return;
     }
 
@@ -661,7 +685,7 @@ static void audio_signal_unmute_flag_only(anyID clientID) {
 }
 
 void ts3_audio_signal_unmute(anyID clientID) {
-    if (clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+    if (!ts3_client_id_valid(clientID)) {
         return;
     }
     if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 1, 0) == 0) {
@@ -683,6 +707,18 @@ void ts3_audio_flush_unmutes(void) {
         return;
     }
 
+    {
+        const long pending = InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0);
+        if (pending >= 32) {
+            static ULONGLONG s_lastBacklogLog = 0;
+            const ULONGLONG nowMs = GetTickCount64();
+            if (nowMs - s_lastBacklogLog >= 10000) {
+                s_lastBacklogLog = nowMs;
+                log_write("AUDIO: unmute backlog %ld pending", pending);
+            }
+        }
+    }
+
     const ULONGLONG now = GetTickCount64();
     anyID batch[TS3_UNMUTE_BATCH_MAX];
     int batchCount = 0;
@@ -693,7 +729,7 @@ void ts3_audio_flush_unmutes(void) {
     while (readIdx < writeIdx && batchCount < TS3_UNMUTE_BATCH_MAX - 1) {
         const anyID id = g_unmuteRing[readIdx % TS3_UNMUTE_RING_SIZE];
         readIdx++;
-        if (id == 0 || id >= TS3_AUDIO_MAX_CLIENT) {
+        if (!ts3_client_id_valid(id)) {
             continue;
         }
         if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 0) == 0) {
@@ -711,7 +747,7 @@ void ts3_audio_flush_unmutes(void) {
         && InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0) {
         for (int i = 0; i < TS3_UNMUTE_RING_SIZE && batchCount < TS3_UNMUTE_BATCH_MAX - 1; i++) {
             const anyID id = g_unmuteRing[i];
-            if (id == 0 || id >= TS3_AUDIO_MAX_CLIENT) {
+            if (!ts3_client_id_valid(id)) {
                 continue;
             }
             if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 0) == 0) {
@@ -769,7 +805,7 @@ int ts3_audio_has_pending_unmutes(void) {
 /* ---- cleanup ----------------------------------------------------------------- */
 
 void ts3_audio_invalidate_client(anyID clientID) {
-    if (clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+    if (!ts3_client_id_valid(clientID)) {
         return;
     }
     writer_lock_ensure();
@@ -787,7 +823,7 @@ void ts3_audio_invalidate_client(anyID clientID) {
 }
 
 int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
-    if (clientID == 0 || clientID >= TS3_AUDIO_MAX_CLIENT) {
+    if (!ts3_client_id_valid(clientID)) {
         return 0;
     }
     float gain, panL, panR, cutoffHz;
@@ -799,13 +835,11 @@ int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
 }
 
 void ts3_audio_reset(void) {
-    /* int counter, NOT anyID: anyID is uint16, so "i < 65536" never turns
-       false and the callback thread spins forever (startup freeze). */
-    for (int i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
+    for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
         ts3_audio_invalidate_client((anyID)i);
     }
     /* Reconcile any flags invalidate missed (counter/flag drift). */
-    for (int i = 1; i < TS3_AUDIO_MAX_CLIENT; i++) {
+    for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
         InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);

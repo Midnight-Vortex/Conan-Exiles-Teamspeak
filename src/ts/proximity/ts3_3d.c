@@ -1,18 +1,21 @@
 #include "ts/proximity/ts3_3d.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "core/proximity/player_table.h"
-#include "core/mod_file/pos_file.h"
-#include "core/util/log.h"
+#include "core/proximity/proximity_math.h"
+#include "ts/profile/ts3_server_profile.h"
+
+#include "ts/proximity/ts3_client_limits.h"
 
 #include <windows.h>
 #include <math.h>
 #include <string.h>
 
-#define TS3D_MAX_CLIENT  65536  /* matches ts3_proximity_audio (anyID is uint16) */
 #define TS3D_POS_EPS     0.25f  /* meters — skip API call below this move */
 #define TS3D_FWD_EPS     0.02f  /* direction component change threshold */
 #define TS3D_PI          3.14159265f
-#define TS3D_APPLY_MIN_MS 30     /* 20 Hz cap — enough for smooth pan at scale */
+#define TS3D_APPLY_MIN_MS 50     /* 20 Hz cap */
+#define TS3D_CULL_MARGIN  1.25f
+#define TS3D_CULL_PAD_M   2.0f
 
 /* All state below is TS callback thread only — no locks needed. */
 
@@ -27,10 +30,10 @@ static struct {
 } g_lastListener;
 
 /* 7.3 per-client dedup */
-static float g_lastClientX[TS3D_MAX_CLIENT];
-static float g_lastClientY[TS3D_MAX_CLIENT];
-static float g_lastClientZ[TS3D_MAX_CLIENT];
-static char  g_clientValid[TS3D_MAX_CLIENT];
+static float g_lastClientX[TS3_MAX_CLIENT_ID];
+static float g_lastClientY[TS3_MAX_CLIENT_ID];
+static float g_lastClientZ[TS3_MAX_CLIENT_ID];
+static char  g_clientValid[TS3_MAX_CLIENT_ID];
 
 /* ---- 7.1 one-time settings -------------------------------------------------- */
 
@@ -141,7 +144,7 @@ void ts3d_set_listener(float x, float y, float z,
 
 void ts3d_set_client_pos(anyID clientID, float x, float y, float z) {
     if (!ts3_thread_is_callback() || !ts3_is_connected()
-        || clientID == 0 || clientID >= TS3D_MAX_CLIENT) {
+        || !ts3_client_id_valid(clientID)) {
         return;
     }
     if (g_clientValid[clientID]
@@ -176,6 +179,15 @@ void ts3d_on_custom_rolloff(anyID clientID, float distance, float* volume) {
 
 /* ---- apply (callback thread driver) --------------------------------------------- */
 
+static int ts3d_in_hear_range(const PosSample* local, const PlayerEntry* remote) {
+    const float lx = local->x / 100.0f;
+    const float ly = local->y / 100.0f;
+    const float lz = local->z / 100.0f;
+    const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
+    const float hearRange = remote->voiceDistance + server_profile_get_listen_add_distance();
+    return dist <= hearRange * TS3D_CULL_MARGIN + TS3D_CULL_PAD_M;
+}
+
 void ts3d_apply(void) {
     if (!ts3_thread_is_callback() || !ts3_is_connected()) {
         return;
@@ -207,6 +219,12 @@ void ts3d_apply(void) {
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
     for (int i = 0; i < count; i++) {
+        if (!ts3_client_id_valid(players[i].clientID)) {
+            continue;
+        }
+        if (!ts3d_in_hear_range(&local, &players[i])) {
+            continue;
+        }
         ts3d_set_client_pos(players[i].clientID,
             players[i].x, players[i].y, players[i].z);
     }

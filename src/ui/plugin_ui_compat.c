@@ -216,7 +216,7 @@ const wchar_t* infoText2 = L"";
 const wchar_t* infoText3 = L"";
 
 CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
-CompletePositionalData remotePlayersData[64];
+CompletePositionalData remotePlayersData[512];
 size_t remotePlayerCount = 0;
 ULONGLONG lastVoiceDataSent = 0;
 ULONGLONG lastKeyCheck = 0;
@@ -235,7 +235,7 @@ int voiceHudSize = VOICE_HUD_SIZE_BIG;
 HFONT hOverlayFont = NULL;
 BOOL overlayThreadRunning = FALSE;
 
-PlayerMuteState playerMuteStates[64];
+PlayerMuteState playerMuteStates[512];
 size_t playerMuteStateCount = 0;
 ULONGLONG lastDistanceCheck = 0;
 BOOL forceGlobalMuteRefresh = FALSE;
@@ -253,10 +253,10 @@ Zone zones[MAX_ZONES];
 size_t zoneCount = 0;
 int currentZoneIndex = -1;
 
-AdaptivePlayerData adaptivePlayerStates[64];
+AdaptivePlayerData adaptivePlayerStates[512];
 size_t adaptivePlayerCount = 0;
 Vector3 localPlayerPosition = { 0.0f, 0.0f, 0.0f };
-AudioVolumeState audioVolumeStates[64];
+AudioVolumeState audioVolumeStates[512];
 size_t audioVolumeCount = 0;
 
 #ifdef CONAN_EXILES_TS_EXPORTS
