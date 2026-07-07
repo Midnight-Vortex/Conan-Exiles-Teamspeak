@@ -877,6 +877,15 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
     wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
     snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
 
+    /* Keep the active-path global in sync for the compat bridge below. */
+    wcscpy_s(savedPath, MAX_PATH, savedPathFull);
+
+    /* Push everything into the new engine config (keys, distances, toggles,
+       path) and rewrite plugin.cfg canonically — the legacy write above
+       drops DefaultsAppliedServer/DebugMode/EnableVoiceOverlay and never
+       reached the new engine at all (hotkeys only worked after a restart). */
+    plugin_ui_on_settings_saved();
+
     // Reinstall keyboard monitoring | Réinstaller la surveillance du clavier
     removeKeyMonitoring();
     installKeyMonitoring();

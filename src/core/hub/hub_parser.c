@@ -79,11 +79,23 @@ static void hub_defaults(HubSettings* out) {
 
 /* ---- [GLOBAL] section ---------------------------------------------------- */
 
+/* AudioMaxVolume uses the OLD plugin's percent semantics: 130 means gain 1.3
+   (the deployed Root descriptions are written that way). Values <= 3 are
+   treated as a direct gain factor. Result clamped to 0..2. */
+static float hub_parse_max_volume(const char* value) {
+    float raw = hub_parse_clamped(value, 0.0f, 1000.0f);
+    float gain = (raw > 3.0f) ? raw / 100.0f : raw;
+    if (gain > 2.0f) {
+        gain = 2.0f;
+    }
+    return gain;
+}
+
 static void hub_parse_global_line(const char* line, HubSettings* out) {
     const char* v;
 
     if ((v = hub_value_for(line, "AudioMaxVolume")) != NULL) {
-        out->audioMaxVolume = hub_parse_clamped(v, 0.0f, 1.0f);
+        out->audioMaxVolume = hub_parse_max_volume(v);
     }
     else if ((v = hub_value_for(line, "AudioMinDistance")) != NULL) {
         out->audioMinDistance = hub_parse_clamped(v, 0.1f, HUB_DIST_MAX);
@@ -261,6 +273,7 @@ static void hub_parse_zone_line(const char* line, HubZone* zone) {
     else if ((v = hub_value_for(line, "X4")) != NULL) zone->x4 = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "Z4")) != NULL) zone->z4 = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "AudioMinDistance")) != NULL) zone->audioMinDistance = hub_parse_clamped(v, 0.1f, HUB_DIST_MAX);
+    else if ((v = hub_value_for(line, "AudioMaxVolume")) != NULL) zone->audioMaxVolume = hub_parse_max_volume(v);
     else if ((v = hub_value_for(line, "GroundY")) != NULL) zone->groundY = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "TopY")) != NULL) zone->topY = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "Wisper")) != NULL) zone->whisperDist = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);

@@ -266,14 +266,19 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     }
 
     const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
-    /* Gain cap from the server profile (1.0 without profile, Phase 9).
+    /* Gain cap from the server profile (1.0 without profile, Phase 9);
+       the listener's zone can override it (old plugin semantics).
        Race listener bonus: the local player's race hears others further
        (listenAddDistance extends the speaker's range on OUR side only). */
+    float maxVolume = server_profile_get_max_volume();
+    if (hub && localZone >= 0 && localZone < hub->zoneCount
+        && hub->zones[localZone].audioMaxVolume > 0.0f) {
+        maxVolume = hub->zones[localZone].audioMaxVolume;
+    }
     const float hearRange = remote.voiceDistance
         + server_profile_get_listen_add_distance();
     const float gain = soundproof ? 0.0f
-        : prox_volume_from_distance(distance, hearRange,
-            server_profile_get_max_volume());
+        : prox_volume_from_distance(distance, hearRange, maxVolume);
 
     const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
     const float dirX = -cosf(yawRad);

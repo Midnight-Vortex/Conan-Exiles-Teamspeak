@@ -87,6 +87,7 @@ static void test_real_description(void) {
     CHECK(s.forceDistanceMuting == 1, "ForceDistanceBasedMuting");
     CHECK(s.forceAutoChannelSwitch == 1, "ForceAutomaticChanelSwitching");
     CHECK(strcmp(s.ingameChannelPassword, "5V88FWWME615") == 0, "ingame password");
+    CHECK(s.audioMaxVolume == 1.3f, "AudioMaxVolume=130 -> gain 1.3");
     CHECK(s.minWhisper == 2.0f && s.maxWhisper == 2.0f, "whisper limits 2..2");
     CHECK(s.minNormal == 15.0f && s.maxNormal == 15.0f, "normal limits 15..15");
     CHECK(s.minShout == 40.0f && s.maxShout == 40.0f, "shout limits 40..40");
@@ -116,6 +117,8 @@ static void test_real_description(void) {
     CHECK(s.zones[0].whisperDist == 2.0f && s.zones[0].normalDist == 15.0f
         && s.zones[0].shoutDist == 40.0f, "zone distances");
     CHECK(s.zones[0].groundY == 2098.171875f, "zone groundY");
+    CHECK(s.zones[0].audioMaxVolume == 1.3f, "zone AudioMaxVolume=130 -> 1.3");
+    CHECK(s.zones[0].audioMinDistance == 0.5f, "zone AudioMinDistance");
 }
 
 static void test_malformed(void) {

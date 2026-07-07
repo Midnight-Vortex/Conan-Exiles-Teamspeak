@@ -301,7 +301,14 @@ void plugin_ui_sync_from_config(void) {
     voiceHudTheme = cfg.hudTheme;
     voiceHudPosition = hud_pos_to_legacy(cfg.hudPosition);
     voiceHudSize = cfg.hudSize;
-    wcsncpy_s(savedPath, MAX_PATH, cfg.savedPath, _TRUNCATE);
+    /* Legacy savedPath global = ACTIVE Pos.txt base path (same selection as
+       pos_resolve_file_path): automatic path when enabled and set, else manual. */
+    if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+        wcsncpy_s(savedPath, MAX_PATH, cfg.automaticSavedPath, _TRUNCATE);
+    }
+    else {
+        wcsncpy_s(savedPath, MAX_PATH, cfg.savedPath, _TRUNCATE);
+    }
     currentVoiceMode = (uint8_t)voice_mode_get_current();
     localVoiceData.voiceDistance = voice_mode_get_current_distance();
 }
@@ -326,12 +333,22 @@ void plugin_ui_sync_to_config(void) {
     cfg.hudTheme = voiceHudTheme;
     cfg.hudPosition = hud_pos_from_legacy(voiceHudPosition);
     cfg.hudSize = voiceHudSize;
-    wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    /* Active-path routing — see plugin_ui_on_settings_saved. */
+    if (enableAutomaticPatchFind) {
+        wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    }
+    else {
+        wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    }
     config_clamp(&cfg);
     config_apply(&cfg);
     config_save();
     log_set_enabled(cfg.debugMode);
-    voice_mode_apply((VoiceMode)currentVoiceMode);
+    /* Only a REAL mode change goes through voice_mode_apply (chat notify);
+       plain saves just refresh distances silently. */
+    if ((VoiceMode)currentVoiceMode != voice_mode_get_current()) {
+        voice_mode_apply((VoiceMode)currentVoiceMode);
+    }
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
@@ -372,7 +389,9 @@ void plugin_ui_sync_live_state(void) {
         hubMinimumShout = hub.minShout;
         hubMaximumShout = hub.maxShout;
         hubAudioMinDistance = hub.audioMinDistance > 0.0f ? hub.audioMinDistance : 1.0;
-        hubAudioMaxVolume = hub.audioMaxVolume;
+        /* Legacy globals keep percent semantics (85.0 = 85%); the new
+           HubSettings stores a gain factor (0.85). */
+        hubAudioMaxVolume = hub.audioMaxVolume * 100.0;
         zoneCount = (size_t)hub.zoneCount;
         if (zoneCount > MAX_ZONES) {
             zoneCount = MAX_ZONES;
@@ -386,7 +405,8 @@ void plugin_ui_sync_live_state(void) {
             dst->groundY = z->groundY; dst->topY = z->topY;
             dst->whisperDist = z->whisperDist; dst->normalDist = z->normalDist; dst->shoutDist = z->shoutDist;
             dst->audioMinDistance = z->audioMinDistance;
-            dst->audioMaxVolume = hub.audioMaxVolume;
+            dst->audioMaxVolume = (z->audioMaxVolume > 0.0f
+                ? z->audioMaxVolume : hub.audioMaxVolume) * 100.0;
             dst->isSoundproof = z->soundproof ? TRUE : FALSE;
             dst->isReverb = z->reverb ? TRUE : FALSE;
         }
@@ -719,11 +739,24 @@ void plugin_ui_on_settings_saved(void) {
     cfg.hudTheme = voiceHudTheme;
     cfg.hudPosition = hud_pos_from_legacy(voiceHudPosition);
     cfg.hudSize = voiceHudSize;
-    wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    /* The legacy savedPath global holds the ACTIVE path: auto-detected in
+       automatic mode, user-chosen in manual mode. Route it into the matching
+       config field so pos_file resolves Pos.txt correctly. */
+    if (enableAutomaticPatchFind) {
+        wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    }
+    else {
+        wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    }
     config_clamp(&cfg);
     config_apply(&cfg);
+    /* Canonical rewrite of plugin.cfg — restores keys the legacy writers drop
+       (DefaultsAppliedServer, DebugMode, EnableVoiceOverlay). */
+    config_save();
     log_set_enabled(cfg.debugMode);
-    voice_mode_apply((VoiceMode)currentVoiceMode);
+    if ((VoiceMode)currentVoiceMode != voice_mode_get_current()) {
+        voice_mode_apply((VoiceMode)currentVoiceMode);
+    }
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
