@@ -94,6 +94,9 @@ int ts3plugin_init(void) {
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
+    if (ui_settings_has_pending_apply()) {
+        ui_settings_flush_apply();
+    }
     overlay_stop();
     pos_watcher_stop();
     player_table_clear();

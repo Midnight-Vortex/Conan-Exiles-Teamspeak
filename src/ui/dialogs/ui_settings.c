@@ -142,7 +142,23 @@ static void dlg_load_values(void) {
     SendMessageW(GetDlgItem(g_dlg, IDC_CMB_SIZE), CB_SETCURSEL, cfg.hudSize, 0);
 }
 
-/* ---- save: publish staging copy for the callback thread --------------------------- */
+/* ---- apply staged or direct config ---------------------------------------------- */
+
+static void settings_apply_core(const PluginConfig* cfg) {
+    config_apply(cfg);
+    config_save();
+    log_set_enabled(g_config.debugMode);
+    pos_autodetect_saved_path();
+}
+
+static void settings_apply_ts_side(void) {
+    if (!ts3_is_connected()) {
+        return;
+    }
+    cepos_invalidate_send_cache();
+    cepos_signal_send_pending();
+    ts3_audio_recompute_all();
+}
 
 static void dlg_save_values(void) {
     PluginConfig cfg;
@@ -177,15 +193,21 @@ static void dlg_save_values(void) {
 
     config_clamp(&cfg);
 
-    pending_lock_ensure();
-    EnterCriticalSection(&g_pendingLock);
-    g_pending = cfg;
-    LeaveCriticalSection(&g_pendingLock);
-    InterlockedExchange(&g_pendingValid, 1);
-    ts3_request_wakeup();
-
-    SetWindowTextW(GetDlgItem(g_dlg, IDC_STATUS), L"Gespeichert - wird angewendet...");
-    log_write("UI: settings saved (pending apply)");
+    if (ts3_is_connected()) {
+        pending_lock_ensure();
+        EnterCriticalSection(&g_pendingLock);
+        g_pending = cfg;
+        LeaveCriticalSection(&g_pendingLock);
+        InterlockedExchange(&g_pendingValid, 1);
+        ts3_request_wakeup();
+        SetWindowTextW(GetDlgItem(g_dlg, IDC_STATUS), L"Gespeichert - wird angewendet...");
+        log_write("UI: settings saved (pending apply)");
+    }
+    else {
+        settings_apply_core(&cfg);
+        SetWindowTextW(GetDlgItem(g_dlg, IDC_STATUS), L"Gespeichert.");
+        log_write("UI: settings saved (offline apply)");
+    }
 }
 
 /* ---- window ------------------------------------------------------------------------ */
@@ -388,20 +410,8 @@ void ui_settings_flush_apply(void) {
     LeaveCriticalSection(&g_pendingLock);
     InterlockedExchange(&g_pendingValid, 0);
 
-    /* Publish under the config lock so concurrent string readers
-       (pos watcher path resolution) never see a torn g_config. */
-    config_apply(&staged);
-
-    config_save();
-    log_set_enabled(g_config.debugMode);
-
-    /* Auto path find may have just been enabled — resolve it now. */
-    pos_autodetect_saved_path();
-
-    /* Distances may have changed: push a fresh CEPOS packet and re-gain all. */
-    cepos_invalidate_send_cache();
-    cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    settings_apply_core(&staged);
+    settings_apply_ts_side();
 
     log_write("UI: settings applied (whisper=%.1f normal=%.1f shout=%.1f)",
         g_config.distanceWhisper, g_config.distanceNormal, g_config.distanceShout);
