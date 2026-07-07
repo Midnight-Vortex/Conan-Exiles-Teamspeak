@@ -150,6 +150,25 @@ float prox_lowpass_cutoff_hz(float distanceMeters) {
     return cutoff;
 }
 
+float prox_direct_reverb_ratio(float distanceMeters, float referenceDistanceMeters) {
+    float d = distanceMeters;
+    float ref = referenceDistanceMeters;
+    if (ref < 0.1f) {
+        ref = 0.1f;
+    }
+    if (d < 0.1f) {
+        d = 0.1f;
+    }
+    float drr = 1.0f / (1.0f + (d * d) / (ref * ref));
+    if (drr < 0.05f) {
+        drr = 0.05f;
+    }
+    if (drr > 1.0f) {
+        drr = 1.0f;
+    }
+    return drr;
+}
+
 void prox_math_self_test(void) {
     const float voiceDist = 13.0f;
     log_write("PROX-TEST: volume curve (voiceDistance=%.1f, maxVolume=1.0)", voiceDist);

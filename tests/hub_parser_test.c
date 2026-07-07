@@ -3,9 +3,16 @@
    Run:    hub_parser_test.exe   (exit code 0 = all checks passed) */
 
 #include "core/hub/hub_parser.h"
+#include "core/proximity/zone_resolve.h"
+#include "core/proximity/proximity_math.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+
+void log_write(const char* fmt, ...) {
+    (void)fmt;
+}
 
 static int g_failures = 0;
 
@@ -121,6 +128,21 @@ static void test_real_description(void) {
     CHECK(s.zones[0].audioMinDistance == 0.5f, "zone AudioMinDistance");
 }
 
+static void test_zone_audio_rules(void) {
+    printf("[1b] zone soundproof / reverb rules\n");
+    HubSettings s;
+    hub_parse_settings(real_description, &s);
+
+    CHECK(zone_soundproof_muted(&s, -1, 0) == 1, "soundproof: listener outside, speaker inside");
+    CHECK(zone_soundproof_muted(&s, 0, 0) == 0, "soundproof: same zone");
+    CHECK(zone_reverb_active(&s, -1, 0) == 1, "reverb: remote zone active");
+    CHECK(zone_reverb_active(&s, 0, -1) == 1, "reverb: local zone active");
+    CHECK(zone_reverb_active(&s, -1, -1) == 0, "reverb: open world off");
+
+    CHECK(prox_direct_reverb_ratio(10.0f, 0.5f) < prox_direct_reverb_ratio(2.0f, 0.5f),
+        "DRR falls off with distance");
+}
+
 static void test_malformed(void) {
     printf("[2] malformed / hostile input\n");
     HubSettings s;
@@ -169,6 +191,7 @@ static void test_newline_variant(void) {
 
 int main(void) {
     test_real_description();
+    test_zone_audio_rules();
     test_malformed();
     test_newline_variant();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);

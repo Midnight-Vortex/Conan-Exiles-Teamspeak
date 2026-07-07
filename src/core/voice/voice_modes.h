@@ -9,8 +9,9 @@
  * config, the server profile clamps the result.
  *
  * Thread contract:
- *  - voice_mode_hotkey_poll: pos watcher tick (PLUGIN_POLL_INTERVAL_MS).
- *    Only touches atomics + Win32 key state; never the TS API.
+ *  - voice_mode_hotkey_poll: pos watcher tick + key-monitor thread
+ *    (PLUGIN_POLL_INTERVAL_MS). Only touches atomics + Win32 key state;
+ *    never the TS API.
  *  - voice_mode_apply / voice_mode_toggle: any thread (atomic mode store,
  *    wakeup request; chat notify is deferred to the callback thread).
  *  - voice_mode_flush_notify: TS callback thread ONLY (prints to chat).

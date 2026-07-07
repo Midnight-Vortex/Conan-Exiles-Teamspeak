@@ -1,6 +1,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "core/config/config.h"
+#include "core/voice/voice_modes.h"
 #include "core/util/log.h"
 
 #include <windows.h>
@@ -132,6 +133,7 @@ static void profile_apply_defaults_once(const HubSettings* settings) {
     config_clamp(&cfg);
     config_apply(&cfg);
     config_save();
+    voice_mode_reset_key_tracking();
 
     log_write("PROFILE: first-connection defaults applied (keys %d/%d/%d/%d, "
         "dist %.1f/%.1f/%.1f)",

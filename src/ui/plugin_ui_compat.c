@@ -466,6 +466,7 @@ void plugin_ui_sync_live_state(void) {
 
 void plugin_ui_on_hub_profile_updated(void) {
     plugin_ui_sync_live_state();
+    ts3_audio_recompute_all();
     voice_overlay_refresh_position();
     updateVoiceOverlay();
 }
@@ -639,6 +640,8 @@ void plugin_ui_init(void) {
     InterlockedExchange(&overlayTextLockInitialized, 1);
     plugin_ui_sync_from_config();
     plugin_ui_sync_live_state();
+    voice_mode_reset_key_tracking();
+    installKeyMonitoring();
     initializeVoicePresets();
     loadPresetsFromConfigFile();
 }

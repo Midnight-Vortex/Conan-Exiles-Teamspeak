@@ -3,6 +3,7 @@
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
 #include "core/util/log.h"
+#include "plugin_modules.h"
 #include "ui/overlay/voice_overlay.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
@@ -17,15 +18,66 @@
 /* Current mode — atomic, read from cepos build path / written by hotkeys. */
 static volatile long g_currentMode = VOICE_MODE_NORMAL;
 
-/* Pending chat notification (mode value + 1, 0 = none). Set anywhere,
-   consumed on the callback thread. */
-static volatile long g_pendingNotify = 0;
-
-/* Hotkey state — pos watcher tick only. One trigger per press; re-arm on
-   GetKeyState release because GetAsyncKeyState can stay stuck after the TS
-   push-to-talk hook captures the key (old plugin lesson). */
+/* Hotkey state — polled from the pos watcher tick and key-monitor thread.
+   Start armed (1) so the first key press is not missed before a release poll. */
 static char g_keyArmed[256];
 static ULONGLONG g_keySuppressUntil[256];
+
+static int voice_key_pressed_vk(int vkCode) {
+    if (vkCode <= 0 || vkCode >= 256) {
+        return 0;
+    }
+    if (GetTickCount64() < g_keySuppressUntil[vkCode]) {
+        return 0;
+    }
+
+    const int asyncDown = (GetAsyncKeyState(vkCode) & 0x8000) != 0;
+    const int syncDown = (GetKeyState(vkCode) & 0x8000) != 0;
+
+    if (!syncDown) {
+        g_keyArmed[vkCode] = 1;
+    }
+    if (!asyncDown && !syncDown) {
+        return 0;
+    }
+    if (!g_keyArmed[vkCode]) {
+        return 0;
+    }
+    g_keyArmed[vkCode] = 0;
+    g_keySuppressUntil[vkCode] = GetTickCount64() + VOICE_POLL_SUPPRESS_MS;
+    return 1;
+}
+
+static int voice_key_pressed_configured(int configuredVk) {
+    if (configuredVk <= 0 || configuredVk >= 256) {
+        return 0;
+    }
+    if (voice_key_pressed_vk(configuredVk)) {
+        return 1;
+    }
+    switch (configuredVk) {
+    case 97:
+        return voice_key_pressed_vk(VK_END);
+    case 98:
+        return voice_key_pressed_vk(VK_DOWN);
+    case 99:
+        return voice_key_pressed_vk(VK_NEXT);
+    default:
+        return 0;
+    }
+}
+
+static void voice_mode_notify_mode(VoiceMode mode) {
+    static const char* const modeNames[] = { "Whisper", "Normal", "Shout" };
+    char message[128];
+    snprintf(message, sizeof(message),
+        "[Conan Exiles] Voice mode: %s - Distance: %.1f m",
+        modeNames[mode >= 0 && mode <= 2 ? mode : 1],
+        voice_mode_get_distance(mode));
+    displayInChat(message);
+    log_write("VOICE: mode=%s distance=%.1f",
+        modeNames[mode >= 0 && mode <= 2 ? mode : 1], voice_mode_get_distance(mode));
+}
 
 /* ---- 11.1 distance ---------------------------------------------------------- */
 
@@ -120,11 +172,8 @@ void voice_mode_apply(VoiceMode mode) {
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
 
-    InterlockedExchange(&g_pendingNotify, (long)mode + 1);
+    voice_mode_notify_mode(mode);
     ts3_request_wakeup();
-    if (ts3_thread_is_callback()) {
-        voice_mode_flush_notify();
-    }
     updateVoiceOverlay();
 }
 
@@ -137,53 +186,31 @@ void voice_mode_toggle(void) {
     }
 }
 
-/* ---- 11.3 hotkeys (pos watcher thread) ----------------------------------------- */
-
-static int voice_key_pressed(int vkCode) {
-    if (vkCode <= 0 || vkCode >= 256) {
-        return 0;
-    }
-    if (GetTickCount64() < g_keySuppressUntil[vkCode]) {
-        return 0;
-    }
-
-    const int asyncDown = (GetAsyncKeyState(vkCode) & 0x8000) != 0;
-    const int syncDown = (GetKeyState(vkCode) & 0x8000) != 0;
-
-    if (!syncDown) {
-        g_keyArmed[vkCode] = 1;
-    }
-    if (!asyncDown && !syncDown) {
-        return 0;
-    }
-    if (!g_keyArmed[vkCode]) {
-        return 0;
-    }
-    g_keyArmed[vkCode] = 0;
-    g_keySuppressUntil[vkCode] = GetTickCount64() + VOICE_POLL_SUPPRESS_MS;
-    return 1;
-}
+/* ---- 11.3 hotkeys (pos watcher + key-monitor threads) ------------------------- */
 
 void voice_mode_hotkey_poll(void) {
-    if (voice_key_pressed(g_config.whisperKey)) {
+    PluginConfig cfg;
+    config_copy(&cfg);
+
+    if (voice_key_pressed_configured(cfg.whisperKey)) {
         voice_mode_apply(VOICE_MODE_WHISPER);
         return;
     }
-    if (voice_key_pressed(g_config.shoutKey)) {
+    if (voice_key_pressed_configured(cfg.shoutKey)) {
         voice_mode_apply(VOICE_MODE_SHOUT);
         return;
     }
-    if (voice_key_pressed(g_config.normalKey)) {
+    if (voice_key_pressed_configured(cfg.normalKey)) {
         voice_mode_apply(VOICE_MODE_NORMAL);
         return;
     }
-    if (g_config.enableVoiceToggle && voice_key_pressed(g_config.voiceToggleKey)) {
+    if (cfg.enableVoiceToggle && voice_key_pressed_configured(cfg.voiceToggleKey)) {
         voice_mode_toggle();
     }
 }
 
 void voice_mode_reset_key_tracking(void) {
-    memset(g_keyArmed, 0, sizeof(g_keyArmed));
+    memset(g_keyArmed, 1, sizeof(g_keyArmed));
     memset(g_keySuppressUntil, 0, sizeof(g_keySuppressUntil));
 }
 
@@ -200,22 +227,11 @@ void voice_mode_flush_notify(void) {
     if (!ts3_thread_is_callback()) {
         return;
     }
-    const long pending = InterlockedExchange(&g_pendingNotify, 0);
-    if (pending == 0) {
-        return;
+    if (ts3_plugin_has_pending_chat()) {
+        ts3_plugin_flush_pending_chat();
     }
-
-    static const char* const modeNames[] = { "Whisper", "Normal", "Shout" };
-    const int mode = (int)pending - 1;
-    const float distance = voice_mode_get_distance((VoiceMode)mode);
-
-    char message[128];
-    snprintf(message, sizeof(message), "[Conan Exiles] Voice mode: %s - Distance: %.1f m",
-        modeNames[mode >= 0 && mode <= 2 ? mode : 1], distance);
-    ts3_print_to_chat(message);
-    log_write("VOICE: mode=%s distance=%.1f", modeNames[mode >= 0 && mode <= 2 ? mode : 1], distance);
 }
 
 int voice_mode_has_pending_notify(void) {
-    return InterlockedCompareExchange(&g_pendingNotify, 0, 0) != 0;
+    return ts3_plugin_has_pending_chat();
 }

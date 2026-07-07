@@ -232,6 +232,42 @@ static void cave_slot_release(anyID clientID) {
 
 /* ---- gain/pan computation (writer side) ----------------------------------- */
 
+static float audio_zone_reference_distance(const HubSettings* hub, int localZone) {
+    float ref = 1.0f;
+    if (hub) {
+        if (hub->audioMinDistance > 0.0f) {
+            ref = hub->audioMinDistance;
+        }
+        if (localZone >= 0 && localZone < hub->zoneCount) {
+            const float zoneRef = hub->zones[localZone].audioMinDistance;
+            if (zoneRef > 0.0f) {
+                ref = zoneRef;
+            }
+        }
+    }
+    if (ref < 0.1f) {
+        ref = 0.1f;
+    }
+    return ref;
+}
+
+static void audio_apply_reverb_rear_duck(float localDirX, float localDirZ,
+    float toRemoteX, float toRemoteZ, float* panL, float* panR) {
+    float len = sqrtf(toRemoteX * toRemoteX + toRemoteZ * toRemoteZ);
+    if (len <= 1e-6f || !panL || !panR) {
+        return;
+    }
+    toRemoteX /= len;
+    toRemoteZ /= len;
+    const float frontBack = -(localDirX * toRemoteX + localDirZ * toRemoteZ);
+    if (frontBack < -0.2f) {
+        const float backFactor = fminf(fabsf(frontBack + 0.2f) / 0.8f, 1.0f);
+        const float att = 0.55f + 0.45f * backFactor;
+        *panL *= att;
+        *panR *= att;
+    }
+}
+
 static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     int localValid, const HubSettings* hub, int localZone) {
     PlayerEntry remote;
@@ -248,14 +284,17 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     /* 10.1/10.2 zones: speaker in a foreign soundproof zone -> hard mute. */
     int soundproof = 0;
     int reverbSlot = -1;
+    int reverbZone = 0;
     float cutoffHz = TS3_LPF_BYPASS_HZ;
+    int remoteZone = -1;
 
     if (hub && hub->zoneCount > 0) {
-        const int remoteZone = zone_resolve(hub, remote.x, remote.y, remote.z);
+        remoteZone = zone_resolve(hub, remote.x, remote.y, remote.z);
         soundproof = zone_soundproof_muted(hub, localZone, remoteZone);
 
         /* 10.3/10.4 effects only inside reverb zones (open world stays clean). */
-        if (!soundproof && zone_reverb_active(hub, localZone, remoteZone)) {
+        reverbZone = !soundproof && zone_reverb_active(hub, localZone, remoteZone);
+        if (reverbZone) {
             const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
             cutoffHz = prox_lowpass_cutoff_hz(distance);
             reverbSlot = cave_slot_acquire(clientID);
@@ -277,8 +316,12 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
     }
     const float hearRange = remote.voiceDistance
         + server_profile_get_listen_add_distance();
-    const float gain = soundproof ? 0.0f
+    float gain = soundproof ? 0.0f
         : prox_volume_from_distance(distance, hearRange, maxVolume);
+    if (!soundproof && reverbZone) {
+        gain *= prox_direct_reverb_ratio(distance,
+            audio_zone_reference_distance(hub, localZone));
+    }
 
     const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
     const float dirX = -cosf(yawRad);
@@ -286,6 +329,9 @@ static void audio_compute_and_publish(anyID clientID, const PosSample* local,
 
     float panL, panR;
     prox_stereo_pan(dirX, dirZ, remote.x - lx, remote.z - lz, &panL, &panR);
+    if (reverbZone) {
+        audio_apply_reverb_rear_duck(dirX, dirZ, remote.x - lx, remote.z - lz, &panL, &panR);
+    }
 
     snap_publish(clientID, gain, panL, panR, cutoffHz, soundproof, reverbSlot, 1);
 

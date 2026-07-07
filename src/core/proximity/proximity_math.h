@@ -31,6 +31,9 @@ void prox_stereo_pan(float localDirX, float localDirZ,
    ~8 kHz close up down to 900 Hz far away). Pure, any thread. */
 float prox_lowpass_cutoff_hz(float distanceMeters);
 
+/* Direct/reverb mix vs distance (AudioMinDistance reference). Pure, any thread. */
+float prox_direct_reverb_ratio(float distanceMeters, float referenceDistanceMeters);
+
 /* Log a fixed-value table through log_write (Phase 5 test aid). */
 void prox_math_self_test(void);
 
