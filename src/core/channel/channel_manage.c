@@ -66,6 +66,29 @@ int chan_should_be_ingame(void) {
     return pos_coordinates_valid();
 }
 
+/* ---- channel identity (numeric ID or name fallback) --------------------------- */
+
+static int chan_channel_name_is(const uint64 channelID, const char* expected) {
+    char name[128] = "";
+    return channelID != 0
+        && ts3_get_channel_name(channelID, name, sizeof(name))
+        && _stricmp(name, expected) == 0;
+}
+
+static int chan_is_hub_channel(uint64 channelID) {
+    if (g_hubChannelID != 0) {
+        return channelID == g_hubChannelID;
+    }
+    return chan_channel_name_is(channelID, "hub");
+}
+
+static int chan_is_ingame_channel(uint64 channelID) {
+    if (g_ingameChannelID != 0) {
+        return channelID == g_ingameChannelID;
+    }
+    return chan_channel_name_is(channelID, "ingame");
+}
+
 /* ---- 8.3 move request (in-flight + cooldown) ----------------------------------- */
 
 int chan_request_move(uint64 targetChannelID) {
@@ -91,17 +114,17 @@ int chan_request_move(uint64 targetChannelID) {
         return 0;
     }
     /* Ingame channel may be password-protected (server profile, Phase 9). */
-    const char* password = (targetChannelID == g_ingameChannelID)
-        ? server_profile_get_ingame_password() : "";
+    const int toIngame = chan_is_ingame_channel(targetChannelID);
+    const char* password = toIngame ? server_profile_get_ingame_password() : "";
 
     /* Rename while still in the hub so ingame clients never see the
        "realName -> digits" rename event (Phase 12). */
-    if (targetChannelID == g_ingameChannelID) {
-        nick_anonymize_before_ingame(g_ingameChannelID);
+    if (toIngame) {
+        nick_anonymize_before_ingame(targetChannelID);
     }
 
     if (!ts3_request_client_move(localID, targetChannelID, password)) {
-        if (targetChannelID == g_ingameChannelID) {
+        if (toIngame) {
             nick_restore_in_hub(); /* move failed — roll back pre-anonymize */
         }
         return 0;
@@ -112,33 +135,12 @@ int chan_request_move(uint64 targetChannelID) {
     g_lastMoveMs = now;
     log_write("CHAN: move requested -> channel %llu (%s)",
         (unsigned long long)targetChannelID,
-        targetChannelID == g_ingameChannelID ? "ingame"
-        : targetChannelID == g_hubChannelID ? "hub" : "?");
+        toIngame ? "ingame"
+        : chan_is_hub_channel(targetChannelID) ? "hub" : "?");
     return 1;
 }
 
 /* ---- 8.4 playback gate from current channel ------------------------------------- */
-
-static int chan_channel_name_is(const uint64 channelID, const char* expected) {
-    char name[128] = "";
-    return channelID != 0
-        && ts3_get_channel_name(channelID, name, sizeof(name))
-        && _stricmp(name, expected) == 0;
-}
-
-static int chan_is_hub_channel(uint64 channelID) {
-    if (g_hubChannelID != 0) {
-        return channelID == g_hubChannelID;
-    }
-    return chan_channel_name_is(channelID, "hub");
-}
-
-static int chan_is_ingame_channel(uint64 channelID) {
-    if (g_ingameChannelID != 0) {
-        return channelID == g_ingameChannelID;
-    }
-    return chan_channel_name_is(channelID, "ingame");
-}
 
 static void chan_update_audio_mode(uint64 ownChannelID) {
     if (chan_is_ingame_channel(ownChannelID)) {
@@ -209,20 +211,30 @@ void chan_tick(void) {
 
     int moveWanted = 0;
     if (chan_should_be_ingame()) {
-        if (ownChannel != g_ingameChannelID) {
-            moveWanted = 1;
-            chan_request_move(g_ingameChannelID);
+        if (!chan_is_ingame_channel(ownChannel)) {
+            if (g_ingameChannelID == 0) {
+                chan_find_hub_and_ingame();
+            }
+            if (g_ingameChannelID != 0) {
+                moveWanted = 1;
+                chan_request_move(g_ingameChannelID);
+            }
         }
         else {
             /* Already ingame (relog / manual join) but maybe with real name. */
-            nick_anonymize_before_ingame(g_ingameChannelID);
+            nick_anonymize_before_ingame(ownChannel);
         }
     }
-    else if (ownChannel == g_ingameChannelID) {
+    else if (chan_is_ingame_channel(ownChannel)) {
         /* Game closed while ingame -> back to hub. Users sitting in other
            channels are left alone. */
-        moveWanted = 1;
-        chan_request_move(g_hubChannelID);
+        if (g_hubChannelID == 0) {
+            chan_find_hub_and_ingame();
+        }
+        if (g_hubChannelID != 0) {
+            moveWanted = 1;
+            chan_request_move(g_hubChannelID);
+        }
     }
 
     /* A blocked/pending move must be retried even when no TS event arrives:
@@ -244,7 +256,7 @@ void chan_on_own_move(uint64 newChannelID) {
     chan_update_audio_mode(newChannelID);
 
     /* Back outside the ingame channel -> real name again (Phase 12). */
-    if (g_ingameChannelID == 0 || newChannelID != g_ingameChannelID) {
+    if (!chan_is_ingame_channel(newChannelID)) {
         nick_restore_in_hub();
     }
 
