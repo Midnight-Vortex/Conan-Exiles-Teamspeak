@@ -8,7 +8,7 @@
 #include <math.h>
 #include <string.h>
 
-#define TS3D_MAX_CLIENT  4096   /* matches ts3_proximity_audio */
+#define TS3D_MAX_CLIENT  65536  /* matches ts3_proximity_audio (anyID is uint16) */
 #define TS3D_POS_EPS     0.25f  /* meters — skip API call below this move */
 #define TS3D_FWD_EPS     0.02f  /* direction component change threshold */
 #define TS3D_PI          3.14159265f

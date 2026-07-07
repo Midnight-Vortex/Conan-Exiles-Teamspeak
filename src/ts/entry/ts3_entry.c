@@ -149,6 +149,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         /* Remember the real name now — needed for the hub restore when the
            plugin later finds an already-anonymized nickname (relog case). */
         nick_on_connected();
+        chan_tick();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;
         memset(&cmd, 0, sizeof(cmd));
@@ -170,6 +171,7 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
     if (ts3_on_active_server_changed(serverConnectionHandlerID)) {
         if (ts3_is_connected()) {
             nick_on_connected();
+            chan_tick();
             ts3_request_wakeup();
         }
     }
@@ -187,10 +189,15 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
+        if (cepos_send_pending()) {
+            cepos_flush();
+        }
         ts3d_apply();
         server_profile_tick();
         chan_tick();
-        ts3_audio_flush_unmutes();
+        if (ts3_audio_has_pending_unmutes()) {
+            ts3_audio_flush_unmutes();
+        }
         return;
     }
 

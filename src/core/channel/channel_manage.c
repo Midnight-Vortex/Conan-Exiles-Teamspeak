@@ -119,12 +119,33 @@ int chan_request_move(uint64 targetChannelID) {
 
 /* ---- 8.4 playback gate from current channel ------------------------------------- */
 
-static void chan_update_audio_mode(uint64 ownChannelID) {
-    if (g_hubChannelID != 0 && ownChannelID == g_hubChannelID) {
-        ts3_audio_set_mode(TS3_AUDIO_MUTE);
+static int chan_channel_name_is(const uint64 channelID, const char* expected) {
+    char name[128] = "";
+    return channelID != 0
+        && ts3_get_channel_name(channelID, name, sizeof(name))
+        && _stricmp(name, expected) == 0;
+}
+
+static int chan_is_hub_channel(uint64 channelID) {
+    if (g_hubChannelID != 0) {
+        return channelID == g_hubChannelID;
     }
-    else if (g_ingameChannelID != 0 && ownChannelID == g_ingameChannelID) {
+    return chan_channel_name_is(channelID, "hub");
+}
+
+static int chan_is_ingame_channel(uint64 channelID) {
+    if (g_ingameChannelID != 0) {
+        return channelID == g_ingameChannelID;
+    }
+    return chan_channel_name_is(channelID, "ingame");
+}
+
+static void chan_update_audio_mode(uint64 ownChannelID) {
+    if (chan_is_ingame_channel(ownChannelID)) {
         ts3_audio_set_mode(TS3_AUDIO_PROXIMITY);
+    }
+    else if (chan_is_hub_channel(ownChannelID)) {
+        ts3_audio_set_mode(TS3_AUDIO_MUTE);
     }
     else {
         ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
@@ -165,10 +186,6 @@ void chan_tick(void) {
         if (now - g_lastFindMs >= CHAN_FIND_RETRY_MS) {
             g_lastFindMs = now;
             chan_find_hub_and_ingame();
-        }
-        if (g_hubChannelID == 0 && g_ingameChannelID == 0) {
-            ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
-            return;
         }
     }
 

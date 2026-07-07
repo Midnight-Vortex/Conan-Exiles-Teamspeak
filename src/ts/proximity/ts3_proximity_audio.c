@@ -11,7 +11,7 @@
 #include <math.h>
 #include <string.h>
 
-#define TS3_AUDIO_MAX_CLIENT   4096
+#define TS3_AUDIO_MAX_CLIENT   65536  /* anyID is uint16 — index by clientID directly */
 #define TS3_UNMUTE_REARM_MS    2000
 #define TS3_UNMUTE_BATCH_MAX   64
 #define TS3_AUDIBLE_GAIN       0.001f
