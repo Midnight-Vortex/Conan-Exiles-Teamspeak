@@ -30,7 +30,7 @@ typedef struct PosSample {
    retries because Conan may hold the file while writing. */
 int pos_file_read_once(const wchar_t* filePath, PosSample* out);
 
-/* Start/stop the polling thread (~50 ms). Start is idempotent. Stop blocks
+/* Start/stop the polling thread (~30 ms). Start is idempotent. Stop blocks
    until the thread has exited (max ~2 s). */
 void pos_watcher_start(void);
 void pos_watcher_stop(void);

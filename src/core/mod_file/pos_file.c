@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define POS_POLL_INTERVAL_MS 50
+#define POS_POLL_INTERVAL_MS 30
 #define POS_STALE_MS         5000
 #define POS_LOG_THROTTLE_MS  30000
 

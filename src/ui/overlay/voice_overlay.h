@@ -20,8 +20,9 @@
 void overlay_start(void);
 void overlay_stop(void);
 
-/* Thread id of the overlay/UI thread, 0 when not running. Any thread —
-   used by the settings dialog to marshal its open request. */
+void plugin_ui_on_settings_saved(void);
+
+/* Thread id hook retained for legacy UI helpers (0 when unused). */
 unsigned long overlay_ui_thread_id(void);
 
 #endif /* UI_OVERLAY_VOICE_OVERLAY_H */

@@ -22,7 +22,7 @@
 #include "core/voice/voice_modes.h"
 #include "core/nick/nick_anonymize.h"
 #include "ui/overlay/voice_overlay.h"
-#include "ui/dialogs/ui_settings.h"
+#include "ui/plugin_ui_compat.h"
 
 #include <string.h>
 
@@ -30,6 +30,7 @@
    send and refresh the audio snapshots for all known speakers. No TS API
    calls in here. */
 static void ts3_on_local_position_update(void) {
+    plugin_ui_on_position_tick();
     voice_mode_hotkey_poll();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
@@ -73,6 +74,7 @@ int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
     config_load();
+    plugin_ui_init();
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
     pos_watcher_start();
@@ -94,9 +96,7 @@ int ts3plugin_init(void) {
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
-    if (ui_settings_has_pending_apply()) {
-        ui_settings_flush_apply();
-    }
+    plugin_ui_shutdown();
     overlay_stop();
     pos_watcher_stop();
     player_table_clear();
@@ -210,9 +210,6 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
            drain (cepos/3D/unmute) when this client has nothing pending. */
         if (ts3_cmd_queue_nonempty()) {
             ts3_cmd_queue_drain();
-        }
-        if (ui_settings_has_pending_apply()) {
-            ui_settings_flush_apply();
         }
         if (voice_mode_has_pending_notify()) {
             voice_mode_flush_notify();

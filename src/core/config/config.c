@@ -197,8 +197,11 @@ void config_clamp(PluginConfig* cfg) {
     if (cfg->configUIKey <= 0 || cfg->configUIKey >= 256) cfg->configUIKey = 121;
 
     if (cfg->hudTheme < 0) cfg->hudTheme = 0;
+    if (cfg->hudTheme > 11) cfg->hudTheme = 11;
     if (cfg->hudPosition < 0) cfg->hudPosition = 0;
+    if (cfg->hudPosition > 4) cfg->hudPosition = 4;
     if (cfg->hudSize < 0) cfg->hudSize = 0;
+    if (cfg->hudSize > 2) cfg->hudSize = 2;
 }
 
 int config_load(void) {
