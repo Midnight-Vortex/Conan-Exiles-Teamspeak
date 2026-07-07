@@ -37,6 +37,7 @@ typedef struct PluginConfig {
     int enableVoiceToggle;
 
     /* Voice overlay (HUD). */
+    int enableVoiceOverlay;
     int hudTheme;
     int hudPosition;
     int hudSize;
@@ -57,5 +58,9 @@ int config_load(void);
 
 /* Write current g_config to plugin.cfg. Returns 1 on success. */
 int config_save(void);
+
+/* Clamp numeric fields into safe ranges (used after load and after the
+   settings dialog). Pure, any thread. */
+void config_clamp(PluginConfig* cfg);
 
 #endif /* CORE_CONFIG_CONFIG_H */

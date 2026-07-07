@@ -42,6 +42,7 @@ static void config_set_defaults(PluginConfig* cfg) {
     cfg->enableDistanceMuting = 1;
     cfg->enableAutomaticChannelChange = 1;
     cfg->enableVoiceToggle = 1;
+    cfg->enableVoiceOverlay = 1;
     cfg->hudTheme = 0;
     cfg->hudPosition = 0;
     cfg->hudSize = 0;
@@ -129,6 +130,9 @@ static void config_apply_line(PluginConfig* cfg, wchar_t* line) {
     else if (_wcsicmp(key, L"EnableVoiceToggle") == 0) {
         cfg->enableVoiceToggle = parse_bool(val);
     }
+    else if (_wcsicmp(key, L"EnableVoiceOverlay") == 0) {
+        cfg->enableVoiceOverlay = parse_bool(val);
+    }
     else if (_wcsicmp(key, L"HudTheme") == 0) {
         cfg->hudTheme = _wtoi(val);
     }
@@ -144,7 +148,7 @@ static void config_apply_line(PluginConfig* cfg, wchar_t* line) {
 }
 
 /* Clamp numeric values into safe ranges after load. */
-static void config_validate(PluginConfig* cfg) {
+void config_clamp(PluginConfig* cfg) {
     if (cfg->distanceWhisper < 0.5f) cfg->distanceWhisper = 0.5f;
     if (cfg->distanceWhisper > 500.0f) cfg->distanceWhisper = 500.0f;
     if (cfg->distanceNormal < 0.5f) cfg->distanceNormal = 0.5f;
@@ -185,7 +189,7 @@ int config_load(void) {
     }
     fclose(f);
 
-    config_validate(&g_config);
+    config_clamp(&g_config);
     log_set_enabled(g_config.debugMode);
     log_write("CONFIG: loaded (whisper=%.1f normal=%.1f shout=%.1f debug=%d)",
         g_config.distanceWhisper, g_config.distanceNormal, g_config.distanceShout,
@@ -219,6 +223,7 @@ int config_save(void) {
     fwprintf(f, L"EnableDistanceMuting=%s\n", g_config.enableDistanceMuting ? L"true" : L"false");
     fwprintf(f, L"EnableAutomaticChannelChange=%s\n", g_config.enableAutomaticChannelChange ? L"true" : L"false");
     fwprintf(f, L"EnableVoiceToggle=%s\n", g_config.enableVoiceToggle ? L"true" : L"false");
+    fwprintf(f, L"EnableVoiceOverlay=%s\n", g_config.enableVoiceOverlay ? L"true" : L"false");
     fwprintf(f, L"HudTheme=%d\n", g_config.hudTheme);
     fwprintf(f, L"HudPosition=%d\n", g_config.hudPosition);
     fwprintf(f, L"HudSize=%d\n", g_config.hudSize);

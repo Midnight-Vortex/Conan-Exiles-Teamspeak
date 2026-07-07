@@ -71,6 +71,8 @@
     <ClInclude Include="..\src\core\proximity\zone_resolve.h" />
     <ClInclude Include="..\src\core\voice\voice_modes.h" />
     <ClInclude Include="..\src\core\nick\nick_anonymize.h" />
+    <ClInclude Include="..\src\ui\overlay\voice_overlay.h" />
+    <ClInclude Include="..\src\ui\dialogs\ui_settings.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\ts\entry\ts3_entry.c" />
@@ -89,6 +91,8 @@
     <ClCompile Include="..\src\core\proximity\zone_resolve.c" />
     <ClCompile Include="..\src\core\voice\voice_modes.c" />
     <ClCompile Include="..\src\core\nick\nick_anonymize.c" />
+    <ClCompile Include="..\src\ui\overlay\voice_overlay.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_settings.c" />
   </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>

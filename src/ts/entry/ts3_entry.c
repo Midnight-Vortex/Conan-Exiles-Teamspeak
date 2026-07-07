@@ -21,6 +21,8 @@
 #include "ts/profile/ts3_server_profile.h"
 #include "core/voice/voice_modes.h"
 #include "core/nick/nick_anonymize.h"
+#include "ui/overlay/voice_overlay.h"
+#include "ui/dialogs/ui_settings.h"
 
 #include <string.h>
 
@@ -73,6 +75,7 @@ int ts3plugin_init(void) {
     config_load();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
     pos_watcher_start();
+    overlay_start();
     if (log_is_enabled()) {
         prox_math_self_test();
     }
@@ -82,6 +85,7 @@ int ts3plugin_init(void) {
 
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
+    overlay_stop();
     pos_watcher_stop();
     ts3_adapter_shutdown();
     log_close();
@@ -139,6 +143,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
 
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
         ts3_cmd_queue_drain();
+        ui_settings_flush_apply();
         cepos_flush();
         ts3d_apply();
         server_profile_tick();

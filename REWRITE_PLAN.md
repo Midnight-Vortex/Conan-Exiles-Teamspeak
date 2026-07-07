@@ -74,14 +74,14 @@ E:\programme\Conan-Exiles-Teamspeak\
 
 ## 📌 AKTUELLER STAND (Stand: 2026-07-07)
 
-**Phase 0–12 sind implementiert und kompilieren fehlerfrei (Release x64).**
-**Nächster Schritt: Phase 13 (UI: Dialoge + Overlay).**
+**Phase 0–13 sind implementiert und kompilieren fehlerfrei (Release x64).**
+**Nächster Schritt: Phase 14 (Cleanup / Härtetest).**
 
-Noch offen vor dem Weiterbauen: Phasen 0–12 im echten TS-Client testen (Plugin laden,
+Noch offen vor dem Weiterbauen: Phasen 0–13 im echten TS-Client testen (Plugin laden,
 verbinden, mit 2 Clients Positionen austauschen, Lautstärke/Pan/Richtung prüfen,
 Auto-Move hub ↔ ingame, Hub-Stummschaltung, Root-Beschreibung ändern → Werte im Log,
 Zonen: Soundproof-Mute + Höhlen-Hall + Lowpass, Voice-Modes per Hotkey wechseln,
-Nickname ingame = Zufallsnummer / im Hub = echter Name).
+Nickname ingame = Zufallsnummer / im Hub = echter Name, F10-Dialog + HUD-Overlay).
 
 Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exiles-TeamSpeak.vcxproj`):
 
@@ -104,9 +104,11 @@ Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exile
 | Zonen-FX | in `ts3_proximity_audio.c` (Snapshot-Felder cutoff/soundproof/reverbSlot, LPF + Cave-Reverb, statischer Pool) | 10 |
 | Voice-Modes | `src\core\voice\voice_modes.c/.h` (Whisper/Normal/Shout, Zonen-Override + Profil-Clamp, entprellte Hotkeys, Chat-Notify auf Callback-Thread) | 11 |
 | Nickname-Anonymisierung | `src\core\nick\nick_anonymize.c/.h` (8–10 Zufallsziffern, Rename VOR dem Ingame-Move, Kollisionscheck im Zielchannel, Hub-Restore) | 12 |
+| Voice-Overlay (HUD) | `src\ui\overlay\voice_overlay.c/.h` (eigener UI-Thread + Message-Loop, Click-Through, Modus + Zone, Themes/Position/Größe aus plugin.cfg) | 13 |
+| Einstellungs-Dialog | `src\ui\dialogs\ui_settings.c/.h` (F10, Pfad/Distanzen/Hotkeys/Toggles/HUD; Staging-Config, Anwendung auf Callback-Thread via CEDRAIN) | 13 |
 
 Hinweis für neuen Chat / anderen PC: Einfach sagen „Führe REWRITE_PLAN.md fort,
-Phase 0–12 fertig, weiter mit Phase 13“. Build-Befehl: MSBuild auf
+Phase 0–13 fertig, weiter mit Phase 14“. Build-Befehl: MSBuild auf
 `project\Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) oder `build\build_msvc.ps1`.
 
 ---
@@ -128,8 +130,8 @@ Phase 0–12 fertig, weiter mit Phase 13“. Build-Befehl: MSBuild auf
 | 10 | Zonen-Effekte | Soundproof / Reverb / Lowpass | ✅ gebaut (2026-07-07), Test offen |
 | 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout | ✅ gebaut (2026-07-07), Test offen |
 | 12 | Nickname-Anonymisierung | Zufallsnummern ingame | ✅ gebaut (2026-07-07), Test offen |
-| 13 | UI (Dialoge + Overlay) | Einstellungsfenster + Overlay | ⏳ nächster Schritt |
-| 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler | offen |
+| 13 | UI (Dialoge + Overlay) | Einstellungsfenster + Overlay | ✅ gebaut (2026-07-07), Test offen |
+| 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler | ⏳ nächster Schritt |
 
 **Reihenfolge ist bindend.** Keine Phase beginnt, bevor die vorherige im echten TS-Client getestet wurde.
 
