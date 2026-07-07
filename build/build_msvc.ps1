@@ -85,11 +85,22 @@ if (-not $DeployOnly) {
         }
     }
 
-    if (-not $VsInstall) {
-        throw "Visual Studio 2026 not found. Expected under: $($VsCandidates[0])"
+    $MsBuild = $null
+    $VsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $VsWhere) {
+        $MsBuild = & $VsWhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+        if ($MsBuild -and -not $VsInstall) {
+            $VsInstall = Split-Path (Split-Path (Split-Path $MsBuild -Parent) -Parent) -Parent
+        }
     }
 
-    $MsBuild = Join-Path $VsInstall "MSBuild\Current\Bin\MSBuild.exe"
+    if (-not $VsInstall) {
+        throw "Visual Studio not found. Install VS 2022/2026 with C++ desktop workload."
+    }
+
+    if (-not $MsBuild) {
+        $MsBuild = Join-Path $VsInstall "MSBuild\Current\Bin\MSBuild.exe"
+    }
     if (-not (Test-Path $MsBuild)) {
         throw "MSBuild not found: $MsBuild"
     }

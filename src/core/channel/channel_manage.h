@@ -36,6 +36,10 @@ int chan_request_move(uint64 targetChannelID);
    hub<->ingame moves when needed. Called from the CEDRAIN drain path. */
 void chan_tick(void);
 
+/* Pos watcher may call from any thread when coordinates become valid/invalid.
+   Schedules a callback-thread chan_tick via the CEDRAIN wakeup loop. */
+void chan_signal_position_update(void);
+
 /* Own client changed channel (onClientMoveEvent): clears the in-flight
    flag and refreshes the playback gate. */
 void chan_on_own_move(uint64 newChannelID);

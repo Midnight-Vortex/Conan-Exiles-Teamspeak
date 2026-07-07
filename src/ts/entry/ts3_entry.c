@@ -61,6 +61,9 @@ static void overlay_schedule_start(void) {
 static void ts3_on_local_position_update(void) {
     plugin_ui_on_position_tick();
     voice_mode_hotkey_poll();
+    /* Auto-move follows Pos.txt validity — wake the callback thread even when
+       CEPOS has nothing new to send (e.g. standing still in-game). */
+    chan_signal_position_update();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
 }
@@ -185,6 +188,8 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         nick_on_connected();
         plugin_ui_sync_from_config();
         plugin_ui_sync_live_state();
+        pos_autodetect_saved_path();
+        plugin_ui_sync_from_config();
         chan_tick();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
         Ts3Command cmd;

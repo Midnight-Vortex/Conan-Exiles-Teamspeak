@@ -9,9 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define POS_POLL_INTERVAL_MS 30
-#define POS_STALE_MS         5000
-#define POS_LOG_THROTTLE_MS  30000
+#define POS_POLL_INTERVAL_MS    30
+#define POS_STALE_MS            5000
+#define POS_LOG_THROTTLE_MS     30000
+#define POS_AUTODETECT_RETRY_MS 15000
 
 /* Private lock guarding g_currentSample. Never shared with other modules. */
 static CRITICAL_SECTION g_posLock;
@@ -133,6 +134,20 @@ static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
     return (now.QuadPart - written.QuadPart) / 10000ULL;
 }
 
+/* ---- path validation ---------------------------------------------------- */
+
+/* 1 when the Saved-folder path is usable (exists on disk, not a UI placeholder). */
+static int pos_saved_path_is_valid(const wchar_t* path) {
+    if (!path || !path[0]) {
+        return 0;
+    }
+    if (wcsstr(path, L"(Not configured)") != NULL
+        || wcsstr(path, L"(not configured)") != NULL) {
+        return 0;
+    }
+    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+}
+
 /* ---- watcher thread ----------------------------------------------------- */
 
 void pos_autodetect_saved_path(void) {
@@ -142,19 +157,25 @@ void pos_autodetect_saved_path(void) {
     if (!cfg.automaticPatchFind) {
         return;
     }
-    /* Keep a stored path that still exists; re-detect when empty or stale. */
-    if (cfg.automaticSavedPath[0]
-        && GetFileAttributesW(cfg.automaticSavedPath) != INVALID_FILE_ATTRIBUTES) {
+    /* Keep a stored path that still exists; re-detect when empty or bogus. */
+    if (pos_saved_path_is_valid(cfg.automaticSavedPath)) {
         return;
     }
 
     wchar_t detected[CONFIG_MAX_PATH] = L"";
     if (!path_detect_conan_saved(detected, CONFIG_MAX_PATH)) {
+        if (cfg.automaticSavedPath[0]) {
+            log_write("POS: autodetect failed — clearing invalid AutomaticSavedPath");
+            cfg.automaticSavedPath[0] = L'\0';
+            config_apply(&cfg);
+            config_save();
+        }
         return;
     }
     wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, detected, _TRUNCATE);
     config_apply(&cfg);
     config_save();
+    log_write("POS: autodetect saved path -> %ls", cfg.automaticSavedPath);
 }
 
 /* Pos.txt path from config: automatic path when enabled and set, else manual.
@@ -165,10 +186,10 @@ static void pos_resolve_file_path(wchar_t* out, size_t outLen) {
     config_copy(&cfg);
 
     const wchar_t* base = NULL;
-    if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+    if (cfg.automaticPatchFind && pos_saved_path_is_valid(cfg.automaticSavedPath)) {
         base = cfg.automaticSavedPath;
     }
-    else if (cfg.savedPath[0]) {
+    else if (pos_saved_path_is_valid(cfg.savedPath)) {
         base = cfg.savedPath;
     }
 
@@ -186,6 +207,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
     wchar_t filePath[CONFIG_MAX_PATH + 16];
     ULONGLONG lastMissingLog = 0;
     ULONGLONG lastValidLog = 0;
+    ULONGLONG lastAutodetectMs = 0;
     int lastSeq = -1;
 
     log_write("POS: watcher started");
@@ -195,9 +217,13 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             break;
         }
 
-        pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
-
         const ULONGLONG now = GetTickCount64();
+        if (now - lastAutodetectMs >= POS_AUTODETECT_RETRY_MS) {
+            lastAutodetectMs = now;
+            pos_autodetect_saved_path();
+        }
+
+        pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
 
         if (!filePath[0]) {
             if (now - lastMissingLog > POS_LOG_THROTTLE_MS) {

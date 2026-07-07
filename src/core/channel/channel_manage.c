@@ -25,6 +25,8 @@ static int g_moveInFlight = 0;
 static ULONGLONG g_moveInFlightSince = 0;
 static ULONGLONG g_lastMoveMs = 0;
 static ULONGLONG g_lastTickMs = 0;
+static volatile long g_positionUpdatePending = 0;
+static ULONGLONG g_lastMoveSkipLogMs = 0;
 
 /* ---- 8.1 find hub + ingame channels ----------------------------------------- */
 
@@ -163,6 +165,18 @@ static int chan_distance_muting_enabled(void) {
     return server_profile_get(&hub) && hub.forceDistanceMuting;
 }
 
+static int chan_auto_move_enabled(void) {
+    if (g_config.enableAutomaticChannelChange) {
+        return 1;
+    }
+    return server_profile_force_auto_channel();
+}
+
+void chan_signal_position_update(void) {
+    InterlockedExchange(&g_positionUpdatePending, 1);
+    ts3_request_wakeup();
+}
+
 /* ---- tick driver ------------------------------------------------------------------ */
 
 void chan_tick(void) {
@@ -170,20 +184,16 @@ void chan_tick(void) {
         return;
     }
 
+    InterlockedExchange(&g_positionUpdatePending, 0);
+
     const ULONGLONG now = GetTickCount64();
     if (now - g_lastTickMs < CHAN_TICK_MIN_MS) {
         return;
     }
     g_lastTickMs = now;
 
-    /* Whole proximity system off -> untouched TS behavior. */
-    if (!chan_distance_muting_enabled()) {
-        ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
-        return;
-    }
-
-    /* (Re-)resolve channel IDs, throttled while missing. Needed for the
-       playback gate even when auto-move is disabled. */
+    /* (Re-)resolve channel IDs, throttled while missing. Needed for auto-move
+       and for the hub hard-mute playback gate. */
     if (g_hubChannelID == 0 || g_ingameChannelID == 0) {
         if (now - g_lastFindMs >= CHAN_FIND_RETRY_MS) {
             g_lastFindMs = now;
@@ -200,24 +210,40 @@ void chan_tick(void) {
         return;
     }
 
-    /* Playback gate follows the CURRENT channel — also for users who sit in
-       the hub manually with auto-move disabled (hub hard-mute stays active). */
-    chan_update_audio_mode(ownChannel);
+    /* Playback gate — independent of auto-move. */
+    if (chan_distance_muting_enabled()) {
+        chan_update_audio_mode(ownChannel);
+    }
+    else {
+        ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
+    }
 
-    /* Server profile can force auto-move even when disabled locally. */
-    if (!g_config.enableAutomaticChannelChange && !server_profile_force_auto_channel()) {
+    if (!chan_auto_move_enabled()) {
         return;
     }
 
     int moveWanted = 0;
-    if (chan_should_be_ingame()) {
+    const int wantIngame = chan_should_be_ingame();
+
+    if (wantIngame) {
         if (!chan_is_ingame_channel(ownChannel)) {
             if (g_ingameChannelID == 0) {
                 chan_find_hub_and_ingame();
             }
             if (g_ingameChannelID != 0) {
                 moveWanted = 1;
-                chan_request_move(g_ingameChannelID);
+                if (!chan_request_move(g_ingameChannelID)
+                    && now - g_lastMoveSkipLogMs >= 5000) {
+                    g_lastMoveSkipLogMs = now;
+                    log_write("CHAN: auto-move to ingame blocked (in-flight=%d cooldown=%llums coords=%d)",
+                        g_moveInFlight,
+                        (unsigned long long)(now - g_lastMoveMs),
+                        pos_coordinates_valid());
+                }
+            }
+            else if (now - g_lastMoveSkipLogMs >= 5000) {
+                g_lastMoveSkipLogMs = now;
+                log_write("CHAN: auto-move to ingame wanted but ingame channel not found");
             }
         }
         else {
@@ -225,15 +251,27 @@ void chan_tick(void) {
             nick_anonymize_before_ingame(ownChannel);
         }
     }
-    else if (chan_is_ingame_channel(ownChannel)) {
-        /* Game closed while ingame -> back to hub. Users sitting in other
-           channels are left alone. */
+    else if (!chan_is_hub_channel(ownChannel)) {
+        /* No game coords (or Conan closed): lobby channel. Old-plugin rule —
+           move anyone who is NOT in hub (root on join, ingame after quit, etc.). */
         if (g_hubChannelID == 0) {
             chan_find_hub_and_ingame();
         }
         if (g_hubChannelID != 0) {
             moveWanted = 1;
-            chan_request_move(g_hubChannelID);
+            if (!chan_request_move(g_hubChannelID)
+                && now - g_lastMoveSkipLogMs >= 5000) {
+                g_lastMoveSkipLogMs = now;
+                log_write("CHAN: auto-move to hub blocked (from ch=%llu in-flight=%d cooldown=%llums)",
+                    (unsigned long long)ownChannel,
+                    g_moveInFlight,
+                    (unsigned long long)(now - g_lastMoveMs));
+            }
+        }
+        else if (now - g_lastMoveSkipLogMs >= 5000) {
+            g_lastMoveSkipLogMs = now;
+            log_write("CHAN: auto-move to hub wanted (own=%llu) but hub channel not found",
+                (unsigned long long)ownChannel);
         }
     }
 
@@ -271,6 +309,8 @@ void chan_reset(void) {
     g_moveInFlightSince = 0;
     g_lastMoveMs = 0;
     g_lastTickMs = 0;
+    InterlockedExchange(&g_positionUpdatePending, 0);
+    g_lastMoveSkipLogMs = 0;
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
 }
 

@@ -334,11 +334,13 @@ void plugin_ui_sync_to_config(void) {
     cfg.hudPosition = hud_pos_from_legacy(voiceHudPosition);
     cfg.hudSize = voiceHudSize;
     /* Active-path routing — see plugin_ui_on_settings_saved. */
-    if (enableAutomaticPatchFind) {
-        wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-    }
-    else {
-        wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+    if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
+        if (enableAutomaticPatchFind) {
+            wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+        }
+        else {
+            wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+        }
     }
     config_clamp(&cfg);
     config_apply(&cfg);
@@ -741,12 +743,15 @@ void plugin_ui_on_settings_saved(void) {
     cfg.hudSize = voiceHudSize;
     /* The legacy savedPath global holds the ACTIVE path: auto-detected in
        automatic mode, user-chosen in manual mode. Route it into the matching
-       config field so pos_file resolves Pos.txt correctly. */
-    if (enableAutomaticPatchFind) {
-        wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-    }
-    else {
-        wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+       config field so pos_file resolves Pos.txt correctly. Never persist UI
+       placeholders like "(Not configured)". */
+    if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
+        if (enableAutomaticPatchFind) {
+            wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+        }
+        else {
+            wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
+        }
     }
     config_clamp(&cfg);
     config_apply(&cfg);
