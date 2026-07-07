@@ -36,9 +36,6 @@ int server_profile_get(HubSettings* out);
 /* Gain cap from the profile (1.0 without profile). Any thread. */
 float server_profile_get_max_volume(void);
 
-/* Clamp the own normal voice distance to the profile min/max. Any thread. */
-float server_profile_clamp_normal_distance(float meters);
-
 /* 1 when the server forces hub<->ingame auto-move. Any thread. */
 int server_profile_force_auto_channel(void);
 

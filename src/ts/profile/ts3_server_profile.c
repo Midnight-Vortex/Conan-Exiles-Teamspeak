@@ -97,25 +97,6 @@ float server_profile_get_max_volume(void) {
     return v;
 }
 
-float server_profile_clamp_normal_distance(float meters) {
-    if (!InterlockedCompareExchange(&g_profileActive, 0, 0)) {
-        return meters;
-    }
-    profile_lock_ensure();
-    EnterCriticalSection(&g_profileLock);
-    const float minV = g_active.minNormal;
-    const float maxV = g_active.maxNormal;
-    LeaveCriticalSection(&g_profileLock);
-
-    if (minV > 0.0f && meters < minV) {
-        meters = minV;
-    }
-    if (maxV > 0.0f && meters > maxV) {
-        meters = maxV;
-    }
-    return meters;
-}
-
 int server_profile_force_auto_channel(void) {
     if (!InterlockedCompareExchange(&g_profileActive, 0, 0)) {
         return 0;

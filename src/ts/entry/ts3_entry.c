@@ -19,12 +19,15 @@
 #include "ts/proximity/ts3_3d.h"
 #include "core/channel/channel_manage.h"
 #include "ts/profile/ts3_server_profile.h"
+#include "core/voice/voice_modes.h"
 
 #include <string.h>
 
-/* Pos watcher tick (watcher thread): queue own CEPOS send and refresh the
-   audio snapshots for all known speakers. No TS API calls in here. */
+/* Pos watcher tick (watcher thread): poll voice hotkeys, queue own CEPOS
+   send and refresh the audio snapshots for all known speakers. No TS API
+   calls in here. */
 static void ts3_on_local_position_update(void) {
+    voice_mode_hotkey_poll();
     cepos_signal_send_pending();
     ts3_audio_recompute_all();
 }
@@ -137,6 +140,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         ts3d_apply();
         server_profile_tick();
         chan_tick();
+        voice_mode_flush_notify();
         ts3_audio_flush_unmutes();
     }
 }

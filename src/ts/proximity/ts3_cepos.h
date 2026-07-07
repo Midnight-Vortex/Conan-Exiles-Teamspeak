@@ -39,6 +39,10 @@ void cepos_flush(void);
 int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
     anyID invokerClientID);
 
+/* Force the next flush to send even when position/distance look unchanged
+   (voice mode switched). Any thread. */
+void cepos_invalidate_send_cache(void);
+
 /* Clear send cache (disconnect / reconnect). */
 void cepos_reset(void);
 

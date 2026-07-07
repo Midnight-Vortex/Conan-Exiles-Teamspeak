@@ -2,6 +2,7 @@
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
+#include "core/voice/voice_modes.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/player_table.h"
 #include "core/config/config.h"
@@ -24,6 +25,13 @@
 static CeposPacket g_lastSent;
 static int g_lastSentValid = 0;
 static ULONGLONG g_lastSendMs = 0;
+
+/* Set from any thread (voice mode switch), consumed on the callback thread. */
+static volatile long g_sendCacheInvalid = 0;
+
+void cepos_invalidate_send_cache(void) {
+    InterlockedExchange(&g_sendCacheInvalid, 1);
+}
 
 /* Set from any thread, consumed on the callback thread. */
 static volatile long g_sendPending = 0;
@@ -110,9 +118,8 @@ static void cepos_build_local(const PosSample* sample, CeposPacket* out) {
     out->axisY = 1.0f;
     out->axisZ = 0.0f;
 
-    /* Voice modes come in a later phase — normal distance until then.
-       Server profile (Phase 9) clamps it to the hub min/max. */
-    out->voiceDistance = server_profile_clamp_normal_distance(g_config.distanceNormal);
+    /* Active voice mode (Phase 11): zone override + profile clamp included. */
+    out->voiceDistance = voice_mode_get_current_distance();
 
     char nick[64] = "";
     if (ts3_get_own_nickname(nick, sizeof(nick)) && nick[0]) {
@@ -169,6 +176,10 @@ void cepos_flush(void) {
 
     CeposPacket packet;
     cepos_build_local(&sample, &packet);
+
+    if (InterlockedExchange(&g_sendCacheInvalid, 0)) {
+        g_lastSentValid = 0; /* voice mode switched — force this send out */
+    }
 
     const int keepaliveDue = (g_lastSendMs == 0 || now - g_lastSendMs >= CEPOS_KEEPALIVE_MS);
     if (!cepos_payload_changed(&packet) && !keepaliveDue) {

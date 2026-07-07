@@ -95,6 +95,9 @@ int ts3_send_plugin_command_server(const char* command);
 /* Own TS nickname, returns 1 on success. */
 int ts3_get_own_nickname(char* outName, int outLen);
 
+/* Print a line into the current chat tab. TS callback thread ONLY. */
+void ts3_print_to_chat(const char* message);
+
 /* Temporarily unmute clients for playback (batch, one API round trip).
    TS callback thread ONLY. Returns number of clients unmuted. */
 int ts3_unmute_clients_for_pcm(const anyID* clients, int count);

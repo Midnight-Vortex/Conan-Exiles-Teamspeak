@@ -297,6 +297,16 @@ int ts3_get_own_nickname(char* outName, int outLen) {
     return 1;
 }
 
+void ts3_print_to_chat(const char* message) {
+    if (!ts3_require_callback_thread("printToChat")) {
+        return;
+    }
+    if (!message || !g_ts3FunctionsSet || !g_ts3.printMessageToCurrentTab) {
+        return;
+    }
+    g_ts3.printMessageToCurrentTab(message);
+}
+
 int ts3_unmute_clients_for_pcm(const anyID* clients, int count) {
     if (!ts3_require_callback_thread("unmuteClients")) {
         return 0;
