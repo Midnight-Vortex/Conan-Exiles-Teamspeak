@@ -20,6 +20,11 @@ static volatile long g_coordinatesValid = 0;
 static HANDLE g_watcherThread = NULL;
 static HANDLE g_stopEvent = NULL;
 static volatile long g_watcherRunning = 0;
+static void (*g_updateCallback)(void) = NULL;
+
+void pos_watcher_set_update_callback(void (*callback)(void)) {
+    g_updateCallback = callback;
+}
 
 /* ---- 2.1 pure read function ------------------------------------------- */
 
@@ -195,12 +200,20 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 }
                 lastSeq = sample.seq;
             }
+
+            if (g_updateCallback) {
+                g_updateCallback();
+            }
         }
         else {
             if (InterlockedCompareExchange(&g_coordinatesValid, 0, 0)) {
                 log_write("POS: coordinates invalid (file %s, age=%llums)",
                     age == MAXULONGLONG ? "missing" : "stale",
                     age == MAXULONGLONG ? 0ULL : (unsigned long long)age);
+                InterlockedExchange(&g_coordinatesValid, 0);
+                if (g_updateCallback) {
+                    g_updateCallback(); /* one shot on the valid->invalid edge */
+                }
             }
             InterlockedExchange(&g_coordinatesValid, 0);
 

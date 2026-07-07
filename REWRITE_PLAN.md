@@ -72,25 +72,53 @@ E:\programme\Conan-Exiles-Teamspeak\
 
 ---
 
+## 📌 AKTUELLER STAND (Stand: 2026-07-07)
+
+**Phase 0–6 sind implementiert und kompilieren fehlerfrei (Release x64).**
+**Nächster Schritt: Phase 7 (3D-Audio / Richtungshören).**
+
+Noch offen vor dem Weiterbauen: Phasen 0–6 im echten TS-Client testen (Plugin laden,
+verbinden, mit 2 Clients Positionen austauschen, Lautstärke/Pan prüfen).
+
+Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exiles-TeamSpeak.vcxproj`):
+
+| Modul | Dateien | Phase |
+|-------|---------|-------|
+| Entry-Points | `src\ts\entry\ts3_entry.c` / `ts3_exports.h` | 0 |
+| Logging | `src\core\util\log.c/.h` (eigener Lock, nie API-Pfad) | 1 |
+| Config | `src\core\config\config.c/.h` (`g_config`, plugin.cfg) | 1 |
+| Pos.txt-Watcher | `src\core\mod_file\pos_file.c/.h` (50-ms-Poll, Stop-Event, atomares valid) | 2 |
+| TS-API-Kern | `src\ts\adapter\ts3_adapter.c/.h` (Callback-Thread-Guard, Command-Queue, CEDRAIN-Wakeup) | 3 |
+| CEPOS-Protokoll | `src\ts\proximity\ts3_cepos.c/.h` (wire-kompatibel zum alten Plugin, base64, 56-Byte-Paket) | 4 |
+| Spieler-Tabelle | `src\core\proximity\player_table.c/.h` (64 Slots, 120-s-Expiry) | 4 |
+| Proximity-Mathe | `src\core\proximity\proximity_math.c/.h` (gleiche Kurve wie alt, Self-Test loggt Tabelle) | 5 |
+| PCM-Gain + Unmute | `src\ts\proximity\ts3_proximity_audio.c/.h` (Seqlock-Snapshots, Batch-Unmute, Gain-Ramp) | 6 |
+
+Hinweis für neuen Chat / anderen PC: Einfach sagen „Führe REWRITE_PLAN.md fort,
+Phase 0–6 fertig, weiter mit Phase 7“. Build-Befehl: MSBuild auf
+`project\Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) oder `build\build_msvc.ps1`.
+
+---
+
 ## Phasen-Übersicht
 
-| Phase | Inhalt | Ergebnis (testbar) |
-|-------|--------|--------------------|
-| 0 | Projekt-Skelett | Leeres Plugin lädt/entlädt in TS ohne Crash |
-| 1 | Logging + Config | Log-Datei wird geschrieben, plugin.cfg wird gelesen |
-| 2 | Pos.txt-Watcher | Eigene Position erscheint im Log |
-| 3 | TS-API-Kern (1 Thread) | Verbindungsstatus + Kanalliste stabil |
-| 4 | CEPOS senden/empfangen | Zwei Clients sehen gegenseitig Positionen |
-| 5 | Proximity-Mathe (pur) | Distanz/Volume-Rechnung, per Testwerte prüfbar |
-| 6 | PCM-Gain + Unmute | Lautstärke fällt mit Distanz, keine Stumm-Hänger |
-| 7 | 3D-Audio / Stereo-Pan | Richtungshören funktioniert |
-| 8 | Channel-Management | Auto-Move hub ↔ ingame |
-| 9 | Hub-Parser / Server-Profil | Einstellungen aus Channel-Beschreibung |
-| 10 | Zonen-Effekte | Soundproof / Reverb / Lowpass |
-| 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout |
-| 12 | Nickname-Anonymisierung | Zufallsnummern ingame |
-| 13 | UI (Dialoge + Overlay) | Einstellungsfenster + Overlay |
-| 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler |
+| Phase | Inhalt | Ergebnis (testbar) | Status |
+|-------|--------|--------------------|--------|
+| 0 | Projekt-Skelett | Leeres Plugin lädt/entlädt in TS ohne Crash | ✅ gebaut, Test im TS-Client offen |
+| 1 | Logging + Config | Log-Datei wird geschrieben, plugin.cfg wird gelesen | ✅ gebaut, Test offen |
+| 2 | Pos.txt-Watcher | Eigene Position erscheint im Log | ✅ gebaut, Test offen |
+| 3 | TS-API-Kern (1 Thread) | Verbindungsstatus + Kanalliste stabil | ✅ gebaut, Test offen |
+| 4 | CEPOS senden/empfangen | Zwei Clients sehen gegenseitig Positionen | ✅ gebaut, Test offen |
+| 5 | Proximity-Mathe (pur) | Distanz/Volume-Rechnung, per Testwerte prüfbar | ✅ gebaut, Self-Test loggt bei DebugMode=true |
+| 6 | PCM-Gain + Unmute | Lautstärke fällt mit Distanz, keine Stumm-Hänger | ✅ gebaut, Test offen |
+| 7 | 3D-Audio / Stereo-Pan | Richtungshören funktioniert | ⏳ nächster Schritt |
+| 8 | Channel-Management | Auto-Move hub ↔ ingame | offen |
+| 9 | Hub-Parser / Server-Profil | Einstellungen aus Channel-Beschreibung | offen |
+| 10 | Zonen-Effekte | Soundproof / Reverb / Lowpass | offen |
+| 11 | Voice-Modes + Hotkeys | Whisper/Normal/Shout | offen |
+| 12 | Nickname-Anonymisierung | Zufallsnummern ingame | offen |
+| 13 | UI (Dialoge + Overlay) | Einstellungsfenster + Overlay | offen |
+| 14 | Cleanup / Feinschliff | Sauberer Shutdown, Lasttest 20+ Spieler | offen |
 
 **Reihenfolge ist bindend.** Keine Phase beginnt, bevor die vorherige im echten TS-Client getestet wurde.
 

@@ -297,6 +297,36 @@ int ts3_get_own_nickname(char* outName, int outLen) {
     return 1;
 }
 
+int ts3_unmute_clients_for_pcm(const anyID* clients, int count) {
+    if (!ts3_require_callback_thread("unmuteClients")) {
+        return 0;
+    }
+    if (!clients || count <= 0 || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.requestUnmuteClientsTemporary) {
+        return 0;
+    }
+
+    /* Neutral volume modifier so TS's own attenuation never stacks with ours. */
+    if (g_ts3.setClientVolumeModifier) {
+        for (int i = 0; i < count; i++) {
+            g_ts3.setClientVolumeModifier(g_activeConnection, clients[i], 0.0f);
+        }
+    }
+
+    /* API expects a zero-terminated array. */
+    anyID batch[64];
+    int n = count > 63 ? 63 : count;
+    for (int i = 0; i < n; i++) {
+        batch[i] = clients[i];
+    }
+    batch[n] = 0;
+
+    if (g_ts3.requestUnmuteClientsTemporary(g_activeConnection, batch, NULL) != ERROR_ok) {
+        return 0;
+    }
+    return n;
+}
+
 /* ---- setup / shutdown ------------------------------------------------------ */
 
 void ts3_adapter_set_functions(const struct TS3Functions* funcs) {

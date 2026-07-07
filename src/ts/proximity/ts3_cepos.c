@@ -1,4 +1,5 @@
 #include "ts/proximity/ts3_cepos.h"
+#include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/player_table.h"
@@ -253,6 +254,9 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
 
     player_table_put(invokerClientID, safeName,
         packet->x, packet->y, packet->z, packet->voiceDistance);
+
+    /* Refresh this speaker's gain/pan snapshot for the audio thread. */
+    ts3_audio_recompute_client(invokerClientID);
 
     {
         /* Per-client throttled receive log (fixed slots, no overflow). */

@@ -60,6 +60,10 @@
     <ClInclude Include="..\src\core\config\config.h" />
     <ClInclude Include="..\src\core\mod_file\pos_file.h" />
     <ClInclude Include="..\src\ts\adapter\ts3_adapter.h" />
+    <ClInclude Include="..\src\core\proximity\player_table.h" />
+    <ClInclude Include="..\src\core\proximity\proximity_math.h" />
+    <ClInclude Include="..\src\ts\proximity\ts3_cepos.h" />
+    <ClInclude Include="..\src\ts\proximity\ts3_proximity_audio.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\ts\entry\ts3_entry.c" />
@@ -67,6 +71,10 @@
     <ClCompile Include="..\src\core\config\config.c" />
     <ClCompile Include="..\src\core\mod_file\pos_file.c" />
     <ClCompile Include="..\src\ts\adapter\ts3_adapter.c" />
+    <ClCompile Include="..\src\core\proximity\player_table.c" />
+    <ClCompile Include="..\src\core\proximity\proximity_math.c" />
+    <ClCompile Include="..\src\ts\proximity\ts3_cepos.c" />
+    <ClCompile Include="..\src\ts\proximity\ts3_proximity_audio.c" />
   </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>

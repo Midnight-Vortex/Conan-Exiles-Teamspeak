@@ -35,6 +35,11 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out);
 void pos_watcher_start(void);
 void pos_watcher_stop(void);
 
+/* Optional: called from the watcher thread on every poll while coordinates
+   are valid, plus once when they turn invalid. The callback must be fast and
+   must NOT call the TS API. Register before pos_watcher_start. */
+void pos_watcher_set_update_callback(void (*callback)(void));
+
 /* Latest sample. Returns 1 when coordinates are valid (fresh). */
 int pos_get_current(PosSample* out);
 
