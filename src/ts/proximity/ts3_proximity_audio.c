@@ -196,23 +196,26 @@ static int cave_slot_acquire(anyID clientID) {
         return g_reverbSlotByClient[clientID];
     }
     for (int i = 0; i < CAVE_SLOTS; i++) {
-        if (InterlockedCompareExchange(&g_cave[i].owner, (LONG)clientID, 0) == 0) {
-            /* Fresh state for the new owner (buffers zeroed). */
-            CaveState* c = &g_cave[i];
-            memset(c->combL, 0, sizeof(c->combL));
-            memset(c->combR, 0, sizeof(c->combR));
-            memset(c->combPos, 0, sizeof(c->combPos));
-            memset(c->combLpL, 0, sizeof(c->combLpL));
-            memset(c->combLpR, 0, sizeof(c->combLpR));
-            memset(c->apL, 0, sizeof(c->apL));
-            memset(c->apR, 0, sizeof(c->apR));
-            memset(c->apPos, 0, sizeof(c->apPos));
-            memset(c->predelayL, 0, sizeof(c->predelayL));
-            memset(c->predelayR, 0, sizeof(c->predelayR));
-            c->predelayPos = 0;
-            g_reverbSlotByClient[clientID] = (short)i;
-            return i;
+        if (InterlockedCompareExchange(&g_cave[i].owner, 0, 0) != 0) {
+            continue;
         }
+        CaveState* c = &g_cave[i];
+        memset(c->combL, 0, sizeof(c->combL));
+        memset(c->combR, 0, sizeof(c->combR));
+        memset(c->combPos, 0, sizeof(c->combPos));
+        memset(c->combLpL, 0, sizeof(c->combLpL));
+        memset(c->combLpR, 0, sizeof(c->combLpR));
+        memset(c->apL, 0, sizeof(c->apL));
+        memset(c->apR, 0, sizeof(c->apR));
+        memset(c->apPos, 0, sizeof(c->apPos));
+        memset(c->predelayL, 0, sizeof(c->predelayL));
+        memset(c->predelayR, 0, sizeof(c->predelayR));
+        c->predelayPos = 0;
+        if (InterlockedCompareExchange(&g_cave[i].owner, (LONG)clientID, 0) != 0) {
+            continue;
+        }
+        g_reverbSlotByClient[clientID] = (short)i;
+        return i;
     }
     return -1;
 }
@@ -446,9 +449,12 @@ static void cave_process_sample(CaveState* rev, float inL, float inR,
 }
 
 static void audio_apply_cave(short* samples, int sampleCount, int channels,
-    CaveState* rev) {
+    CaveState* rev, LONG expectedOwner) {
     if (channels >= 2) {
         for (int s = 0; s < sampleCount; s++) {
+            if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
+                return;
+            }
             const int li = s * channels;
             const int ri = li + 1;
             const float inL = (float)samples[li];
@@ -461,6 +467,9 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
     }
     else {
         for (int s = 0; s < sampleCount; s++) {
+            if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
+                return;
+            }
             const float in = (float)samples[s];
             float wetL, wetR;
             cave_process_sample(rev, in, in, &wetL, &wetR);
@@ -527,10 +536,13 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         g_lpf[clientID].initialized = 0;
     }
 
-    /* 10.4 cave reverb — only with a valid slot still owned by this client. */
-    if (reverbSlot >= 0 && reverbSlot < CAVE_SLOTS
-        && InterlockedCompareExchange(&g_cave[reverbSlot].owner, 0, 0) == (LONG)clientID) {
-        audio_apply_cave(samples, sampleCount, channels, &g_cave[reverbSlot]);
+    /* 10.4 cave reverb — only while this client still owns the slot. */
+    if (reverbSlot >= 0 && reverbSlot < CAVE_SLOTS) {
+        CaveState* rev = &g_cave[reverbSlot];
+        const LONG owner = InterlockedCompareExchange(&rev->owner, 0, 0);
+        if (owner == (LONG)clientID) {
+            audio_apply_cave(samples, sampleCount, channels, rev, owner);
+        }
     }
 
     if (target > TS3_AUDIBLE_GAIN) {
@@ -622,11 +634,17 @@ void ts3_audio_flush_unmutes(void) {
     }
 
     if (batchCount == 0) {
+        if (ts3_audio_has_pending_unmutes()) {
+            ts3_request_wakeup();
+        }
         return;
     }
 
     const int unmuted = ts3_unmute_clients_for_pcm(batch, batchCount);
     if (unmuted <= 0) {
+        if (ts3_audio_has_pending_unmutes()) {
+            ts3_request_wakeup();
+        }
         return; /* pending flags stay set; next flush retries */
     }
 
@@ -639,6 +657,9 @@ void ts3_audio_flush_unmutes(void) {
         g_lastUnmuteMs[id] = now;
     }
     log_debug("AUDIO: unmuted %d client(s)", unmuted);
+    if (ts3_audio_has_pending_unmutes()) {
+        ts3_request_wakeup();
+    }
 }
 
 int ts3_audio_has_pending_unmutes(void) {

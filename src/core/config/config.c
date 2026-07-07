@@ -241,31 +241,34 @@ int config_save(void) {
         return 0;
     }
 
+    PluginConfig cfg;
+    config_copy(&cfg);
+
     FILE* f = _wfopen(path, L"w");
     if (!f) {
         log_write("CONFIG: failed to write plugin.cfg");
         return 0;
     }
 
-    fwprintf(f, L"SavedPath=%s\n", g_config.savedPath);
-    fwprintf(f, L"AutomaticSavedPath=%s\n", g_config.automaticSavedPath);
-    fwprintf(f, L"AutomaticPatchFind=%s\n", g_config.automaticPatchFind ? L"true" : L"false");
-    fwprintf(f, L"DistanceWhisper=%.1f\n", g_config.distanceWhisper);
-    fwprintf(f, L"DistanceNormal=%.1f\n", g_config.distanceNormal);
-    fwprintf(f, L"DistanceShout=%.1f\n", g_config.distanceShout);
-    fwprintf(f, L"WhisperKey=%d\n", g_config.whisperKey);
-    fwprintf(f, L"NormalKey=%d\n", g_config.normalKey);
-    fwprintf(f, L"ShoutKey=%d\n", g_config.shoutKey);
-    fwprintf(f, L"VoiceToggleKey=%d\n", g_config.voiceToggleKey);
-    fwprintf(f, L"ConfigUIKey=%d\n", g_config.configUIKey);
-    fwprintf(f, L"EnableDistanceMuting=%s\n", g_config.enableDistanceMuting ? L"true" : L"false");
-    fwprintf(f, L"EnableAutomaticChannelChange=%s\n", g_config.enableAutomaticChannelChange ? L"true" : L"false");
-    fwprintf(f, L"EnableVoiceToggle=%s\n", g_config.enableVoiceToggle ? L"true" : L"false");
-    fwprintf(f, L"EnableVoiceOverlay=%s\n", g_config.enableVoiceOverlay ? L"true" : L"false");
-    fwprintf(f, L"HudTheme=%d\n", g_config.hudTheme);
-    fwprintf(f, L"HudPosition=%d\n", g_config.hudPosition);
-    fwprintf(f, L"HudSize=%d\n", g_config.hudSize);
-    fwprintf(f, L"DebugMode=%s\n", g_config.debugMode ? L"true" : L"false");
+    fwprintf(f, L"SavedPath=%s\n", cfg.savedPath);
+    fwprintf(f, L"AutomaticSavedPath=%s\n", cfg.automaticSavedPath);
+    fwprintf(f, L"AutomaticPatchFind=%s\n", cfg.automaticPatchFind ? L"true" : L"false");
+    fwprintf(f, L"DistanceWhisper=%.1f\n", cfg.distanceWhisper);
+    fwprintf(f, L"DistanceNormal=%.1f\n", cfg.distanceNormal);
+    fwprintf(f, L"DistanceShout=%.1f\n", cfg.distanceShout);
+    fwprintf(f, L"WhisperKey=%d\n", cfg.whisperKey);
+    fwprintf(f, L"NormalKey=%d\n", cfg.normalKey);
+    fwprintf(f, L"ShoutKey=%d\n", cfg.shoutKey);
+    fwprintf(f, L"VoiceToggleKey=%d\n", cfg.voiceToggleKey);
+    fwprintf(f, L"ConfigUIKey=%d\n", cfg.configUIKey);
+    fwprintf(f, L"EnableDistanceMuting=%s\n", cfg.enableDistanceMuting ? L"true" : L"false");
+    fwprintf(f, L"EnableAutomaticChannelChange=%s\n", cfg.enableAutomaticChannelChange ? L"true" : L"false");
+    fwprintf(f, L"EnableVoiceToggle=%s\n", cfg.enableVoiceToggle ? L"true" : L"false");
+    fwprintf(f, L"EnableVoiceOverlay=%s\n", cfg.enableVoiceOverlay ? L"true" : L"false");
+    fwprintf(f, L"HudTheme=%d\n", cfg.hudTheme);
+    fwprintf(f, L"HudPosition=%d\n", cfg.hudPosition);
+    fwprintf(f, L"HudSize=%d\n", cfg.hudSize);
+    fwprintf(f, L"DebugMode=%s\n", cfg.debugMode ? L"true" : L"false");
     fclose(f);
 
     log_debug("CONFIG: saved plugin.cfg");
