@@ -157,7 +157,7 @@ static void settings_apply_ts_side(void) {
     }
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    ts3_audio_recompute_all_force();
 }
 
 static void dlg_save_values(void) {
@@ -352,6 +352,46 @@ static void dlg_toggle(void) {
     SetWindowTextW(GetDlgItem(g_dlg, IDC_STATUS), L"");
     ShowWindow(g_dlg, SW_SHOW);
     SetForegroundWindow(g_dlg);
+}
+
+static void dlg_run_message_loop(void) {
+    MSG msg;
+    while (g_dlg && IsWindow(g_dlg) && IsWindowVisible(g_dlg)) {
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                return;
+            }
+            if (!IsDialogMessageW(g_dlg, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        Sleep(10);
+    }
+}
+
+void ui_settings_open_blocking(void) {
+    static volatile long s_dialogOpen = 0;
+    if (InterlockedCompareExchange(&s_dialogOpen, 1, 0) != 0) {
+        return;
+    }
+
+    dlg_ensure_created();
+    if (!g_dlg) {
+        InterlockedExchange(&s_dialogOpen, 0);
+        return;
+    }
+
+    dlg_load_values();
+    SetWindowTextW(GetDlgItem(g_dlg, IDC_STATUS), L"");
+    ShowWindow(g_dlg, SW_SHOW);
+    SetForegroundWindow(g_dlg);
+    log_write("UI: settings dialog opened");
+
+    dlg_run_message_loop();
+
+    InterlockedExchange(&s_dialogOpen, 0);
+    log_write("UI: settings dialog closed");
 }
 
 /* ---- public: UI thread ---------------------------------------------------------- */

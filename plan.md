@@ -84,17 +84,19 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 
 ---
 
-## Phase 4 — Nächste Optimierungen (empfohlen)
+## Phase 4 — Nächste Optimierungen (empfohlen) ✅ umgesetzt (7.0.1+)
 
 **Ziel:** Callback-CPU halbieren+, keine Regression bei normaler Spielsituation.
 
-| # | Maßnahme | Datei | Erwarteter Effekt |
-|---|----------|-------|-------------------|
-| **4.1** | `recompute_all` nur bei Positions-/Voice-/Mode-Änderung **oder** max. 5–10 Hz throttle | `pos_file.c`, `ts3_entry.c`, `ts3_proximity_audio.c` | Größter Einzelhebel: ~33×/s → ~1–10×/s bei Stillstand |
-| **4.2** | CEPOS-Empfang: Dirty-Flag pro Client, Recompute in CEDRAIN batchen (wie Unmute) | `ts3_cepos.c`, `ts3_entry.c` | ~200 recompute/s → gebündelt pro Drain-Zyklus |
-| **4.3** | Writer-Lock-Scope verkleinern: Berechnung außerhalb, nur Publish unter Lock | `ts3_proximity_audio.c` | Weniger Audio-Thread-Staleness |
-| **4.4** | `ts3d` Dedup-State bei Eviction/Disconnect invalidieren | `ts3_3d.c`, `player_table.c` | Keine stale 3D-Positionen |
-| **4.5** | Metriken: Unmute-Backlog, Ring-Overflow, Eviction-Rate (throttled log) | `ts3_proximity_audio.c`, `player_table.c` | Lasttest-Diagnose |
+| # | Maßnahme | Datei | Status |
+|---|----------|-------|--------|
+| **4.1** | `recompute_all` nur bei Positions-/Voice-/Mode-Änderung **oder** max. 10 Hz throttle | `pos_file.c`, `ts3_entry.c`, `ts3_proximity_audio.c` | ✅ |
+| **4.2** | CEPOS-Empfang: Dirty-Flag pro Client, Recompute in CEDRAIN batchen | `ts3_cepos.c`, `ts3_entry.c` | ✅ |
+| **4.3** | Writer-Lock-Scope verkleinern: Berechnung außerhalb, nur Publish unter Lock | `ts3_proximity_audio.c` | ✅ |
+| **4.4** | `ts3d` Dedup-State bei Eviction/Disconnect invalidieren | `ts3_3d.c`, `player_table.c` | ✅ |
+| **4.5** | Metriken: Unmute-Backlog, Ring-Overflow, Eviction-Rate (throttled log) | `ts3_proximity_audio.c`, `player_table.c` | ✅ |
+
+**Zusätzlich:** Plugin-**Einstellungen**-Button (Extras → Erweiterungen) öffnet denselben Dialog wie **F10** (`ts3plugin_offersConfigure` / `ui_settings.c`).
 
 **Test (4.x):** 20+ Spieler 30 min → kein Crash; Callback nicht dauerhaft >50 %; Unmute <500 ms; Eviction-Log selten.
 

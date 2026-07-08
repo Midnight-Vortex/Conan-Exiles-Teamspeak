@@ -37,7 +37,22 @@ Ts3AudioMode ts3_audio_get_mode(void);
    local position. Any thread (writers serialize on a private lock). */
 void ts3_audio_recompute_client(anyID clientID);
 
-/* Recompute all known clients (local player moved). Any thread. */
+/* Recompute all known clients immediately (settings / profile refresh). */
+void ts3_audio_recompute_all_force(void);
+
+/* Throttled local-move driver (~10 Hz cap when position unchanged). */
+void ts3_audio_on_local_position_update(void);
+
+/* Queue one client for batched recompute in CEDRAIN (CEPOS receive path). */
+void ts3_audio_mark_client_dirty(anyID clientID);
+
+/* 1 when a batched recompute is pending. Any thread. */
+int ts3_audio_has_pending_recompute(void);
+
+/* Flush pending recomputes. TS callback thread ONLY. */
+void ts3_audio_flush_recomputes(void);
+
+/* Backward-compatible alias for ts3_audio_recompute_all_force(). */
 void ts3_audio_recompute_all(void);
 
 /* 6.2 PCM hot path — apply gain ramp + pan. Audio thread; lock-free. */

@@ -3248,10 +3248,10 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     }
 
     if (!wasAlreadySaved) {
-        showStatusMessage(L"✅ Patch configuration saved successfully!", FALSE);
+        showConfigSavedNotice(hwnd, L"Patch configuration saved successfully!");
     }
     else {
-        showStatusMessage(L"✅ Patch configuration updated successfully!", FALSE);
+        showConfigSavedNotice(hwnd, L"Patch configuration updated successfully!");
     }
 
     if (enableLogConfig) {
@@ -3329,7 +3329,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
                applyDistanceToAllPlayers();
 
-               showStatusMessage(L"Advanced options saved successfully!", FALSE);
+               showConfigSavedNotice(hwnd, L"Advanced options saved successfully!");
 
                if (enableLogConfig) {
                    char logMsg[512];
@@ -3398,7 +3398,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             // Apply changes | Appliquer les changements
             applyDistanceToAllPlayers();
 
-            showStatusMessage(L"Advanced options saved successfully!", FALSE);
+            showConfigSavedNotice(hwnd, L"Advanced options saved successfully!");
 
             if (enableLogConfig) {
                 char logMsg[256];

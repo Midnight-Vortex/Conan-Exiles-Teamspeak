@@ -1,31 +1,22 @@
 #include "plugin_internal.h"
 #include "ui/plugin_ui_compat.h"
-#include "resource.h"
-#ifdef CONAN_EXILES_TS_EXPORTS
-#include "ts/adapter/ts3_adapter.h"
-#include "ts/profile/ts3_server_profile.h"
-#endif
-#include "core/proximity/proximity_math.h"
+#include "plugin_modules.h"
 #include "core/voice/voice_modes.h"
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <wchar.h>
-#include <commctrl.h>
-#include <commdlg.h>
-#include <shlobj.h>
-#include <shobjidl.h>
-#include <process.h>
-#include <ole2.h>
 #include "core/util/poll_interval.h"
 
+#include <process.h>
+#include <stdio.h>
+
 // MODULE 17: HOTKEY WATCHER
-// EN: F10 settings dialog — dedicated key-monitor thread at PLUGIN_POLL_INTERVAL_MS.
-// FR: Dialogue réglages F10 — thread dédié surveillance touche config.
+// EN: Config hotkey (F10 default) + voice-mode hotkeys.
 // ============================================================================
 
-// Key monitoring thread | Thread de surveillance des touches
+static void settings_dialog_thread(void* arg) {
+    (void)arg;
+    showConfigInterface();
+    isConfigDialogOpen = FALSE;
+}
+
 void keyMonitorThreadFunction(void* arg) {
     (void)arg;
     keyMonitorThreadRunning = TRUE;
@@ -38,21 +29,21 @@ void keyMonitorThreadFunction(void* arg) {
         if (pluginShuttingDown) {
             break;
         }
-        BOOL currentKeyState = (GetAsyncKeyState(configUIKey) & 0x8000) != 0;
+        const BOOL currentKeyState = (GetAsyncKeyState(configUIKey) & 0x8000) != 0;
 
-        // Rising edge detection | Détection de front montant
         if (currentKeyState && !lastKeyState) {
             if (!isConfigDialogOpen && !pluginShuttingDown) {
                 isConfigDialogOpen = TRUE;
 
                 if (enableLogGeneral) {
                     char msg[128];
-                    snprintf(msg, sizeof(msg), "KEY INSTANT-DETECTED! %s (VK:%d) - opening interface immediately...",
+                    snprintf(msg, sizeof(msg),
+                        "KEY INSTANT-DETECTED! %s (VK:%d) - opening settings...",
                         getKeyName(configUIKey), configUIKey);
                     mumbleAPI.log(ownID, msg);
                 }
 
-                _beginthread(showPathSelectionDialogThread, 0, NULL);
+                _beginthread(settings_dialog_thread, 0, NULL);
             }
         }
 
@@ -68,9 +59,7 @@ void keyMonitorThreadFunction(void* arg) {
     }
 }
 
-
-// Start monitoring thread | Démarrer le thread de surveillance
-void startKeyMonitorThread() {
+void startKeyMonitorThread(void) {
     if (!keyMonitorThreadRunning) {
         keyMonitorThread = (HANDLE)_beginthread(keyMonitorThreadFunction, 0, NULL);
 
@@ -83,9 +72,7 @@ void startKeyMonitorThread() {
     }
 }
 
-
-// Stop monitoring thread | Arrêter le thread de surveillance
-void stopKeyMonitorThread() {
+void stopKeyMonitorThread(void) {
     keyMonitorThreadRunning = FALSE;
     if (keyMonitorThread != NULL) {
         WaitForSingleObject(keyMonitorThread, 2000);
@@ -98,18 +85,13 @@ void stopKeyMonitorThread() {
     }
 }
 
-// Install key monitoring | Installer la surveillance des touches
-void installKeyMonitoring() {
+void installKeyMonitoring(void) {
     startKeyMonitorThread();
 }
 
-// Remove key monitoring | Supprimer la surveillance des touches
-void removeKeyMonitoring() {
+void removeKeyMonitoring(void) {
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "Removing key monitoring");
     }
-
     stopKeyMonitorThread();
 }
-
-// ============================================================================

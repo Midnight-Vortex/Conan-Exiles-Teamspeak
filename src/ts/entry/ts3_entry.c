@@ -88,7 +88,7 @@ static void ts3_on_local_position_update(void) {
     plugin_ui_on_position_tick();
     chan_signal_position_update();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    ts3_audio_on_local_position_update();
 }
 
 /* Pos watcher tick (every PLUGIN_POLL_INTERVAL_MS): voice hotkeys. */
@@ -386,7 +386,8 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
            invoker's audio snapshot. Defer own send, 3D, channel, and unmute
            work to CEDRAIN — never run the full drain per packet (200+ players
            @ 1 Hz CEPOS would flood the callback thread). */
-        if (cepos_send_pending() || ts3_audio_has_pending_unmutes()) {
+        if (cepos_send_pending() || ts3_audio_has_pending_unmutes()
+            || ts3_audio_has_pending_recompute()) {
             ts3_request_wakeup();
         }
         return;
@@ -398,6 +399,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
             && !ts3_plugin_has_pending_chat()
             && !cepos_send_pending()
             && !ts3_audio_has_pending_unmutes()
+            && !ts3_audio_has_pending_recompute()
             && !chan_has_pending_work()) {
             return;
         }
@@ -413,6 +415,9 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         if (cepos_send_pending()) {
             cepos_flush();
             ts3d_apply();
+        }
+        if (ts3_audio_has_pending_recompute()) {
+            ts3_audio_flush_recomputes();
         }
         server_profile_tick();
         chan_tick();

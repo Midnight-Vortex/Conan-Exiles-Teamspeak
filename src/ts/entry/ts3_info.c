@@ -1,6 +1,7 @@
 #include "ts3_exports.h"
 
 #include "ts/info/ts3_plugin_version.h"
+#include "plugin_modules.h"
 #include "plugin.h"
 
 #include <stdio.h>
@@ -14,6 +15,21 @@ void ts3plugin_freeMemory(void* data) {
 
 int ts3plugin_requestAutoload(void) {
     return 0;
+}
+
+int ts3plugin_offersConfigure(void) {
+    return PLUGIN_OFFERS_CONFIGURE_NEW_THREAD;
+}
+
+void ts3plugin_configure(void* handle, void* qParentWidget) {
+    (void)handle;
+    (void)qParentWidget;
+    if (isConfigDialogOpen) {
+        return;
+    }
+    isConfigDialogOpen = TRUE;
+    showConfigInterface();
+    isConfigDialogOpen = FALSE;
 }
 
 const char* ts3plugin_infoTitle(void) {

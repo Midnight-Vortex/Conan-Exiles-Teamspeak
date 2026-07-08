@@ -300,6 +300,8 @@ void updateServerLimitMessages() {
 void showStatusMessage(const wchar_t* message, BOOL isError) {
     if (hStatusMessage) {
         SetWindowTextW(hStatusMessage, message);
+        InvalidateRect(hStatusMessage, NULL, TRUE);
+        UpdateWindow(hStatusMessage);
 
         // Change color based on message type | Changer la couleur selon le type de message
         if (isError) {
@@ -311,6 +313,14 @@ void showStatusMessage(const wchar_t* message, BOOL isError) {
 
         SetTimer(hConfigDialog, 2, 5000, NULL);
     }
+}
+
+void showConfigSavedNotice(HWND parent, const wchar_t* statusText) {
+    showStatusMessage(statusText, FALSE);
+    MessageBoxW(parent,
+        L"Configuration saved successfully.",
+        L"Save Configuration",
+        MB_OK | MB_ICONINFORMATION);
 }
 
 // Clear status message | Effacer le message de statut

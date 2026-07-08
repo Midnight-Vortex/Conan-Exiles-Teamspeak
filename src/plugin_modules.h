@@ -146,6 +146,7 @@ void updateDistanceMutingMessage(void);
 void updateChannelSwitchingMessage(void);
 void updatePositionalAudioMessage(void);
 void showStatusMessage(const wchar_t* message, BOOL isError);
+void showConfigSavedNotice(HWND parent, const wchar_t* statusText);
 void clearStatusMessage(void);
 void loadDefaultSettingsFromConfig(void);
 void saveDefaultSettingsToConfig(void);

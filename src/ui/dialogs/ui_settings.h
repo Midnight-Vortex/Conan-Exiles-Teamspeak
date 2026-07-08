@@ -20,6 +20,10 @@
 /* Poll the config hotkey (F10 default) — toggles the dialog. UI thread. */
 void ui_settings_hotkey_poll(void);
 
+/* Open the settings dialog and run a modal message loop until closed.
+   Same UI as F10 / TeamSpeak "Einstellungen". Callable from any thread. */
+void ui_settings_open_blocking(void);
+
 /* Give the dialog a chance to handle a message (tab order, enter/escape).
    Returns 1 when consumed. UI thread. */
 int ui_settings_handle_message(MSG* msg);

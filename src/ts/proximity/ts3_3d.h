@@ -41,4 +41,7 @@ void ts3d_apply(void);
 /* Clear all dedup state (disconnect / new connection). Callback thread. */
 void ts3d_reset(void);
 
+/* Drop per-client dedup so the next apply pushes a fresh 3D position. */
+void ts3d_invalidate_client(anyID clientID);
+
 #endif /* TS3_PROXIMITY_TS3_3D_H */

@@ -234,6 +234,16 @@ void ts3d_apply(void) {
 
 /* ---- reset ------------------------------------------------------------------------ */
 
+void ts3d_invalidate_client(anyID clientID) {
+    if (!ts3_client_id_valid(clientID)) {
+        return;
+    }
+    g_clientValid[clientID] = 0;
+    g_lastClientX[clientID] = 0.0f;
+    g_lastClientY[clientID] = 0.0f;
+    g_lastClientZ[clientID] = 0.0f;
+}
+
 void ts3d_reset(void) {
     g_settingsApplied = 0;
     memset(&g_lastListener, 0, sizeof(g_lastListener));

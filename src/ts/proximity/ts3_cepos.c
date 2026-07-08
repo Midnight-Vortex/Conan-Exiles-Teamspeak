@@ -294,8 +294,8 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
         ts3_audio_invalidate_client(evicted);
     }
 
-    /* Refresh this speaker's gain/pan snapshot for the audio thread. */
-    ts3_audio_recompute_client(invokerClientID);
+    /* Queue batched recompute in CEDRAIN (Phase 4.2). */
+    ts3_audio_mark_client_dirty(invokerClientID);
 
     {
         /* Per-client throttled receive log (fixed slots, no overflow). */
