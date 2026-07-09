@@ -4046,7 +4046,7 @@ int showConfigInterface() {
             mumbleAPI.log(ownID, errorMsg);
         }
         MessageBoxW(NULL, L"Failed to initialize COM", L"Error", MB_OK | MB_ICONERROR);
-        isConfigDialogOpen = FALSE;
+        config_dialog_close();
         return -1;
     }
 
@@ -4084,7 +4084,7 @@ int showConfigInterface() {
             mumbleAPI.log(ownID, errorMsg);
         }
         CoUninitialize();
-        isConfigDialogOpen = FALSE;
+        config_dialog_close();
         return -1;
     }
 
@@ -4125,7 +4125,7 @@ int showConfigInterface() {
             mumbleAPI.log(ownID, errorMsg);
         }
         CoUninitialize();
-        isConfigDialogOpen = FALSE;
+        config_dialog_close();
         return -1;
     }
 
@@ -4166,7 +4166,7 @@ int showConfigInterface() {
     }
 
     CoUninitialize();
-    isConfigDialogOpen = FALSE;
+    config_dialog_close();
 
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, "showConfigInterface: Function completed successfully");

@@ -2,6 +2,7 @@
 
 #include "ts/info/ts3_plugin_version.h"
 #include "plugin_modules.h"
+#include "ui/plugin_ui_compat.h"
 #include "plugin.h"
 
 #include <stdio.h>
@@ -24,12 +25,11 @@ int ts3plugin_offersConfigure(void) {
 void ts3plugin_configure(void* handle, void* qParentWidget) {
     (void)handle;
     (void)qParentWidget;
-    if (isConfigDialogOpen) {
+    if (!config_dialog_try_open()) {
         return;
     }
-    isConfigDialogOpen = TRUE;
     showConfigInterface();
-    isConfigDialogOpen = FALSE;
+    config_dialog_close();
 }
 
 const char* ts3plugin_infoTitle(void) {

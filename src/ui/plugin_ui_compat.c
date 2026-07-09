@@ -152,7 +152,7 @@ int shoutKey = 99;
 int configUIKey = 121;
 
 // Key monitoring variables | Variables de surveillance des touches globales
-BOOL isConfigDialogOpen = FALSE;
+static volatile long g_configDialogOpen = 0;
 DWORD lastKeyPressTime = 0;
 BOOL keyMonitorThreadRunning = FALSE;
 HANDLE keyMonitorThread = NULL;
@@ -178,6 +178,18 @@ int plugin_overlay_text_lock_try(void) {
 
 void plugin_overlay_text_lock_release(void) {
     LeaveCriticalSection(&overlayTextLock);
+}
+
+int config_dialog_try_open(void) {
+    return InterlockedCompareExchange(&g_configDialogOpen, 1, 0) == 0;
+}
+
+void config_dialog_close(void) {
+    InterlockedExchange(&g_configDialogOpen, 0);
+}
+
+int config_dialog_is_open(void) {
+    return InterlockedCompareExchange(&g_configDialogOpen, 0, 0) != 0;
 }
 
 double hubMinimumWhisper = 0.0;

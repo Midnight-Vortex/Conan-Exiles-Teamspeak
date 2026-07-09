@@ -106,7 +106,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "7.0.1";
+    return "7.0.3";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -382,8 +382,8 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (cepos_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
-        /* cepos_on_plugin_command already updates the table and recomputes the
-           invoker's audio snapshot. Defer own send, 3D, channel, and unmute
+        /* cepos_on_plugin_command updates the player table and queues a batched
+           audio recompute (dirty flag). Defer own send, 3D, channel, and unmute
            work to CEDRAIN — never run the full drain per packet (200+ players
            @ 1 Hz CEPOS would flood the callback thread). */
         if (cepos_send_pending() || ts3_audio_has_pending_unmutes()

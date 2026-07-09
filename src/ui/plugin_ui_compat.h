@@ -37,6 +37,11 @@ void plugin_ui_on_position_tick(void);
 
 void plugin_ui_on_settings_saved(void);
 
+/* Atomic open/close guard for the legacy settings dialog (F10 + TS configure). */
+int config_dialog_try_open(void);
+void config_dialog_close(void);
+int config_dialog_is_open(void);
+
 /* Legacy voice_modes.c symbol used by config_files / UI. */
 float getVoiceDistanceForMode(uint8_t voiceMode);
 

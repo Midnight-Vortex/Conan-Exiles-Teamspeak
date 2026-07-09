@@ -57,12 +57,12 @@ static volatile long g_unmuteRingRead = 0;
 static char g_clientUnlocked[TS3_MAX_CLIENT_ID];       /* callback thread only */
 static ULONGLONG g_lastUnmuteMs[TS3_MAX_CLIENT_ID];    /* callback thread only */
 
-/* Phase 4.1 — throttle full recomputes on local position polls. */
-static int g_lastLocalSeq = -1;
-static float g_lastLocalX = 0.0f;
-static float g_lastLocalY = 0.0f;
-static float g_lastLocalZ = 0.0f;
-static ULONGLONG g_lastRecomputeAllMs = 0;
+/* Phase 4.1 — throttle full recomputes on local position polls (atomics). */
+static volatile long g_lastLocalSeq = -1;
+static volatile long g_lastLocalXcm = 0;
+static volatile long g_lastLocalYcm = 0;
+static volatile long g_lastLocalZcm = 0;
+static volatile LONG64 g_lastRecomputeAllMs = 0;
 
 /* Phase 4.2 — batched per-client recomputes from CEPOS. */
 static volatile long g_recomputeDirty[TS3_MAX_CLIENT_ID];
@@ -82,6 +82,25 @@ static void unmute_ring_push(anyID clientID) {
 }
 
 static void audio_signal_unmute_flag_only(anyID clientID);
+
+static void audio_clear_client_dirty(anyID clientID) {
+    if (!ts3_client_id_valid(clientID)) {
+        return;
+    }
+    if (InterlockedCompareExchange(&g_recomputeDirty[clientID], 0, 1) == 1) {
+        InterlockedDecrement(&g_recomputeDirtyCount);
+    }
+}
+
+static void audio_reconcile_dirty_count(void) {
+    long actual = 0;
+    for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
+        if (InterlockedCompareExchange(&g_recomputeDirty[i], 0, 0) != 0) {
+            actual++;
+        }
+    }
+    InterlockedExchange(&g_recomputeDirtyCount, actual);
+}
 
 /* ---- 8.4 playback gate ------------------------------------------------------ */
 
@@ -306,22 +325,31 @@ static int audio_local_position_changed(const PosSample* local, int localValid) 
     if (!localValid) {
         return 0;
     }
-    if (local->seq != g_lastLocalSeq) {
+    if ((int)local->seq != (int)InterlockedCompareExchange(&g_lastLocalSeq, 0, 0)) {
         return 1;
     }
-    return fabsf(local->x - g_lastLocalX) > TS3_RECOMPUTE_POS_EPS_CM
-        || fabsf(local->y - g_lastLocalY) > TS3_RECOMPUTE_POS_EPS_CM
-        || fabsf(local->z - g_lastLocalZ) > TS3_RECOMPUTE_POS_EPS_CM;
+    const long xcm = (long)local->x;
+    const long ycm = (long)local->y;
+    const long zcm = (long)local->z;
+    const long lastX = InterlockedCompareExchange(&g_lastLocalXcm, 0, 0);
+    const long lastY = InterlockedCompareExchange(&g_lastLocalYcm, 0, 0);
+    const long lastZ = InterlockedCompareExchange(&g_lastLocalZcm, 0, 0);
+    return xcm - lastX > (long)TS3_RECOMPUTE_POS_EPS_CM
+        || xcm - lastX < -(long)TS3_RECOMPUTE_POS_EPS_CM
+        || ycm - lastY > (long)TS3_RECOMPUTE_POS_EPS_CM
+        || ycm - lastY < -(long)TS3_RECOMPUTE_POS_EPS_CM
+        || zcm - lastZ > (long)TS3_RECOMPUTE_POS_EPS_CM
+        || zcm - lastZ < -(long)TS3_RECOMPUTE_POS_EPS_CM;
 }
 
 static void audio_note_local_position(const PosSample* local, int localValid) {
     if (!localValid) {
         return;
     }
-    g_lastLocalSeq = local->seq;
-    g_lastLocalX = local->x;
-    g_lastLocalY = local->y;
-    g_lastLocalZ = local->z;
+    InterlockedExchange(&g_lastLocalSeq, (long)local->seq);
+    InterlockedExchange(&g_lastLocalXcm, (long)local->x);
+    InterlockedExchange(&g_lastLocalYcm, (long)local->y);
+    InterlockedExchange(&g_lastLocalZcm, (long)local->z);
 }
 
 static int audio_local_zone(const HubSettings* hub, const PosSample* local,
@@ -351,12 +379,13 @@ typedef struct AudioPublishParams {
     float panR;
     float cutoffHz;
     int soundproof;
+    int reverbZone;
     int reverbSlot;
     int valid;
     int neutral;
 } AudioPublishParams;
 
-/* Phase 4.3 — heavy work outside the writer lock; publish only under lock. */
+/* Phase 4.3 — math outside lock; cave slots + publish under g_writerLock. */
 static void audio_compute_client(anyID clientID, const PosSample* local,
     int localValid, const HubSettings* hub, int localZone,
     AudioPublishParams* out) {
@@ -370,7 +399,6 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     if (!localValid || !player_table_get(clientID, &remote)) {
         out->neutral = 1;
         out->valid = 0;
-        cave_slot_release(clientID);
         return;
     }
 
@@ -379,7 +407,6 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     const float lz = local->z / 100.0f;
 
     int soundproof = 0;
-    int reverbSlot = -1;
     int reverbZone = 0;
     float cutoffHz = TS3_LPF_BYPASS_HZ;
     int remoteZone = -1;
@@ -391,11 +418,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         if (reverbZone) {
             const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
             cutoffHz = prox_lowpass_cutoff_hz(distance);
-            reverbSlot = cave_slot_acquire(clientID);
         }
-    }
-    if (reverbSlot < 0) {
-        cave_slot_release(clientID);
     }
 
     const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
@@ -428,7 +451,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     out->panR = panR;
     out->cutoffHz = cutoffHz;
     out->soundproof = soundproof;
-    out->reverbSlot = reverbSlot;
+    out->reverbZone = reverbZone;
     out->valid = 1;
     out->neutral = 0;
 
@@ -437,13 +460,24 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     }
 }
 
+/* Caller must hold g_writerLock. */
 static void audio_publish_client(anyID clientID, const AudioPublishParams* params) {
-    if (params->neutral) {
+    if (params->neutral || !params->valid) {
+        cave_slot_release(clientID);
         snap_publish_neutral(clientID, params->valid);
         return;
     }
+
+    int reverbSlot = -1;
+    if (params->reverbZone) {
+        reverbSlot = cave_slot_acquire(clientID);
+    }
+    else {
+        cave_slot_release(clientID);
+    }
+
     snap_publish(clientID, params->gain, params->panL, params->panR,
-        params->cutoffHz, params->soundproof, params->reverbSlot, params->valid);
+        params->cutoffHz, params->soundproof, reverbSlot, params->valid);
 }
 
 static void audio_recompute_client_impl(anyID clientID) {
@@ -496,7 +530,6 @@ static void audio_recompute_all_impl(void) {
             memset(params, 0, sizeof(*params));
             params->neutral = 1;
             params->valid = 0;
-            cave_slot_release(cid);
         }
         else {
             audio_compute_client(cid, &local, localValid,
@@ -504,10 +537,10 @@ static void audio_recompute_all_impl(void) {
         }
         batchIds[batchCount] = cid;
         batchCount++;
-        InterlockedExchange(&g_recomputeDirty[cid], 0);
+        audio_clear_client_dirty(cid);
     }
-    InterlockedExchange(&g_recomputeDirtyCount, 0);
     InterlockedExchange(&g_recomputeAllPending, 0);
+    audio_reconcile_dirty_count();
 
     EnterCriticalSection(&g_writerLock);
     for (int i = 0; i < batchCount; i++) {
@@ -526,7 +559,7 @@ void ts3_audio_recompute_client(anyID clientID) {
 
 void ts3_audio_recompute_all_force(void) {
     const ULONGLONG now = GetTickCount64();
-    g_lastRecomputeAllMs = now;
+    InterlockedExchange64(&g_lastRecomputeAllMs, (LONG64)now);
     {
         PosSample local;
         if (pos_get_current(&local)) {
@@ -545,15 +578,17 @@ void ts3_audio_on_local_position_update(void) {
     const int localValid = pos_get_current(&local);
     const ULONGLONG now = GetTickCount64();
     const int moved = audio_local_position_changed(&local, localValid);
+    const ULONGLONG lastMs = (ULONGLONG)InterlockedCompareExchange64(
+        &g_lastRecomputeAllMs, 0, 0);
 
-    if (!moved && (now - g_lastRecomputeAllMs) < TS3_RECOMPUTE_ALL_MIN_MS) {
+    if (!moved && (now - lastMs) < TS3_RECOMPUTE_ALL_MIN_MS) {
         return;
     }
 
     if (moved) {
         audio_note_local_position(&local, localValid);
     }
-    g_lastRecomputeAllMs = now;
+    InterlockedExchange64(&g_lastRecomputeAllMs, (LONG64)now);
     InterlockedExchange(&g_recomputeAllPending, 1);
     ts3_request_wakeup();
 }
@@ -609,6 +644,7 @@ void ts3_audio_flush_recomputes(void) {
             audio_recompute_client_impl(cid);
         }
     }
+    audio_reconcile_dirty_count();
 }
 
 /* ---- 10.3 lowpass (audio thread, no locks, no allocations) ------------------- */
@@ -1012,7 +1048,7 @@ void ts3_audio_invalidate_client(anyID clientID) {
     g_clientUnlocked[clientID] = 0;
     g_lastUnmuteMs[clientID] = 0;
     g_renderGain[clientID] = 1.0f;
-    InterlockedExchange(&g_recomputeDirty[clientID], 0);
+    audio_clear_client_dirty(clientID);
     ts3d_invalidate_client(clientID);
 }
 
@@ -1043,6 +1079,6 @@ void ts3_audio_reset(void) {
     InterlockedExchange(&g_recomputeDirtyCount, 0);
     InterlockedExchange(&g_recomputeAllPending, 0);
     memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
-    g_lastLocalSeq = -1;
-    g_lastRecomputeAllMs = 0;
+    InterlockedExchange(&g_lastLocalSeq, -1);
+    InterlockedExchange64(&g_lastRecomputeAllMs, 0);
 }

@@ -14,7 +14,7 @@
 static void settings_dialog_thread(void* arg) {
     (void)arg;
     showConfigInterface();
-    isConfigDialogOpen = FALSE;
+    config_dialog_close();
 }
 
 void keyMonitorThreadFunction(void* arg) {
@@ -32,9 +32,7 @@ void keyMonitorThreadFunction(void* arg) {
         const BOOL currentKeyState = (GetAsyncKeyState(configUIKey) & 0x8000) != 0;
 
         if (currentKeyState && !lastKeyState) {
-            if (!isConfigDialogOpen && !pluginShuttingDown) {
-                isConfigDialogOpen = TRUE;
-
+            if (config_dialog_try_open() && !pluginShuttingDown) {
                 if (enableLogGeneral) {
                     char msg[128];
                     snprintf(msg, sizeof(msg),

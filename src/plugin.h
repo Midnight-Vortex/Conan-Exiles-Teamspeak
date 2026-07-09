@@ -301,7 +301,9 @@ extern int shoutKey;
 extern int configUIKey;
 
 // Key monitoring variables
-extern BOOL isConfigDialogOpen;
+int config_dialog_try_open(void);
+void config_dialog_close(void);
+int config_dialog_is_open(void);
 extern DWORD lastKeyPressTime;
 extern BOOL keyMonitorThreadRunning;
 extern HANDLE keyMonitorThread;
