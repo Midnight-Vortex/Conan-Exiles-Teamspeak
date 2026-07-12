@@ -1156,4 +1156,11 @@ void ts3_audio_reset(void) {
     memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
     InterlockedExchange(&g_lastLocalSeq, -1);
     InterlockedExchange64(&g_lastRecomputeAllMs, 0);
+    /* Ramp/pan state lives on the audio thread; reset every ID so reused clientIDs
+       never inherit stale gain/pan after selective invalidate (5.2). No writer lock. */
+    for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
+        g_renderGain[i] = 1.0f;
+        g_renderPanL[i] = 0.7071f;
+        g_renderPanR[i] = 0.7071f;
+    }
 }
