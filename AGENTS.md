@@ -6,6 +6,14 @@
 
 That rule has `alwaysApply: true`. Do not skip it.
 
+## Before any tool call (mandatory)
+
+1. Read **this file** (`AGENTS.md`).
+2. Read **`.cursor/rules/vibecoding-cost-efficient.mdc`** (full file if not already in context).
+3. User-global: `~/.cursor/rules/read-project-rules-first.mdc` also applies.
+
+Skipping step 2 → user sees a UI reminder; realign before continuing.
+
 ## Required on every reply (line 1)
 
 ```
