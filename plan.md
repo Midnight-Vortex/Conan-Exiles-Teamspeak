@@ -1,8 +1,9 @@
 # Plan: Skalierung 200+ Spieler (Rewrite)
 
-**Stand:** 2026-07-07  
+**Stand:** 2026-07-12  
 **Repo:** `Conan-Exiles-Teamspeak` (Rewrite)  
-**Bezug:** `REWRITE_PLAN.md` (Phasen 0–14 Funktions-Rewrite)
+**Bezug:** `REWRITE_PLAN.md` (Phasen 0–14 Funktions-Rewrite)  
+**Workflow:** `AGENTS.md` + `.cursor/rules/vibecoding-cost-efficient.mdc`
 
 ---
 
@@ -147,3 +148,236 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 
 - **Nicht im Scope:** Server-`ts3server.ini`-Tuning, TS-Client-Bugs, Conan-Mod-Performance
 - **Golden Rule bleibt:** TS-API nur Callback-Thread; Background → Queue + CEDRAIN
+
+---
+
+# Phase 6–9 — Realistic Audio (Mumble-Parität + Server-Toggle)
+
+**Stand:** 2026-07-12 · **Plugin:** 7.0.3  
+**Referenz:** `E:\programme\Conan-Exiles-Mumblee\plugin.c` (~3219–3659) — **lesen, nicht kopieren**  
+**Kontext:** Spieler-Feedback („zu muffled“) vs. Mumble-Autor („zu klar“) — **dieselbe Design-Entscheidung von zwei Seiten**. Phase 4 hat Filter **nicht** entfernt; der Rewrite begrenzt Lowpass/DRR/Richtung auf Reverb-Zonen (REWRITE_PLAN Phase 10.3).
+
+---
+
+## Ziel
+
+1. **Mumble-ähnlicher Klang** im Open World wiederherstellbar (Distanz-Lowpass, Diffuse/DRR, Richtungs-Psychoakustik).
+2. **Server-Wahl** über Root-Channel-Beschreibung: Realistic **An/Aus** (+ optional Intensity 0–100).
+3. **Phase-4-CPU-Fixes** unverändert lassen (Throttle, Dirty-Batch, Writer-Lock-Scope).
+4. **Golden Rule:** eine Funktion pro Schritt; Rewrite aus Referenz, kein blindes `plugin.c`-Copy-Paste.
+
+---
+
+## Ist-Zustand vs. Mumble (Gap-Analyse)
+
+| Feature | Mumble (`plugin.c`) | TS 7.0.3 | Datei (TS) |
+|---------|---------------------|----------|------------|
+| Lowpass nach Distanz | ✅ global | ❌ nur Reverb-Zone | `proximity_math.c`, `ts3_proximity_audio.c` |
+| Double-Pass-Lowpass | ✅ (2×, α×0.7) | ❌ 1-Pass | `ts3_proximity_audio.c` `audio_apply_lowpass` |
+| DRR + Diffuse | ✅ `applyDiffuseSimulation` | ❌ fehlt | — |
+| Richtung hinten | ✅ −12 % Vol, Cut×0.75, DRR×0.85 | ⚠️ nur Reverb (`rear_duck`) | `ts3_proximity_audio.c` |
+| Lautstärke + Pan | ✅ | ✅ | `proximity_math.c` |
+| Cave-Reverb in Zonen | ✅ | ✅ | `ts3_proximity_audio.c` |
+| Hub-Toggle | ❌ (`hubAudioFilterIntensity` dekl., nie verdrahtet) | ❌ | `plugin.h`, `hub_parser.c` |
+| Humidity / echtes HRTF | ❌ in beiden Repos | ❌ | — |
+
+**Open World heute:** `TS3_LPF_BYPASS_HZ = 19000` → praktisch kein Filter (`audio_compute_client` setzt Cutoff nur bei `reverbZone`).
+
+**Mathe bereits portiert (rein):** `prox_lowpass_cutoff_hz`, `prox_direct_reverb_ratio` in `proximity_math.c` — Formeln entsprechen Mumble.
+
+---
+
+## Hub-Konfiguration (Root-Channel)
+
+Neue/verdrahtete Keys in `[GLOBAL]` der Root-Channel-Beschreibung:
+
+```ini
+[GLOBAL]
+RealisticAudio=True
+FilterIntensity=100
+```
+
+| Key | Typ | Default | Verhalten |
+|-----|-----|---------|-----------|
+| `RealisticAudio` | bool | `False` | `True` = Mumble-Pfad global (ingame proximity); `False` = aktuelles Verhalten (klar im Open Field) |
+| `FilterIntensity` | 0–100 | `100` | Skaliert Cutoff/DRR/Richtung (100 = voller Mumble-Pfad; 0 = Bypass wie heute) |
+
+**Alternative:** nur `FilterIntensity` (0 = aus, >0 = an mit Stärke) — bei Implementierung **eine** Variante wählen, nicht beide parallel.
+
+**Legacy:** `hubAudioFilterIntensity` in `plugin.h` / `plugin_ui_compat.c` — entweder an `FilterIntensity` anbinden oder deprecate (nur intern, kein UI nötig).
+
+---
+
+## Ziel-Verhalten nach Umsetzung
+
+| Modus | Open World | Reverb-Zone |
+|-------|------------|-------------|
+| **Realistic OFF** | Klar (Bypass 19 kHz) | Wie heute: Lowpass + Cave-Reverb + rear_duck |
+| **Realistic ON** | Mumble-Pfad: Lowpass + Diffuse + Richtung, dann Gain/Pan | Cave-Reverb **zusätzlich** (Design: stapeln, nicht ersetzen — mit Autor abgleichen) |
+
+**Signal-Kette (Realistic ON, wie Mumble ~3653–3662):**
+
+```
+Lowpass (ggf. double-pass) → Diffuse/DRR → Gain × directionVolume → Pan
+→ (optional) Cave-Reverb wenn Reverb-Zone
+```
+
+**Thread-Regeln (unverändert):**
+
+- Writer/CEDRAIN: `audio_compute_client` → Distanz, DRR, Cutoff, directionVolume, reverbSlot
+- PCM-Callback: nur Snapshots + lock-free State — **kein TS-API, keine Locks**
+
+---
+
+## Phase 6 — Hub / Profil (S2)
+
+| # | Funktion | Datei | Status |
+|---|----------|-------|--------|
+| **6.1** | `hub_parse_settings` — `RealisticAudio` / `FilterIntensity` parsen + clamp | `hub_parser.c`, `hub_parser.h` | ⬜ |
+| **6.2** | Felder in `HubSettings` + Defaults | `hub_parser.h` | ⬜ |
+| **6.3** | `server_profile_get_realistic_*()` Getter | `ts3_server_profile.c/.h` | ⬜ |
+| **6.4** | Debug-Log bei Profil-Reload (wie andere Hub-Keys) | `ts3_server_profile.c` | ⬜ |
+
+**Test:** Root-Beschreibung ändern → Log zeigt `RealisticAudio=1 FilterIntensity=100`; Getter liefert Werte. **Noch kein hörbarer Unterschied** (Audio-Pfad folgt in Phase 8).
+
+**Off-limits:** `ui_main.c`, PCM-Pfad, `plan.md` außer Status-Update.
+
+---
+
+## Phase 7 — Mathe (S2, rein / rewrite)
+
+| # | Funktion | Datei | Mumble-Ref | Status |
+|---|----------|-------|------------|--------|
+| **7.1** | `prox_apply_diffuse_samples` | `proximity_math.c/.h` | `applyDiffuseSimulation` ~3314 | ⬜ |
+| **7.2** | `prox_rear_psychoacoustics` | `proximity_math.c/.h` | ~3636–3651 | ⬜ |
+
+**7.1:** Direct/Diffuse-Mischung pro Sample (mono/stereo), `drr` 0.05–1.0, early-out bei `drr >= 0.99`.  
+**7.2:** Input: `frontBack` (−1..1) → Output: `directionVolume`, `cutoffMul`, `drrMul`.
+
+**Test:** Unit-nahe manuell (Debug-Build) oder Log in temporärem Harness — **kein** TS-Client nötig.
+
+---
+
+## Phase 8 — Audio-Pfad (S3)
+
+| # | Funktion | Datei | Status |
+|---|----------|-------|--------|
+| **8.1** | `AudioSnap` + `AudioPublishParams` erweitern (`drr`, `directionVolume`, `realisticActive`) | `ts3_proximity_audio.c` | ⬜ |
+| **8.2** | `audio_compute_client` — bei Realistic ON: globale Cutoff/DRR/Richtung (nicht nur `reverbZone`) | `ts3_proximity_audio.c` | ⬜ |
+| **8.3** | `snap_publish` / `snap_read` — neue Felder | `ts3_proximity_audio.c` | ⬜ |
+| **8.4** | `audio_apply_lowpass` — optional Double-Pass (α×0.7 zweiter Pass) | `ts3_proximity_audio.c` | ⬜ |
+| **8.5** | `ts3_audio_process_playback` — Reihenfolge: LPF → Diffuse → Gain/Pan; Intensity skaliert | `ts3_proximity_audio.c` | ⬜ |
+
+**8.2 Details:**
+
+- `cutoffHz = prox_lowpass_cutoff_hz(distance)` wenn Realistic ON
+- `drr = prox_direct_reverb_ratio(distance, audioMinDistance)` — Referenz aus Hub/Zone wie Mumble `minDistance`
+- `frontBack` aus Blickrichtung + Sprecher-Vektor (wie Mumble); `prox_rear_psychoacoustics` anwenden
+- `directionVolume` in Gain einrechnen (Mumble: **nach** Filter, **vor** Pan-Multiplikation)
+- Reverb-Zone: bestehende `cave_slot` + ggf. zusätzlicher Zone-Lowpass — **nicht** Realistic abschalten
+
+**Test (hörbar):**
+
+| Szenario | Erwartung |
+|----------|-----------|
+| Realistic OFF, Open Field | Klar wie 7.0.3 |
+| Realistic ON, 5 m / 30 m | Näher heller, weiter dumpfer |
+| Realistic ON, Sprecher hinten | Leise + dumpfer vs. vorne |
+| Reverb-Zone + Realistic ON | Hall + Distanzfilter |
+| Soundproof-Grenze | Hart stumm (unverändert) |
+| 20 Spieler, 30 min | Kein Crash; Phase-4-Metriken normal |
+
+---
+
+## Phase 9 — Audio-Qualität (optional, nach 8.5)
+
+Unabhängig von Realismus — bekannte Symptome (Knacks / zu leise nach Stunden):
+
+| # | Maßnahme | Datei | Status |
+|---|----------|-------|--------|
+| **9.1** | Pan-Glättung (keine Sprünge Sample-zu-Sample) | `ts3_proximity_audio.c` | ⬜ |
+| **9.2** | Sanfte Mute-Grenze statt hartem `memset(0)` bei `TS3_AUDIBLE_GAIN` | `ts3_proximity_audio.c` | ⬜ |
+| **9.3** | Cave-Reverb: Buffer nicht mitten abbrechen | `ts3_proximity_audio.c` | ⬜ |
+| **9.4** | Unmute robuster (Rearm ~500 ms, Batch 128) | `ts3_proximity_audio.c` | ⬜ |
+
+**Priorität:** 9.1 + 9.4 zuerst wenn Knacks/Leise gemeldet wird.
+
+---
+
+## Subagent-Workflow (AGENTS.md)
+
+**Jeder Task-Prompt enthält:**
+
+```
+MANDATORY: follow .cursor/rules/vibecoding-cost-efficient.mdc
+Repo: E:\programme\Conan-Exiles-Teamspeak
+Golden Rule: only [one function], nothing extra, honor thread contract
+Rewrite: read Conan-Exiles-Mumblee\plugin.c — rewrite, don't copy
+Research: [files, thread, callers, risks]
+Scope: only [file] — [function]
+Off-limits: [list]
+Build: yes/no
+Output: changed files + manual TS test steps
+```
+
+| Schritt | Effort | Subagent | Model |
+|---------|--------|----------|-------|
+| 6.1–6.4 Hub | S2 | `generalPurpose` | `composer-2.5-fast` |
+| 7.1–7.2 Mathe | S2 | `generalPurpose` | `composer-2.5-fast` |
+| 8.1–8.5 PCM | S3 | `generalPurpose` | `claude-sonnet-5-thinking-high` |
+| Review nach 8.5 | S4 | `bugbot` | readonly |
+
+**Reihenfolge:** 6 → 7 → 8 (strikt nacheinander); 9 parallel oder danach.  
+**Build/Deploy:** nur auf Anweisung (`build_msvc.ps1` → TS-Client neu starten).  
+**Version:** Bump in `ts3_entry.c` nur wenn User „version“ sagt (Vorschlag: **7.1.0** Feature, oder **7.0.4** Patch).
+
+---
+
+## Definition of Done (pro Funktion)
+
+- [ ] Nur die eine Funktion im Scope geändert (Golden Rule)
+- [ ] Kein TS-API im PCM-Callback; keine neuen Locks im Audio-Thread
+- [ ] `ts3_client_id_valid()` / Bounds auf festen Arrays
+- [ ] Build Release\|x64 OK (wenn gebaut)
+- [ ] Manueller TS-Test beschrieben und durchgeführt
+- [ ] Phase-4-Verhalten unverändert (Throttle, dirty reconcile, writer scope)
+
+---
+
+## Was wir **nicht** versprechen / nicht tun
+
+| Punkt | Grund |
+|-------|-------|
+| Humidity / echtes HRTF | Nie in Mumble implementiert |
+| Exakt identischer Klang ohne Autor-Review | TS vs. Mumble API, Sample-Rate, Client-Mixer |
+| Blind-Copy aus `plugin.c` | Vibecoding Rewrite-Regel |
+| `ui_settings.c` reaktivieren | F10/Extras = `ui_main.c` |
+| Phase-4 rückgängig | Unabhängig vom Filter |
+| `REWRITE_PLAN.md` Phase-10-Test „offenes Feld klar“ | Wird durch Hub-Toggle **ersetzt** — Doku-Update nur auf Anfrage |
+
+---
+
+## Collaborator / Kommunikation (Kurz)
+
+**Kernbotschaft:** Spieler-Feedback → Klarheit im Open Field; nicht gegen seine Arbeit gemeint, schlecht kommuniziert. Mumble-Math ist noch da, globaler Pfad war im Rewrite eingeschränkt. Toggle im Root + sein Input zu Defaults.
+
+**Technischer Satz für Mail:**  
+*I checked the original Mumble source — distance low-pass, diffuse simulation, and rear attenuation are still in our math module but only applied in reverb zones in the rewrite. I'm restoring the full path as a root-channel toggle.*
+
+**Vibecoding im Mail-Text:** nicht ironisch erwähnen — sachlich: AI für Implementation/Review, nicht als Ersatz für Design-Entscheidungen.
+
+---
+
+## Prioritäten-Reihenfolge (Realistic Audio)
+
+1. **6.1** — Hub-Key parsen *(klein, testbar, kein Audio-Risiko)*
+2. **6.3** — Getter ins Profil
+3. **7.1** — Diffuse rewrite
+4. **7.2** — Rear-Psychoakustik rewrite
+5. **8.2** — `audio_compute_client` Realistic-Pfad
+6. **8.5** — PCM-Reihenfolge + Intensity
+7. **8.4** — Double-Pass-Lowpass
+8. **9.x** — Qualität nach Bedarf
+9. **Review + Version-Bump** — auf Anfrage
+
+**Nächster Schritt:** User sagt **„start 6.1“** → Subagent Phase 6.1 mit Research-Protokoll.
