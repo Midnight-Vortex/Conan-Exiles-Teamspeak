@@ -34,6 +34,7 @@ typedef struct AudioSnap {
     float panL;
     float panR;
     float cutoffHz;      /* 10.3 lowpass cutoff; >= bypass = off */
+    float drr;           /* 1.0 = no diffuse; lower = more diffuse mix */
     int soundproof;      /* 10.2 hard mute (different soundproof zone) */
     int reverbSlot;      /* 10.4 cave reverb slot, -1 = off */
     int valid;
@@ -130,13 +131,14 @@ static void writer_lock_ensure(void) {
 }
 
 static void snap_publish(anyID clientID, float gain, float panL, float panR,
-    float cutoffHz, int soundproof, int reverbSlot, int valid) {
+    float cutoffHz, float drr, int soundproof, int reverbSlot, int valid) {
     AudioSnap* s = &g_snap[clientID];
     InterlockedIncrement(&s->seq);          /* odd: write in progress */
     s->gain = gain;
     s->panL = panL;
     s->panR = panR;
     s->cutoffHz = cutoffHz;
+    s->drr = drr;
     s->soundproof = soundproof;
     s->reverbSlot = reverbSlot;
     s->valid = valid;
@@ -145,12 +147,12 @@ static void snap_publish(anyID clientID, float gain, float panL, float panR,
 
 /* Publish "no proximity influence" for one client. */
 static void snap_publish_neutral(anyID clientID, int valid) {
-    snap_publish(clientID, 0.0f, 0.7071f, 0.7071f, TS3_LPF_BYPASS_HZ, 0, -1, valid);
+    snap_publish(clientID, 0.0f, 0.7071f, 0.7071f, TS3_LPF_BYPASS_HZ, 1.0f, 0, -1, valid);
 }
 
 /* Audio-thread reader; returns 0 when no stable/valid snapshot exists. */
 static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
-    float* cutoffHz, int* soundproof, int* reverbSlot) {
+    float* cutoffHz, float* drr, int* soundproof, int* reverbSlot) {
     const AudioSnap* s = &g_snap[clientID];
     for (int attempt = 0; attempt < 3; attempt++) {
         const LONG seqBefore = s->seq;
@@ -161,6 +163,7 @@ static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
         const float l = s->panL;
         const float r = s->panR;
         const float c = s->cutoffHz;
+        const float d = s->drr;
         const int sp = s->soundproof;
         const int rv = s->reverbSlot;
         const int valid = s->valid;
@@ -172,6 +175,7 @@ static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
             *panL = l;
             *panR = r;
             *cutoffHz = c;
+            *drr = d;
             *soundproof = sp;
             *reverbSlot = rv;
             return 1;
@@ -378,6 +382,7 @@ typedef struct AudioPublishParams {
     float panL;
     float panR;
     float cutoffHz;
+    float drr;
     int soundproof;
     int reverbZone;
     int reverbSlot;
@@ -385,12 +390,17 @@ typedef struct AudioPublishParams {
     int neutral;
 } AudioPublishParams;
 
+static float audio_lerp_realistic(float bypass, float target, float intensity) {
+    return bypass + (target - bypass) * intensity;
+}
+
 /* Phase 4.3 — math outside lock; cave slots + publish under g_writerLock. */
 static void audio_compute_client(anyID clientID, const PosSample* local,
     int localValid, const HubSettings* hub, int localZone,
     AudioPublishParams* out) {
     memset(out, 0, sizeof(*out));
     out->cutoffHz = TS3_LPF_BYPASS_HZ;
+    out->drr = 1.0f;
     out->reverbSlot = -1;
     out->panL = 0.7071f;
     out->panR = 0.7071f;
@@ -405,23 +415,20 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     const float lx = local->x / 100.0f;
     const float ly = local->y / 100.0f;
     const float lz = local->z / 100.0f;
+    const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
 
     int soundproof = 0;
     int reverbZone = 0;
     float cutoffHz = TS3_LPF_BYPASS_HZ;
+    float drr = 1.0f;
     int remoteZone = -1;
 
     if (hub && hub->zoneCount > 0) {
         remoteZone = zone_resolve(hub, remote.x, remote.y, remote.z);
         soundproof = zone_soundproof_muted(hub, localZone, remoteZone);
         reverbZone = !soundproof && zone_reverb_active(hub, localZone, remoteZone);
-        if (reverbZone) {
-            const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
-            cutoffHz = prox_lowpass_cutoff_hz(distance);
-        }
     }
 
-    const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
     float maxVolume = server_profile_get_max_volume();
     if (hub && localZone >= 0 && localZone < hub->zoneCount
         && hub->zones[localZone].audioMaxVolume > 0.0f) {
@@ -431,18 +438,43 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         + server_profile_get_listen_add_distance();
     float gain = soundproof ? 0.0f
         : prox_volume_from_distance(distance, hearRange, maxVolume);
-    if (!soundproof && reverbZone) {
-        gain *= prox_direct_reverb_ratio(distance,
-            audio_zone_reference_distance(hub, localZone));
-    }
 
     const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
     const float dirX = -cosf(yawRad);
     const float dirZ = -sinf(yawRad);
 
+    const int realisticOn = server_profile_get_realistic_audio();
+    const float filterIntensity = server_profile_get_filter_intensity() / 100.0f;
+    const int realisticActive = realisticOn && filterIntensity > 0.001f && !soundproof;
+
+    if (realisticActive) {
+        const float refDist = audio_zone_reference_distance(hub, localZone);
+        const float rawCutoff = prox_lowpass_cutoff_hz(distance);
+        const float rawDrr = prox_direct_reverb_ratio(distance, refDist);
+        const float frontBack = prox_front_back_dot(dirX, dirZ,
+            remote.x - lx, remote.z - lz);
+        ProxRearPsycho rear;
+        prox_rear_psychoacoustics(frontBack, &rear);
+
+        const float targetCutoff = rawCutoff * rear.cutoffMul;
+        cutoffHz = audio_lerp_realistic(TS3_LPF_BYPASS_HZ, targetCutoff, filterIntensity);
+
+        const float targetDrr = rawDrr * rear.drrMul;
+        drr = 1.0f - (1.0f - targetDrr) * filterIntensity;
+
+        const float directionVolume = audio_lerp_realistic(1.0f, rear.directionVolume,
+            filterIntensity);
+        gain *= directionVolume;
+    }
+    else if (reverbZone) {
+        cutoffHz = prox_lowpass_cutoff_hz(distance);
+        gain *= prox_direct_reverb_ratio(distance,
+            audio_zone_reference_distance(hub, localZone));
+    }
+
     float panL, panR;
     prox_stereo_pan(dirX, dirZ, remote.x - lx, remote.z - lz, &panL, &panR);
-    if (reverbZone) {
+    if (reverbZone && !realisticActive) {
         audio_apply_reverb_rear_duck(dirX, dirZ, remote.x - lx, remote.z - lz, &panL, &panR);
     }
 
@@ -450,6 +482,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     out->panL = panL;
     out->panR = panR;
     out->cutoffHz = cutoffHz;
+    out->drr = drr;
     out->soundproof = soundproof;
     out->reverbZone = reverbZone;
     out->valid = 1;
@@ -477,7 +510,7 @@ static void audio_publish_client(anyID clientID, const AudioPublishParams* param
     }
 
     snap_publish(clientID, params->gain, params->panL, params->panR,
-        params->cutoffHz, params->soundproof, reverbSlot, params->valid);
+        params->cutoffHz, params->drr, params->soundproof, reverbSlot, params->valid);
 }
 
 static void audio_recompute_client_impl(anyID clientID) {
@@ -677,6 +710,10 @@ static void audio_apply_lowpass(short* samples, int sampleCount, int channels,
             }
             fx->prevL += alpha * (inL - fx->prevL);
             fx->prevR += alpha * (inR - fx->prevR);
+            const float leftSecond = fx->prevL;
+            const float rightSecond = fx->prevR;
+            fx->prevL += alpha * 0.7f * (leftSecond - fx->prevL);
+            fx->prevR += alpha * 0.7f * (rightSecond - fx->prevR);
             samples[li] = audio_clamp_sample(fx->prevL);
             samples[ri] = audio_clamp_sample(fx->prevR);
         }
@@ -688,6 +725,8 @@ static void audio_apply_lowpass(short* samples, int sampleCount, int channels,
                 fx->prevL = in;
             }
             fx->prevL += alpha * (in - fx->prevL);
+            const float secondPass = fx->prevL;
+            fx->prevL += alpha * 0.7f * (secondPass - fx->prevL);
             samples[s] = audio_clamp_sample(fx->prevL);
         }
     }
@@ -800,9 +839,9 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         return;
     }
 
-    float target, panL, panR, cutoffHz;
+    float target, panL, panR, cutoffHz, drr;
     int soundproof, reverbSlot;
-    if (!snap_read(clientID, &target, &panL, &panR, &cutoffHz, &soundproof, &reverbSlot)) {
+    if (!snap_read(clientID, &target, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot)) {
         /* Ingame proximity mode but no position data for this speaker (no
            CEPOS yet / expired) — mute instead of leaking full-volume voice
            that should be distance-attenuated. The next CEPOS packet
@@ -829,12 +868,17 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         return;
     }
 
-    /* 10.3 distance lowpass (reverb zones only — bypass value elsewhere). */
+    /* 10.3 distance lowpass (reverb zones or realistic open-world path). */
     if (cutoffHz < TS3_LPF_BYPASS_HZ) {
         audio_apply_lowpass(samples, sampleCount, channels, cutoffHz, &g_lpf[clientID]);
     }
     else {
         g_lpf[clientID].initialized = 0;
+    }
+
+    /* Realistic path: diffuse/DRR mix before gain (Mumble order). */
+    if (drr < 0.99f) {
+        prox_apply_diffuse_samples(samples, sampleCount, channels, drr);
     }
 
     /* 10.4 cave reverb — only while this client still owns the slot. */
@@ -1056,9 +1100,9 @@ int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
     if (!ts3_client_id_valid(clientID)) {
         return 0;
     }
-    float gain, panL, panR, cutoffHz;
+    float gain, panL, panR, cutoffHz, drr;
     int soundproof, reverbSlot;
-    if (!snap_read((anyID)clientID, &gain, &panL, &panR, &cutoffHz, &soundproof, &reverbSlot)) {
+    if (!snap_read((anyID)clientID, &gain, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot)) {
         return 0;
     }
     return soundproof ? 1 : 0;

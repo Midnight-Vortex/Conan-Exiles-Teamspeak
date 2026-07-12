@@ -105,12 +105,32 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 
 ## Phase 5 — Optional (Worst-Case 200 aktiv in Range)
 
-| # | Maßnahme | Anmerkung |
-|---|----------|-----------|
-| **5.1** | 3D apply: max. N Updates pro Tick, Rest nächster Tick | Deckel ~500 API-Calls/s |
-| **5.2** | `ts3_audio_reset`: nur belegte Client-IDs scannen (Bitmap/Ring) | Schnellerer Tab-Wechsel |
-| **5.3** | Player-Table Hash statt O(512) linear (nur wenn Table weiter wächst) | Aktuell 512 ausreichend |
-| **5.4** | Lasttest-Automatisierung: simulierter CEPOS-Flood + Pos-Poll | CI/manuell |
+**Stand Review 2026-07-12:** Phase 4 hat die **HIGH**-Risiken (`recompute_all`-Spam, CEPOS-Recompute pro Paket, Writer-Lock-Scope) bereits adressiert. Phase 5 bleibt für den **Worst-Case** (200 gleichzeitig in Shout-Range + Tab-Wechsel). Realistic Audio (Phase 6–8) belastet primär den **PCM-Pfad**, nicht den Callback-Thread.
+
+| # | Maßnahme | Anmerkung | Review | Priorität |
+|---|----------|-----------|--------|-----------|
+| **5.1** | 3D apply: max. N Updates pro Tick, Rest nächster Tick | Deckel ~500 API-Calls/s | **Teilweise abgedeckt:** `ts3d_apply` 20 Hz + Hear-Range-Cull + Pos-Dedup (0,25 m). Worst-Case bleibt: 200 in Range, alle bewegen sich → bis ~4000 `set3DClient`/s theoretisch. Kein per-Tick-Cap. | **Mittel** — nur bei echtem 200-in-Range-Test |
+| **5.2** | `ts3_audio_reset`: nur belegte Client-IDs scannen (Bitmap/Ring) | Schnellerer Tab-Wechsel | **Noch offen:** Loop 1..4095, jeder `invalidate` nimmt `g_writerLock`. Disconnect/Tab-Wechsel = spürbarer Ruckler. | **Hoch** — kleiner Diff, spürbarer Gewinn |
+| **5.3** | Player-Table Hash statt O(512) linear | Nur wenn Table weiter wächst | **Nicht nötig:** 512 Slots, Lookup ~512 Iterationen — für Callback ok. | **Niedrig / zurückstellen** |
+| **5.4** | Lasttest-Automatisierung: simulierter CEPOS-Flood + Pos-Poll | CI/manuell | **Noch offen:** `PROX-TEST` prüft Kurve/Timing, nicht 200-Client-Last. | **Mittel** — vor 5.1 sinnvoll (Baseline messen) |
+
+### Ist-Zustand (Code-Referenz)
+
+| Punkt | Datei | Heute |
+|-------|-------|-------|
+| 3D Rate + Cull | `ts3_3d.c` | `TS3D_APPLY_MIN_MS=50` (20 Hz), `ts3d_in_hear_range`, Dedup invalidiert bei Disconnect/Eviction (4.4) |
+| 3D kein Leave-Range-Cleanup | `ts3_3d.c` | Out-of-range: kein `set3DClient`, Dedup-State bleibt — Position in TS kann veralten bis Re-Entry |
+| Audio-Reset | `ts3_proximity_audio.c` | `ts3_audio_reset()` → O(4096) × `invalidate` (Writer-Lock je Client) |
+| Player-Table | `player_table.c` | Linear O(512), LRU-Eviction mit Metrik |
+
+### Empfohlene Reihenfolge
+
+1. **5.4** — Lasttest-Skript / simulierter Flood → messen ob 5.1 überhaupt nötig ist  
+2. **5.2** — Reset nur über `player_table_snapshot` + aktive Snap-Flags (größter UX-Gewinn)  
+3. **5.1** — nur wenn Messung >~500 `set3DClient`/s sustained zeigt  
+4. **5.3** — erst bei Table >512 oder messbarem Lookup-Problem
+
+**Nicht in Phase 5:** Unmute-Batch (64/Zyklus), Pan-Glättung → siehe **Phase 9** (Audio-Qualität).
 
 ---
 
@@ -233,10 +253,10 @@ Lowpass (ggf. double-pass) → Diffuse/DRR → Gain × directionVolume → Pan
 
 | # | Funktion | Datei | Status |
 |---|----------|-------|--------|
-| **6.1** | `hub_parse_settings` — `RealisticAudio` / `FilterIntensity` parsen + clamp | `hub_parser.c`, `hub_parser.h` | ⬜ |
-| **6.2** | Felder in `HubSettings` + Defaults | `hub_parser.h` | ⬜ |
-| **6.3** | `server_profile_get_realistic_*()` Getter | `ts3_server_profile.c/.h` | ⬜ |
-| **6.4** | Debug-Log bei Profil-Reload (wie andere Hub-Keys) | `ts3_server_profile.c` | ⬜ |
+| **6.1** | `hub_parse_settings` — `RealisticAudio` / `FilterIntensity` parsen + clamp | `hub_parser.c`, `hub_parser.h` | ✅ |
+| **6.2** | Felder in `HubSettings` + Defaults | `hub_parser.h` | ✅ |
+| **6.3** | `server_profile_get_realistic_*()` Getter | `ts3_server_profile.c/.h` | ✅ |
+| **6.4** | Debug-Log bei Profil-Reload (wie andere Hub-Keys) | `ts3_server_profile.c` | ✅ |
 
 **Test:** Root-Beschreibung ändern → Log zeigt `RealisticAudio=1 FilterIntensity=100`; Getter liefert Werte. **Noch kein hörbarer Unterschied** (Audio-Pfad folgt in Phase 8).
 
@@ -248,8 +268,8 @@ Lowpass (ggf. double-pass) → Diffuse/DRR → Gain × directionVolume → Pan
 
 | # | Funktion | Datei | Mumble-Ref | Status |
 |---|----------|-------|------------|--------|
-| **7.1** | `prox_apply_diffuse_samples` | `proximity_math.c/.h` | `applyDiffuseSimulation` ~3314 | ⬜ |
-| **7.2** | `prox_rear_psychoacoustics` | `proximity_math.c/.h` | ~3636–3651 | ⬜ |
+| **7.1** | `prox_apply_diffuse_samples` | `proximity_math.c/.h` | `applyDiffuseSimulation` ~3314 | ✅ |
+| **7.2** | `prox_rear_psychoacoustics` | `proximity_math.c/.h` | ~3636–3651 | ✅ |
 
 **7.1:** Direct/Diffuse-Mischung pro Sample (mono/stereo), `drr` 0.05–1.0, early-out bei `drr >= 0.99`.  
 **7.2:** Input: `frontBack` (−1..1) → Output: `directionVolume`, `cutoffMul`, `drrMul`.
@@ -262,11 +282,11 @@ Lowpass (ggf. double-pass) → Diffuse/DRR → Gain × directionVolume → Pan
 
 | # | Funktion | Datei | Status |
 |---|----------|-------|--------|
-| **8.1** | `AudioSnap` + `AudioPublishParams` erweitern (`drr`, `directionVolume`, `realisticActive`) | `ts3_proximity_audio.c` | ⬜ |
-| **8.2** | `audio_compute_client` — bei Realistic ON: globale Cutoff/DRR/Richtung (nicht nur `reverbZone`) | `ts3_proximity_audio.c` | ⬜ |
-| **8.3** | `snap_publish` / `snap_read` — neue Felder | `ts3_proximity_audio.c` | ⬜ |
-| **8.4** | `audio_apply_lowpass` — optional Double-Pass (α×0.7 zweiter Pass) | `ts3_proximity_audio.c` | ⬜ |
-| **8.5** | `ts3_audio_process_playback` — Reihenfolge: LPF → Diffuse → Gain/Pan; Intensity skaliert | `ts3_proximity_audio.c` | ⬜ |
+| **8.1** | `AudioSnap` + `AudioPublishParams` erweitern (`drr`, `directionVolume`, `realisticActive`) | `ts3_proximity_audio.c` | ✅ |
+| **8.2** | `audio_compute_client` — bei Realistic ON: globale Cutoff/DRR/Richtung (nicht nur `reverbZone`) | `ts3_proximity_audio.c` | ✅ |
+| **8.3** | `snap_publish` / `snap_read` — neue Felder | `ts3_proximity_audio.c` | ✅ |
+| **8.4** | `audio_apply_lowpass` — optional Double-Pass (α×0.7 zweiter Pass) | `ts3_proximity_audio.c` | ✅ |
+| **8.5** | `ts3_audio_process_playback` — Reihenfolge: LPF → Diffuse → Gain/Pan; Intensity skaliert | `ts3_proximity_audio.c` | ✅ |
 
 **8.2 Details:**
 

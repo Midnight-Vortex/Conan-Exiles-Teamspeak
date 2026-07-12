@@ -63,6 +63,14 @@ int server_profile_get_local_race(HubRace* out);
    race / no profile). Any thread, lock-free. */
 float server_profile_get_listen_add_distance(void);
 
+/* 1 when the server enables Mumble-style spatial filtering (open world).
+   0 without profile or when RealisticAudio=False. Any thread. */
+int server_profile_get_realistic_audio(void);
+
+/* Filter strength 0..100 when realistic audio is on (100 = full path).
+   Returns 100.0 without profile. Any thread. */
+float server_profile_get_filter_intensity(void);
+
 /* Drop everything (disconnect / new connection). Callback thread. */
 void server_profile_reset(void);
 

@@ -268,13 +268,14 @@ void server_profile_apply(const HubSettings* settings) {
     }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
-        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d pw=%s zones=%d races=%d "
-        "localRace=%d defaults=%d",
+        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d realistic=%d filter=%.0f "
+        "pw=%s zones=%d races=%d localRace=%d defaults=%d",
         settings->audioMaxVolume,
         settings->minWhisper, settings->maxWhisper,
         settings->minNormal, settings->maxNormal,
         settings->minShout, settings->maxShout,
         settings->forceDistanceMuting, settings->forceAutoChannelSwitch,
+        settings->realisticAudio, settings->filterIntensity,
         settings->ingameChannelPassword[0] ? "yes" : "no",
         settings->zoneCount, settings->raceCount, raceIndex,
         settings->defaults.enabled);
@@ -368,6 +369,22 @@ float server_profile_get_listen_add_distance(void) {
     float value;
     memcpy(&value, &bits, sizeof(value));
     return (value > 0.0f && value < 1000.0f) ? value : 0.0f;
+}
+
+int server_profile_get_realistic_audio(void) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
+        return 0;
+    }
+    return settings.realisticAudio;
+}
+
+float server_profile_get_filter_intensity(void) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
+        return 100.0f;
+    }
+    return settings.filterIntensity;
 }
 
 /* ---- 9.1 request driver ------------------------------------------------------ */

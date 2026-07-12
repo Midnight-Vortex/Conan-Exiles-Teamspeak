@@ -173,6 +173,93 @@ float prox_direct_reverb_ratio(float distanceMeters, float referenceDistanceMete
     return drr;
 }
 
+float prox_front_back_dot(float localDirX, float localDirZ,
+    float toRemoteX, float toRemoteZ) {
+    const float len = sqrtf(toRemoteX * toRemoteX + toRemoteZ * toRemoteZ);
+    if (len <= 1e-6f) {
+        return 1.0f;
+    }
+    return localDirX * (toRemoteX / len) + localDirZ * (toRemoteZ / len);
+}
+
+void prox_rear_psychoacoustics(float frontBack, ProxRearPsycho* out) {
+    if (!out) {
+        return;
+    }
+    out->directionVolume = 1.0f;
+    out->cutoffMul = 1.0f;
+    out->drrMul = 1.0f;
+
+    float rearFactor = 0.0f;
+    if (frontBack < 0.0f) {
+        rearFactor = -frontBack;
+        if (rearFactor > 1.0f) {
+            rearFactor = 1.0f;
+        }
+    }
+    if (rearFactor <= 0.0f) {
+        return;
+    }
+
+    out->directionVolume = 1.0f - rearFactor * 0.12f;
+    out->cutoffMul = 0.75f;
+    out->drrMul = 0.85f;
+}
+
+static float prox_clamp_short(float v) {
+    if (v > 32767.0f) {
+        return 32767.0f;
+    }
+    if (v < -32768.0f) {
+        return -32768.0f;
+    }
+    return v;
+}
+
+void prox_apply_diffuse_samples(short* samples, int sampleCount, int channelCount,
+    float drr) {
+    if (!samples || sampleCount < 2 || channelCount < 1 || drr >= 0.99f) {
+        return;
+    }
+    if (drr < 0.05f) {
+        drr = 0.05f;
+    }
+
+    const float directGain = drr;
+    const float diffuseGain = 1.0f - drr;
+
+    if (channelCount == 1) {
+        float prev = (float)samples[0];
+        for (int i = 1; i < sampleCount; i++) {
+            const float direct = (float)samples[i];
+            const float diffuse = (prev + direct) * 0.5f;
+            prev = direct;
+            samples[i] = (short)prox_clamp_short(direct * directGain + diffuse * diffuseGain);
+        }
+    }
+    else {
+        float prevL = (float)samples[0];
+        float prevR = (float)samples[1];
+        for (int s = 1; s < sampleCount; s++) {
+            const int leftIdx = s * channelCount;
+            const int rightIdx = leftIdx + 1;
+
+            const float directL = (float)samples[leftIdx];
+            const float directR = (float)samples[rightIdx];
+            const float diffuseL = (prevL + directL) * 0.5f;
+            const float diffuseR = (prevR + directR) * 0.5f;
+
+            prevL = directL;
+            prevR = directR;
+
+            samples[leftIdx] = (short)prox_clamp_short(
+                directL * directGain + diffuseL * diffuseGain);
+            samples[rightIdx] = (short)prox_clamp_short(
+                directR * directGain + diffuseR * diffuseGain);
+        }
+    }
+}
+
 typedef struct ProxMoveProfile {
     const char* label;
     float speedMps;

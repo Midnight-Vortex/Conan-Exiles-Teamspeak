@@ -75,6 +75,7 @@ static void hub_defaults(HubSettings* out) {
     memset(out, 0, sizeof(*out));
     out->audioMaxVolume = 1.0f;
     out->audioMinDistance = 1.0f;
+    out->filterIntensity = 100.0f;
 }
 
 /* ---- [GLOBAL] section ---------------------------------------------------- */
@@ -123,6 +124,13 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
     else if ((v = hub_value_for(line, "ForceAutomaticChanelSwitching")) != NULL) {
         out->forceAutoChannelSwitch = hub_parse_bool(v);
+    }
+    else if ((v = hub_value_for(line, "RealisticAudio")) != NULL) {
+        out->realisticAudio = hub_parse_bool(v);
+    }
+    else if ((v = hub_value_for(line, "FilterIntensity")) != NULL
+        || (v = hub_value_for(line, "hubAudioFilterIntensity")) != NULL) {
+        out->filterIntensity = hub_parse_clamped(v, 0.0f, 100.0f);
     }
     else if ((v = hub_value_for(line, "IngameChannelPassword")) != NULL) {
         strncpy_s(out->ingameChannelPassword, sizeof(out->ingameChannelPassword), v, _TRUNCATE);

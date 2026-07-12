@@ -34,6 +34,23 @@ float prox_lowpass_cutoff_hz(float distanceMeters);
 /* Direct/reverb mix vs distance (AudioMinDistance reference). Pure, any thread. */
 float prox_direct_reverb_ratio(float distanceMeters, float referenceDistanceMeters);
 
+/* Phase 6: horizontal front/back dot (+1 = ahead, -1 = behind). Pure. */
+float prox_front_back_dot(float localDirX, float localDirZ,
+    float toRemoteX, float toRemoteZ);
+
+/* Phase 6: rear attenuation multipliers from frontBack dot (Mumble filter path). */
+typedef struct ProxRearPsycho {
+    float directionVolume; /* 1.0 .. 0.88 */
+    float cutoffMul;       /* 1.0 or 0.75 when behind */
+    float drrMul;          /* 1.0 or 0.85 when behind */
+} ProxRearPsycho;
+
+void prox_rear_psychoacoustics(float frontBack, ProxRearPsycho* out);
+
+/* Phase 6: diffuse/DRR mix on PCM (in-place, audio thread safe). */
+void prox_apply_diffuse_samples(short* samples, int sampleCount, int channelCount,
+    float drr);
+
 /* Log a fixed-value table through log_write (Phase 5 test aid). */
 void prox_math_self_test(void);
 
