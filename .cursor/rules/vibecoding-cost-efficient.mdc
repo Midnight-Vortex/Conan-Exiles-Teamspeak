@@ -3,6 +3,37 @@ description: Vibecoding Pro+ €60 — Golden Rule, Rewrite, Research, Subagent 
 alwaysApply: true
 ---
 
+## ⛔ MANDATORY — every request · EN
+
+**This file is binding.** `alwaysApply: true` — applies even without `@` mention.
+
+**Before any tool call, edit, or subagent:**
+
+1. **Line 1 of every reply:**  
+   `Vibecoding: ACTIVE · Effort: S0–S4 · Phase: Research|Implement · Rule: vibecoding-cost-efficient.mdc`
+2. Follow: Golden Rule → Research → Subagent routing → Rewrite (never copy).
+3. **Subagents:** every Task prompt MUST include:  
+   `MANDATORY: follow .cursor/rules/vibecoding-cost-efficient.mdc (Golden Rule, rewrite, research first).`
+4. No code until research protocol exists (S2+).
+5. If you skipped this rule → **stop**, realign, then continue.
+
+**User check:** if line 1 is missing → reply: `Bitte Vibecoding-Regel einhalten` / `Please follow vibecoding rule`.
+
+## ⛔ OBLIGATOIRE — chaque requête · FR
+
+**Ce fichier est impératif.** `alwaysApply: true` — s’applique même sans `@`.
+
+**Avant tout outil, edit ou subagent :**
+
+1. **Ligne 1 de chaque réponse :**  
+   `Vibecoding: ACTIVE · Effort: S0–S4 · Phase: Recherche|Impl · Rule: vibecoding-cost-efficient.mdc`
+2. Respecter : règle d’or → recherche → routage subagent → rewrite (jamais copier).
+3. **Subagents :** chaque prompt Task DOIT inclure la règle ci-dessus.
+4. Pas de code sans protocole de recherche (S2+).
+5. Règle ignorée → **stop**, realigner, continuer.
+
+---
+
 # Vibecoding — Pro+ (€60/month) + Subagent routing · EN
 
 **Plan:** Pro+ · ~**$70 API pool** + **Auto/Composer pool** (separate).
