@@ -1,0 +1,78 @@
+---
+description: Vibecoding Pro+ €60 — Aufwand bewerten, Subagent + Modell delegieren
+alwaysApply: true
+---
+
+# Vibecoding — Pro+ (€60/Monat) + Subagent-Routing
+
+**Plan:** Pro+ · ~**$70 API-Pool** + **Auto/Composer-Pool** (getrennt).
+
+Der **Parent-Agent ist Orchestrator**: Aufwand bewerten → passenden Subagent + Modell starten → Ergebnis kurz zusammenfassen. Parent codet **nicht selbst**, außer S0 (siehe unten).
+
+## Ablauf (jede Implementierungs-/Fix-Aufgabe)
+
+1. **Erste Zeile:** `Aufwand: S0|S1|S2|S3|S4 — [1 Satz] · Delegation: [Subagent-Typ] · Modell: [slug]`
+2. **Subagent starten** (Task-Tool) mit vollem Task-Prompt inkl. Dateipfade, Scope, „was nicht anfassen“.
+3. **Parallel** nur bei unabhängigen Teilaufgaben (z. B. Review + Build).
+4. **Parent-Antwort:** max. 5–8 Zeilen — was der Subagent tat, geänderte Dateien, offene Punkte.
+
+## Subagent-Routing (Pflicht)
+
+| Stufe | Wann | `subagent_type` | `model` | `readonly` |
+|-------|------|-----------------|---------|------------|
+| **S0** | 1 grep, 1 Zeile, reine Ja/Nein-Frage | — (Parent direkt) | — | — |
+| **S1** | 1 Datei, Lookup, Typo, Config | `explore` oder `shell` | `composer-2.5-fast` | true bei reiner Suche |
+| **S2** | Bugfix 1–3 Dateien, Build, kleiner Patch | `generalPurpose` | `composer-2.5-fast` | false |
+| **S3** | Audio, Threading, Feature, 4+ Dateien | `generalPurpose` | `claude-sonnet-5-thinking-high` | false |
+| **S4 Review** | Diff/Security/Bugbot, „nur prüfen“ | `explore` oder `bugbot`/`security-review` | `claude-sonnet-5-thinking-high` | **true** |
+| **S4 Architektur** | Große Design-Entscheidung, schwerer Refactor | `generalPurpose` | `claude-opus-4-8-thinking-high` | false (Plan zuerst) |
+
+**Explizite Reviews:** User sagt `/review-bugbot` → `bugbot` · User sagt Security → `security-review`.
+
+## Wann kein Subagent
+
+- S0 (Antwort in <30 Sekunden ohne Dateiänderung).
+- User sagt „nur erklären / keine Änderung“ → Parent oder `explore` readonly.
+- User meldet **API-Pool >85%** → nur noch `composer-2.5-fast`, keine Opus/Sonnet-Subagents.
+
+## Subagent-Prompt (Parent muss mitgeben)
+
+```
+Repo: E:\programme\Conan-Exiles-Teamspeak
+Aufwand: S2
+Scope: nur ts3_proximity_audio.c — Pan glätten
+Nicht anfassen: ui_main.c, plan.md
+Bauen: ja/nein (User-Wunsch)
+Referenz (falls Audio): E:\programme\Conan-Exiles-Mumblee\plugin.c ~3644
+Ergebnis: geänderte Dateien + kurze Zusammenfassung
+```
+
+## Zwei Pools (Pro+)
+
+| Pool | Subagent-Modelle | Strategie |
+|------|------------------|-----------|
+| **Auto/Composer** | `composer-2.5-fast` | S1, S2 — Default |
+| **API** | `claude-sonnet-5-thinking-high`, `claude-opus-4-8-thinking-high` | S3, S4 |
+
+S1/S2 **immer** `composer-2.5-fast`. S3/S4 **immer** Sonnet/Opus — Parent wählt per Tabelle, User muss Modell nicht manuell wechseln.
+
+## Scope-Disziplin (Parent + Subagent)
+
+1. Eine Aufgabe pro Chat.
+2. Minimaler Diff — nur angefragte Dateien.
+3. Kein breites Explore im Parent — Delegation an `explore`-Subagent.
+4. Kein Build unless User oder Subagent-Prompt sagt „bauen“.
+5. Keine Docs unless User fragt.
+6. `@datei` im User-Prompt → in Subagent-Prompt übernehmen.
+
+## Projekt (Conan TS)
+
+- Mumble-Referenz nur bei Filter/Realismus: `Conan-Exiles-Mumblee\plugin.c` (~3644).
+- Hub-Keys: `ts3_server_profile.c` / `hub_parser.c`.
+- Version nur in `ts3_entry.c` wenn User „Version“ sagt.
+
+## Stop-Signale
+
+- Subagent fertig → Parent fasst kurz zusammen, kein Essay.
+- Unklarer Scope → **eine** Rückfrage, dann delegieren.
+- Subagent scheitert → Parent eskaliert eine Stufe (S2→S3 Modell) **einmal**, dann User fragen.
