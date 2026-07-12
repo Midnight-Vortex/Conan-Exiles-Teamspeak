@@ -1,78 +1,362 @@
 ---
-description: Vibecoding Pro+ €60 — Aufwand bewerten, Subagent + Modell delegieren
+description: Vibecoding Pro+ €60 — Golden Rule, Rewrite, Research, Subagent routing (EN/FR)
 alwaysApply: true
 ---
 
-# Vibecoding — Pro+ (€60/Monat) + Subagent-Routing
+# Vibecoding — Pro+ (€60/month) + Subagent routing · EN
 
-**Plan:** Pro+ · ~**$70 API-Pool** + **Auto/Composer-Pool** (getrennt).
+**Plan:** Pro+ · ~**$70 API pool** + **Auto/Composer pool** (separate).
 
-Der **Parent-Agent ist Orchestrator**: Aufwand bewerten → passenden Subagent + Modell starten → Ergebnis kurz zusammenfassen. Parent codet **nicht selbst**, außer S0 (siehe unten).
+The **parent agent is the orchestrator**: assess effort → **research phase** → launch matching subagent + model → brief summary. Parent does **not** code, except S0.
 
-## Ablauf (jede Implementierungs-/Fix-Aufgabe)
+---
 
-1. **Erste Zeile:** `Aufwand: S0|S1|S2|S3|S4 — [1 Satz] · Delegation: [Subagent-Typ] · Modell: [slug]`
-2. **Subagent starten** (Task-Tool) mit vollem Task-Prompt inkl. Dateipfade, Scope, „was nicht anfassen“.
-3. **Parallel** nur bei unabhängigen Teilaufgaben (z. B. Review + Build).
-4. **Parent-Antwort:** max. 5–8 Zeilen — was der Subagent tat, geänderte Dateien, offene Punkte.
+## ⚠️ GOLDEN RULE (every step)
 
-## Subagent-Routing (Pflicht)
+> **Build only the one function in scope. Nothing extra.**
 
-| Stufe | Wann | `subagent_type` | `model` | `readonly` |
-|-------|------|-----------------|---------|------------|
-| **S0** | 1 grep, 1 Zeile, reine Ja/Nein-Frage | — (Parent direkt) | — | — |
-| **S1** | 1 Datei, Lookup, Typo, Config | `explore` oder `shell` | `composer-2.5-fast` | true bei reiner Suche |
-| **S2** | Bugfix 1–3 Dateien, Build, kleiner Patch | `generalPurpose` | `composer-2.5-fast` | false |
-| **S3** | Audio, Threading, Feature, 4+ Dateien | `generalPurpose` | `claude-sonnet-5-thinking-high` | false |
-| **S4 Review** | Diff/Security/Bugbot, „nur prüfen“ | `explore` oder `bugbot`/`security-review` | `claude-sonnet-5-thinking-high` | **true** |
-| **S4 Architektur** | Große Design-Entscheidung, schwerer Refactor | `generalPurpose` | `claude-opus-4-8-thinking-high` | false (Plan zuerst) |
+- One function = one work package: **describe → code → test** — then move on.
+- Then clarify: how does it talk to others (data, threads, locks)?
+- If the AI did something **not requested** → discard and redo.
+- No “while we’re at it”, no preemptive helpers, no extra features.
+- **Each step ends with:** Build OK → tested in TS client (if user says build/test) → then next step.
 
-**Explizite Reviews:** User sagt `/review-bugbot` → `bugbot` · User sagt Security → `security-review`.
+### Thread rule (foundation — check every function)
 
-## Wann kein Subagent
+1. **Only ONE thread** calls the TS API (callback thread) → everything else: **Queue + CEDRAIN**.
+2. **Audio thread (PCM):** never TS API, never locks — lock-free snapshots only.
+3. Logging: own lock, never block the API path.
+4. Deduplicate/throttle API calls (3D, unmute, audio mode).
+5. Fixed arrays: bounds checks. Every file: document thread contract at the top.
 
-- S0 (Antwort in <30 Sekunden ohne Dateiänderung).
-- User sagt „nur erklären / keine Änderung“ → Parent oder `explore` readonly.
-- User meldet **API-Pool >85%** → nur noch `composer-2.5-fast`, keine Opus/Sonnet-Subagents.
+---
 
-## Subagent-Prompt (Parent muss mitgeben)
+## Rewrite — never copy
+
+- **Old Mumble plugin** (`Conan-Exiles-Mumblee`) and **old TS plugin** are **reference only**.
+- **Forbidden:** blind copy, paste from `plugin.c`, 1:1 block ports.
+- **Required:** understand behavior → **rewrite** using TS API, naming, thread model, project conventions.
+- Read reference (snippets), derive semantics, **own implementation** in target file.
+- Audio/math: formulas may match — **code structure and call paths** must fit the rewrite.
+
+---
+
+## Research before execution (quality > speed)
+
+**No rush to code.** Research everything for verification first, then implement.
+
+### Mandatory research (parent or subagent before code)
+
+1. **Scope:** which file(s), which **one** function, what is explicitly off-limits?
+2. **Thread contract:** who calls? which locks/queues? Golden Rule compliant?
+3. **Existing code:** `grep` + **read** affected files (don’t guess).
+4. **Reference (if porting):** Mumble/old — relevant lines only — note behavior, don’t copy.
+5. **Interfaces:** headers, callers, callees, config keys — lock down before writing.
+6. **Risks:** race, OOB, TS API from wrong thread — 2–3 bullets.
+
+### Flow
+
+```
+Research (explore readonly) → brief protocol (5–8 bullets) → scope OK? → implementation
+```
+
+- **S3/S4:** research **always** as its own step; subagent prompt includes research output.
+- Prefer **one clarifying question** over wrong code.
+- Build/test only when research + scope are solid.
+
+---
+
+## Subagent routing
+
+| Tier | When | `subagent_type` | `model` | `readonly` |
+|------|------|-----------------|---------|------------|
+| **S0** | 1 grep, yes/no, no change | parent direct | — | — |
+| **S1** | lookup, read 1 file | `explore` | `composer-2.5-fast` | **true** (research) |
+| **S2** | bugfix 1–3 files | `generalPurpose` | `composer-2.5-fast` | false |
+| **S3** | audio, threading, feature | `generalPurpose` | `claude-sonnet-5-thinking-high` | false |
+| **S4 Review** | review only, bugbot | `explore` / `bugbot` | `claude-sonnet-5-thinking-high` | **true** |
+| **S4 Architecture** | large refactor | `generalPurpose` | `claude-opus-4-8-thinking-high` | false |
+
+**S2+ with code:** subagent starts only after research protocol is in the prompt.
+
+## Implementation flow
+
+1. **First line:** `Effort: Sx — … · Phase: Research|Implement · Delegation: … · Model: …`
+2. **Research subagent** (readonly) if scope/thread/reference unclear.
+3. **Implement subagent** with research protocol + Golden Rule + “rewrite, don’t copy”.
+4. Parent reply: max 5–8 lines.
+
+## Subagent prompt (required fields)
 
 ```
 Repo: E:\programme\Conan-Exiles-Teamspeak
-Aufwand: S2
-Scope: nur ts3_proximity_audio.c — Pan glätten
-Nicht anfassen: ui_main.c, plan.md
-Bauen: ja/nein (User-Wunsch)
-Referenz (falls Audio): E:\programme\Conan-Exiles-Mumblee\plugin.c ~3644
-Ergebnis: geänderte Dateien + kurze Zusammenfassung
+Golden Rule: only [one function], nothing extra, honor thread contract
+Rewrite: read reference only — rewrite, don’t copy
+Research: [bullets: files, thread, callers, risks]
+Scope: only [file] — [function]
+Off-limits: [files/features]
+Build: yes/no
+Output: changed files + what must be tested
 ```
 
-## Zwei Pools (Pro+)
+## Two pools (Pro+)
 
-| Pool | Subagent-Modelle | Strategie |
-|------|------------------|-----------|
-| **Auto/Composer** | `composer-2.5-fast` | S1, S2 — Default |
-| **API** | `claude-sonnet-5-thinking-high`, `claude-opus-4-8-thinking-high` | S3, S4 |
+| Pool | Models | Tiers |
+|------|--------|-------|
+| Auto/Composer | `composer-2.5-fast` | S1, S2 |
+| API | Sonnet, Opus | S3, S4 |
 
-S1/S2 **immer** `composer-2.5-fast`. S3/S4 **immer** Sonnet/Opus — Parent wählt per Tabelle, User muss Modell nicht manuell wechseln.
+API pool >85% → `composer-2.5-fast` only.
 
-## Scope-Disziplin (Parent + Subagent)
+## Project (Conan TS)
 
-1. Eine Aufgabe pro Chat.
-2. Minimaler Diff — nur angefragte Dateien.
-3. Kein breites Explore im Parent — Delegation an `explore`-Subagent.
-4. Kein Build unless User oder Subagent-Prompt sagt „bauen“.
-5. Keine Docs unless User fragt.
-6. `@datei` im User-Prompt → in Subagent-Prompt übernehmen.
+- Mumble reference: `Conan-Exiles-Mumblee\plugin.c` (~3644) — **read, don’t copy**.
+- Hub keys: `ts3_server_profile.c` / `hub_parser.c`.
+- Version bump only in `ts3_entry.c` when user says “version”.
 
-## Projekt (Conan TS)
+### Module map
 
-- Mumble-Referenz nur bei Filter/Realismus: `Conan-Exiles-Mumblee\plugin.c` (~3644).
-- Hub-Keys: `ts3_server_profile.c` / `hub_parser.c`.
-- Version nur in `ts3_entry.c` wenn User „Version“ sagt.
+| Area | Files |
+|------|-------|
+| TS entry / lifecycle | `src/ts/entry/ts3_entry.c`, `ts3_info.c` |
+| Queue + CEDRAIN | `src/ts/adapter/ts3_adapter.c` |
+| Proximity audio (PCM) | `src/ts/proximity/ts3_proximity_audio.c` |
+| CEPOS / position | `src/ts/proximity/ts3_cepos.c`, `src/core/mod_file/pos_file.c` |
+| 3D position TS API | `src/ts/proximity/ts3_3d.c` |
+| Settings UI (F10 + Extras) | `src/ui/dialogs/ui_main.c` → `showConfigInterface()` |
+| Dialog guard | `src/ui/plugin_ui_compat.c` → `config_dialog_try_open()` |
+| Hub profile | `src/ts/profile/ts3_server_profile.c`, `src/core/hub/hub_parser.c` |
 
-## Stop-Signale
+### Project pitfalls (check before coding)
 
-- Subagent fertig → Parent fasst kurz zusammen, kein Essay.
-- Unklarer Scope → **eine** Rückfrage, dann delegieren.
-- Subagent scheitert → Parent eskaliert eine Stufe (S2→S3 Modell) **einmal**, dann User fragen.
+- **Settings:** `ui_settings.c` is **not** in the build — always `showConfigInterface()` in `ui_main.c`.
+- **Config dialog:** F10 and Extras button → `config_dialog_try_open()` / `close()` — no second dialog.
+- **`hubAudioFilterIntensity`:** key exists, **not** wired to audio path — don’t assume it works.
+- **Open field vs reverb:** per `REWRITE_PLAN.md` lowpass **reverb zones only**; global Mumble filter = design decision — ask user.
+- **Client IDs:** `ts3_client_id_valid()` / `TS3_MAX_CLIENT_ID` — never without bounds.
+- **Phase 4 pattern:** compute outside lock, publish under `g_writerLock`; reconcile dirty flags.
+
+### Build & test
+
+```
+powershell -File E:\programme\Conan-Exiles-Teamspeak\build\build_msvc.ps1
+# Deploy (if user wants): build-deploy.ps1 or -DeployOnly
+# Target: %AppData%\TS3Client\plugins\conan_exiles.dll
+```
+
+- After build: **restart TS client** (DLL reload).
+- `bin/`, `obj/` — **never commit**.
+- Build only when user says build/deploy or fix must be verified.
+
+### Definition of done (per function)
+
+- [ ] Only requested function changed (Golden Rule)
+- [ ] Thread contract honored (no TS API except callback/CEDRAIN)
+- [ ] Bounds checks on fixed arrays
+- [ ] Build Release\|x64 OK (if built)
+- [ ] Manual TS test described (what to click/hear/check)
+- [ ] No scope creep in plan.md / REWRITE_PLAN unless user asks
+
+### Git
+
+- **Never commit** unless user explicitly asks.
+- No destructive git ops without user approval.
+
+### After audio/thread changes (research checklist)
+
+Grep for violations: TS API (`ts3Functions`, `getChannel`, `set3D`) **not** in `ts3_proximity_audio.c` PCM path.
+Locks in PCM callback? → bug.
+`recompute_all` / CEPOS: callback load + writer-lock scope.
+
+## Communication
+
+- Replies to user: **English or French**, clear and concise (match user language).
+- Code/comments/commits: **English** (project convention).
+
+## Stop signals
+
+- Unrequested change → revert / don’t commit.
+- Subagent without research at S2+ → stop, run `explore` first.
+- Design deviation from `REWRITE_PLAN.md` (e.g. global filter) → **ask user**.
+- Subagent fails → escalate once (S2→S3 model), then ask user.
+- Done → short reply, no essay.
+
+---
+
+# Vibecoding — Pro+ (60 €/mois) + routage subagents · FR
+
+**Forfait :** Pro+ · ~**70 $ pool API** + **pool Auto/Composer** (séparés).
+
+L’**agent parent est l’orchestrateur** : évaluer l’effort → **phase recherche** → lancer le subagent + modèle adaptés → résumé court. Le parent **ne code pas**, sauf S0.
+
+---
+
+## ⚠️ RÈGLE D’OR (chaque étape)
+
+> **Ne construire que la seule fonction prévue. Rien en plus.**
+
+- Une fonction = un lot : **décrire → coder → tester** — puis continuer.
+- Ensuite : comment communique-t-elle (données, threads, locks) ?
+- Si l’IA fait quelque chose **non demandé** → jeter et refaire.
+- Pas de « autant en profiter pour », pas d’helpers préventifs, pas de features en plus.
+- **Chaque étape se termine par :** build OK → testé dans le client TS (si l’utilisateur dit build/test) → étape suivante.
+
+### Règle threads (fondation — vérifier à chaque fonction)
+
+1. **Un seul thread** appelle l’API TS (callback) → le reste : **Queue + CEDRAIN**.
+2. **Thread audio (PCM) :** jamais d’API TS, jamais de locks — snapshots lock-free uniquement.
+3. Logging : lock dédié, ne jamais bloquer le chemin API.
+4. Dédupliquer/limiter les appels API (3D, unmute, mode audio).
+5. Tableaux fixes : bornes. Chaque fichier : contrat thread en tête de fichier.
+
+---
+
+## Rewrite — ne jamais copier
+
+- **Ancien plugin Mumble** (`Conan-Exiles-Mumblee`) et **ancien TS** = **référence uniquement**.
+- **Interdit :** copie aveugle, coller depuis `plugin.c`, port 1:1 de blocs.
+- **Obligatoire :** comprendre le comportement → **réécrire** (API TS, nommage, threads, conventions).
+- Lire la référence (extraits), en déduire la sémantique, **implémentation propre** dans le fichier cible.
+- Audio/math : formules identiques possibles — **structure et chemins d’appel** doivent coller au rewrite.
+
+---
+
+## Recherche avant exécution (qualité > vitesse)
+
+**Pas de précipitation.** Tout rechercher pour vérifier, puis implémenter.
+
+### Recherche obligatoire (parent ou subagent avant code)
+
+1. **Périmètre :** quels fichiers, quelle **une** fonction, quoi est interdit ?
+2. **Contrat thread :** qui appelle ? quels locks/files ? conforme à la règle d’or ?
+3. **Existant :** `grep` + **lire** les fichiers (ne pas deviner).
+4. **Référence (port) :** Mumble/ancien — lignes pertinentes — noter le comportement, ne pas copier.
+5. **Interfaces :** headers, appelants, appelés, clés config — figer avant d’écrire.
+6. **Risques :** race, OOB, API TS depuis mauvais thread — 2–3 puces.
+
+### Déroulement
+
+```
+Recherche (explore readonly) → protocole court (5–8 puces) → périmètre OK ? → implémentation
+```
+
+- **S3/S4 :** recherche **toujours** en étape séparée ; prompt subagent inclut le résultat.
+- Mieux **une question** qu’un mauvais code.
+- Build/test seulement si recherche + périmètre sont solides.
+
+---
+
+## Routage subagents
+
+| Niveau | Quand | `subagent_type` | `model` | `readonly` |
+|--------|-------|-----------------|---------|------------|
+| **S0** | 1 grep, oui/non, pas de changement | parent direct | — | — |
+| **S1** | lookup, lire 1 fichier | `explore` | `composer-2.5-fast` | **true** (recherche) |
+| **S2** | bugfix 1–3 fichiers | `generalPurpose` | `composer-2.5-fast` | false |
+| **S3** | audio, threads, feature | `generalPurpose` | `claude-sonnet-5-thinking-high` | false |
+| **S4 Review** | review seulement | `explore` / `bugbot` | `claude-sonnet-5-thinking-high` | **true** |
+| **S4 Architecture** | gros refactor | `generalPurpose` | `claude-opus-4-8-thinking-high` | false |
+
+**S2+ avec code :** subagent seulement après protocole de recherche dans le prompt.
+
+## Flux implémentation
+
+1. **Première ligne :** `Effort : Sx — … · Phase : Recherche|Impl · Délégation : … · Modèle : …`
+2. **Subagent recherche** (readonly) si périmètre/thread/référence flous.
+3. **Subagent impl** avec protocole + règle d’or + « rewrite, ne pas copier ».
+4. Réponse parent : max 5–8 lignes.
+
+## Prompt subagent (champs requis)
+
+```
+Repo: E:\programme\Conan-Exiles-Teamspeak
+Règle d'or: une seule [fonction], rien en plus, contrat thread respecté
+Rewrite: lire la référence — réécrire, ne pas copier
+Recherche: [puces: fichiers, thread, appelants, risques]
+Périmètre: seulement [fichier] — [fonction]
+Interdit: [fichiers/features]
+Build: oui/non
+Résultat: fichiers modifiés + tests à faire
+```
+
+## Deux pools (Pro+)
+
+| Pool | Modèles | Niveaux |
+|------|---------|---------|
+| Auto/Composer | `composer-2.5-fast` | S1, S2 |
+| API | Sonnet, Opus | S3, S4 |
+
+Pool API >85 % → `composer-2.5-fast` uniquement.
+
+## Projet (Conan TS)
+
+- Référence Mumble : `Conan-Exiles-Mumblee\plugin.c` (~3644) — **lire, ne pas copier**.
+- Clés hub : `ts3_server_profile.c` / `hub_parser.c`.
+- Version seulement dans `ts3_entry.c` si l’utilisateur dit « version ».
+
+### Carte des modules
+
+| Domaine | Fichiers |
+|---------|----------|
+| Entrée TS / lifecycle | `src/ts/entry/ts3_entry.c`, `ts3_info.c` |
+| Queue + CEDRAIN | `src/ts/adapter/ts3_adapter.c` |
+| Audio proximité (PCM) | `src/ts/proximity/ts3_proximity_audio.c` |
+| CEPOS / position | `src/ts/proximity/ts3_cepos.c`, `src/core/mod_file/pos_file.c` |
+| Position 3D API TS | `src/ts/proximity/ts3_3d.c` |
+| UI paramètres (F10 + Extras) | `src/ui/dialogs/ui_main.c` → `showConfigInterface()` |
+| Garde dialogue | `src/ui/plugin_ui_compat.c` → `config_dialog_try_open()` |
+| Profil hub | `src/ts/profile/ts3_server_profile.c`, `src/core/hub/hub_parser.c` |
+
+### Pièges projet (vérifier avant code)
+
+- **Paramètres :** `ui_settings.c` **absent** du build — toujours `showConfigInterface()` dans `ui_main.c`.
+- **Dialogue config :** F10 et bouton Extras → `config_dialog_try_open()` / `close()` — pas de second dialogue.
+- **`hubAudioFilterIntensity` :** clé existante, **non** câblée à l’audio — ne pas supposer qu’elle agit.
+- **Champ ouvert vs reverb :** selon `REWRITE_PLAN.md` lowpass **zones reverb seulement** ; filtre Mumble global = décision design — demander à l’utilisateur.
+- **IDs client :** `ts3_client_id_valid()` / `TS3_MAX_CLIENT_ID` — jamais sans bornes.
+- **Pattern phase 4 :** calcul hors lock, publish sous `g_writerLock` ; réconcilier dirty flags.
+
+### Build & test
+
+```
+powershell -File E:\programme\Conan-Exiles-Teamspeak\build\build_msvc.ps1
+# Déploiement (si demandé): build-deploy.ps1 ou -DeployOnly
+# Cible: %AppData%\TS3Client\plugins\conan_exiles.dll
+```
+
+- Après build : **redémarrer le client TS**.
+- `bin/`, `obj/` — **ne jamais committer**.
+- Build seulement si l’utilisateur dit build/deploy ou si le fix doit être vérifié.
+
+### Definition of done (par fonction)
+
+- [ ] Seule la fonction demandée modifiée (règle d’or)
+- [ ] Contrat thread respecté (pas d’API TS sauf callback/CEDRAIN)
+- [ ] Bornes sur tableaux fixes
+- [ ] Build Release\|x64 OK (si build)
+- [ ] Test manuel TS décrit (clics/écoute/vérifications)
+- [ ] Pas de scope creep dans plan.md / REWRITE_PLAN sauf demande utilisateur
+
+### Git
+
+- **Jamais committer** sans demande explicite.
+- Pas d’ops git destructives sans accord utilisateur.
+
+### Après changements audio/thread (checklist recherche)
+
+Grep violations : API TS (`ts3Functions`, `getChannel`, `set3D`) **pas** dans le chemin PCM de `ts3_proximity_audio.c`.
+Locks dans callback PCM ? → bug.
+`recompute_all` / CEPOS : charge callback + portée writer-lock.
+
+## Communication
+
+- Réponses utilisateur : **anglais ou français**, clair et concis (langue de l’utilisateur).
+- Code/commentaires/commits : **anglais** (convention projet).
+
+## Signaux d’arrêt
+
+- Changement non demandé → revert / ne pas committer.
+- Subagent sans recherche en S2+ → stop, lancer `explore` d’abord.
+- Écart de design vs `REWRITE_PLAN.md` (ex. filtre global) → **demander à l’utilisateur**.
+- Échec subagent → escalade une fois (S2→S3 modèle), puis demander.
+- Terminé → réponse courte, pas d’essai.
