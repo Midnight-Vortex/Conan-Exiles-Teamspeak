@@ -277,6 +277,9 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
         || packet->voiceDistance < 0.0f || packet->voiceDistance > 1000.0f) {
         return 1;
     }
+    if (fabsf(packet->x) < 0.01f && fabsf(packet->y) < 0.01f && fabsf(packet->z) < 0.01f) {
+        return 1;
+    }
 
     unsigned short evicted = 0;
     if (!player_table_put(invokerClientID, safeName,

@@ -16,12 +16,13 @@
 
 #define TS3_RECOMPUTE_ALL_MIN_MS 100   /* 10 Hz cap when local pos unchanged */
 #define TS3_RECOMPUTE_POS_EPS_CM 5.0f  /* centimeters — movement triggers refresh */
-#define TS3_UNMUTE_REARM_MS    2000
-#define TS3_UNMUTE_BATCH_MAX   64
+#define TS3_UNMUTE_REARM_MS    500
+#define TS3_UNMUTE_BATCH_MAX   128
 #define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue */
 #define TS3_AUDIO_CULL_MARGIN  1.25f /* hear-range multiplier for recompute culling */
 #define TS3_AUDIO_CULL_PAD_M   2.0f  /* meters beyond nominal range */
 #define TS3_AUDIBLE_GAIN       0.001f
+#define TS3_SILENT_GAIN        0.00001f
 #define TS3_CEPOS_PI           3.14159265f
 #define TS3_LPF_BYPASS_HZ      19000.0f
 #define TS3_SAMPLE_RATE        48000.0f
@@ -48,6 +49,8 @@ static INIT_ONCE g_writerLockOnce = INIT_ONCE_STATIC_INIT;
 
 /* Render gain per client — audio thread private (ramping state). */
 static float g_renderGain[TS3_MAX_CLIENT_ID];
+static float g_renderPanL[TS3_MAX_CLIENT_ID];
+static float g_renderPanR[TS3_MAX_CLIENT_ID];
 
 /* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
 static volatile long g_pendingUnmute[TS3_MAX_CLIENT_ID];
@@ -308,23 +311,6 @@ static float audio_zone_reference_distance(const HubSettings* hub, int localZone
     return ref;
 }
 
-static void audio_apply_reverb_rear_duck(float localDirX, float localDirZ,
-    float toRemoteX, float toRemoteZ, float* panL, float* panR) {
-    float len = sqrtf(toRemoteX * toRemoteX + toRemoteZ * toRemoteZ);
-    if (len <= 1e-6f || !panL || !panR) {
-        return;
-    }
-    toRemoteX /= len;
-    toRemoteZ /= len;
-    const float frontBack = -(localDirX * toRemoteX + localDirZ * toRemoteZ);
-    if (frontBack < -0.2f) {
-        const float backFactor = fminf(fabsf(frontBack + 0.2f) / 0.8f, 1.0f);
-        const float att = 0.55f + 0.45f * backFactor;
-        *panL *= att;
-        *panR *= att;
-    }
-}
-
 static int audio_local_position_changed(const PosSample* local, int localValid) {
     if (!localValid) {
         return 0;
@@ -441,7 +427,11 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
 
     const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
     const float dirX = -cosf(yawRad);
+    const float dirY = sinf(-local->yawY * TS3_CEPOS_PI / 180.0f);
     const float dirZ = -sinf(yawRad);
+    const float toRemoteX = remote.x - lx;
+    const float toRemoteY = remote.y - ly;
+    const float toRemoteZ = remote.z - lz;
 
     const int realisticOn = server_profile_get_realistic_audio();
     const float filterIntensity = server_profile_get_filter_intensity() / 100.0f;
@@ -451,8 +441,8 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         const float refDist = audio_zone_reference_distance(hub, localZone);
         const float rawCutoff = prox_lowpass_cutoff_hz(distance);
         const float rawDrr = prox_direct_reverb_ratio(distance, refDist);
-        const float frontBack = prox_front_back_dot(dirX, dirZ,
-            remote.x - lx, remote.z - lz);
+        const float frontBack = prox_front_back_dot3d(dirX, dirY, dirZ,
+            toRemoteX, toRemoteY, toRemoteZ);
         ProxRearPsycho rear;
         prox_rear_psychoacoustics(frontBack, &rear);
 
@@ -473,10 +463,10 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     }
 
     float panL, panR;
-    prox_stereo_pan(dirX, dirZ, remote.x - lx, remote.z - lz, &panL, &panR);
-    if (reverbZone && !realisticActive) {
-        audio_apply_reverb_rear_duck(dirX, dirZ, remote.x - lx, remote.z - lz, &panL, &panR);
-    }
+    /* Mumble "TRUE stereo" (~4090) — light spatial pan; always in proximity mode.
+       Heavy filters (LPF/diffuse) stay behind RealisticAudio only. */
+    prox_binaural_stereo_gains(dirX, dirY, dirZ,
+        toRemoteX, toRemoteY, toRemoteZ, &panL, &panR);
 
     out->gain = gain;
     out->panL = panL;
@@ -790,11 +780,12 @@ static void cave_process_sample(CaveState* rev, float inL, float inR,
 
 static void audio_apply_cave(short* samples, int sampleCount, int channels,
     CaveState* rev, LONG expectedOwner) {
+    /* Owner checked once — mid-buffer abort left dry/wet mix and caused clicks. */
+    if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
+        return;
+    }
     if (channels >= 2) {
         for (int s = 0; s < sampleCount; s++) {
-            if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
-                return;
-            }
             const int li = s * channels;
             const int ri = li + 1;
             const float inL = (float)samples[li];
@@ -807,9 +798,6 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
     }
     else {
         for (int s = 0; s < sampleCount; s++) {
-            if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
-                return;
-            }
             const float in = (float)samples[s];
             float wetL, wetR;
             cave_process_sample(rev, in, in, &wetL, &wetR);
@@ -860,10 +848,12 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         return;
     }
 
-    /* Fully silent: skip FX and gain math entirely. */
-    if (target <= TS3_AUDIBLE_GAIN && g_renderGain[clientID] <= TS3_AUDIBLE_GAIN) {
+    /* Fully silent: skip FX; ramp handles the tail (no hard cut at audible threshold). */
+    if (target <= TS3_SILENT_GAIN && g_renderGain[clientID] <= TS3_SILENT_GAIN) {
         memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
         g_renderGain[clientID] = 0.0f;
+        g_renderPanL[clientID] = 0.7071f;
+        g_renderPanR[clientID] = 0.7071f;
         g_lpf[clientID].initialized = 0;
         return;
     }
@@ -894,9 +884,13 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         audio_signal_unmute_flag_only(clientID);
     }
 
-    /* 6.5 click-free ramp: spread the gain change across this buffer. */
+    /* 6.5 click-free ramp: spread gain + pan across this buffer. */
     float current = g_renderGain[clientID];
     const float step = (target - current) / (float)sampleCount;
+    float panLCur = g_renderPanL[clientID];
+    float panRCur = g_renderPanR[clientID];
+    const float panStepL = (panL - panLCur) / (float)sampleCount;
+    const float panStepR = (panR - panRCur) / (float)sampleCount;
 
     if (channels == 1) {
         for (int i = 0; i < sampleCount; i++) {
@@ -910,9 +904,11 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
     else {
         for (int i = 0; i < sampleCount; i++) {
             current += step;
+            panLCur += panStepL;
+            panRCur += panStepR;
             short* frame = samples + (size_t)i * channels;
-            float vl = frame[0] * current * panL;
-            float vr = frame[1] * current * panR;
+            float vl = frame[0] * current * panLCur;
+            float vr = frame[1] * current * panRCur;
             if (vl > 32767.0f) vl = 32767.0f;
             if (vl < -32768.0f) vl = -32768.0f;
             if (vr > 32767.0f) vr = 32767.0f;
@@ -929,6 +925,8 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         }
     }
     g_renderGain[clientID] = target;
+    g_renderPanL[clientID] = panL;
+    g_renderPanR[clientID] = panR;
 }
 
 /* ---- 6.3 unmute signal ------------------------------------------------------ */
@@ -1092,6 +1090,8 @@ void ts3_audio_invalidate_client(anyID clientID) {
     g_clientUnlocked[clientID] = 0;
     g_lastUnmuteMs[clientID] = 0;
     g_renderGain[clientID] = 1.0f;
+    g_renderPanL[clientID] = 0.7071f;
+    g_renderPanR[clientID] = 0.7071f;
     audio_clear_client_dirty(clientID);
     ts3d_invalidate_client(clientID);
 }
@@ -1108,9 +1108,40 @@ int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
     return soundproof ? 1 : 0;
 }
 
+static int audio_client_has_reset_state(anyID clientID) {
+    if (!ts3_client_id_valid(clientID)) {
+        return 0;
+    }
+    if (g_snap[clientID].valid) {
+        return 1;
+    }
+    cave_slots_ensure_init();
+    if (g_reverbSlotByClient[clientID] >= 0) {
+        return 1;
+    }
+    if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 0, 0) != 0) {
+        return 1;
+    }
+    if (InterlockedCompareExchange(&g_recomputeDirty[clientID], 0, 0) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 void ts3_audio_reset(void) {
+    cave_slots_ensure_init();
     for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
-        ts3_audio_invalidate_client((anyID)i);
+        if (audio_client_has_reset_state((anyID)i)) {
+            ts3_audio_invalidate_client((anyID)i);
+        }
+    }
+    /* Cave slots can outlive g_reverbSlotByClient if a race cleared the map. */
+    for (int s = 0; s < CAVE_SLOTS; s++) {
+        const LONG owner = InterlockedCompareExchange(&g_cave[s].owner, 0, 0);
+        if (owner > 0 && ts3_client_id_valid((anyID)owner)
+            && g_reverbSlotByClient[owner] < 0) {
+            ts3_audio_invalidate_client((anyID)owner);
+        }
     }
     /* Reconcile any flags invalidate missed (counter/flag drift). */
     for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {

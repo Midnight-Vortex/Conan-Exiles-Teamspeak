@@ -38,6 +38,20 @@ float prox_direct_reverb_ratio(float distanceMeters, float referenceDistanceMete
 float prox_front_back_dot(float localDirX, float localDirZ,
     float toRemoteX, float toRemoteZ);
 
+/* 3D front/back dot using full look vector (+1 ahead, -1 behind). Pure. */
+float prox_front_back_dot3d(float localDirX, float localDirY, float localDirZ,
+    float toRemoteX, float toRemoteY, float toRemoteZ);
+
+/* Listener look direction from Conan yaw / yawY (degrees). Pure. */
+void prox_listener_forward(float yawDeg, float yawYDeg,
+    float* outDirX, float* outDirY, float* outDirZ);
+
+/* Mumble "TRUE stereo" — asymmetric L/R gains with rear attenuation (not HRIR).
+   toRemote* = remote minus listener offset in meters. Outputs 0.15..1.0. */
+void prox_binaural_stereo_gains(float localDirX, float localDirY, float localDirZ,
+    float toRemoteX, float toRemoteY, float toRemoteZ,
+    float* outLeft, float* outRight);
+
 /* Phase 6: rear attenuation multipliers from frontBack dot (Mumble filter path). */
 typedef struct ProxRearPsycho {
     float directionVolume; /* 1.0 .. 0.88 */

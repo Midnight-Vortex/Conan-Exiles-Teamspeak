@@ -119,6 +119,20 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
     return 1;
 }
 
+/* Reject mod loading placeholder (0,0,0 cm) — breaks distance for all speakers. */
+static int pos_sample_is_plausible(const PosSample* sample) {
+    if (!sample) {
+        return 0;
+    }
+    if (!isfinite(sample->x) || !isfinite(sample->y) || !isfinite(sample->z)) {
+        return 0;
+    }
+    if (fabsf(sample->x) < 1.0f && fabsf(sample->y) < 1.0f && fabsf(sample->z) < 1.0f) {
+        return 0;
+    }
+    return 1;
+}
+
 /* ---- 2.3 staleness ------------------------------------------------------ */
 
 static int pos_get_file_write_quad(const wchar_t* filePath, ULONGLONG* outQuad) {
@@ -266,7 +280,15 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
 
         PosSample sample;
         memset(&sample, 0, sizeof(sample));
-        const int readOk = fileActive && pos_file_read_once(filePath, &sample);
+        int readOk = fileActive && pos_file_read_once(filePath, &sample);
+        if (readOk && !pos_sample_is_plausible(&sample)) {
+            if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                lastValidLog = now;
+                log_debug("POS: read rejected (invalid coords seq=%d pos=%.1f/%.1f/%.1f)",
+                    sample.seq, sample.x, sample.y, sample.z);
+            }
+            readOk = 0;
+        }
         const int currentlyValid = InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
         int acceptRead = readOk;
         if (readOk && !currentlyValid) {

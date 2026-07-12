@@ -182,6 +182,87 @@ float prox_front_back_dot(float localDirX, float localDirZ,
     return localDirX * (toRemoteX / len) + localDirZ * (toRemoteZ / len);
 }
 
+float prox_front_back_dot3d(float localDirX, float localDirY, float localDirZ,
+    float toRemoteX, float toRemoteY, float toRemoteZ) {
+    const float len = sqrtf(toRemoteX * toRemoteX + toRemoteY * toRemoteY + toRemoteZ * toRemoteZ);
+    if (len <= 1e-6f) {
+        return 1.0f;
+    }
+    return (localDirX * (toRemoteX / len)
+        + localDirY * (toRemoteY / len)
+        + localDirZ * (toRemoteZ / len));
+}
+
+void prox_listener_forward(float yawDeg, float yawYDeg,
+    float* outDirX, float* outDirY, float* outDirZ) {
+    if (!outDirX || !outDirY || !outDirZ) {
+        return;
+    }
+    const float yawRad = yawDeg * 3.14159265f / 180.0f;
+    *outDirX = -cosf(yawRad);
+    *outDirY = sinf(-yawYDeg * 3.14159265f / 180.0f);
+    *outDirZ = -sinf(yawRad);
+}
+
+void prox_binaural_stereo_gains(float localDirX, float localDirY, float localDirZ,
+    float toRemoteX, float toRemoteY, float toRemoteZ,
+    float* outLeft, float* outRight) {
+    if (!outLeft || !outRight) {
+        return;
+    }
+    *outLeft = 1.0f;
+    *outRight = 1.0f;
+
+    const float toLen = sqrtf(toRemoteX * toRemoteX + toRemoteY * toRemoteY + toRemoteZ * toRemoteZ);
+    if (toLen <= 1e-6f) {
+        return;
+    }
+    toRemoteX /= toLen;
+    toRemoteY /= toLen;
+    toRemoteZ /= toLen;
+
+    /* Same convention as Mumble processAdaptiveVolumeData (~4090). */
+    float frontBack = prox_front_back_dot3d(localDirX, localDirY, localDirZ,
+        toRemoteX, toRemoteY, toRemoteZ);
+    const float leftRight = localDirX * toRemoteZ - localDirZ * toRemoteX;
+    frontBack = -frontBack;
+
+    const float minPanThreshold = 0.05f;
+    const float maxPanIntensity = 0.95f;
+    const float panCurve = 1.5f;
+
+    if (fabsf(leftRight) > minPanThreshold) {
+        float panAmount = fabsf(leftRight);
+        if (panAmount > 1.0f) {
+            panAmount = 1.0f;
+        }
+        const float smoothPan = powf(panAmount, 1.0f / panCurve);
+        const float attenuation = smoothPan * maxPanIntensity;
+
+        if (leftRight > minPanThreshold) {
+            *outLeft = 1.0f;
+            *outRight = 1.0f - attenuation;
+            if (*outRight < 0.15f) {
+                *outRight = 0.15f;
+            }
+        }
+        else if (leftRight < -minPanThreshold) {
+            *outRight = 1.0f;
+            *outLeft = 1.0f - attenuation;
+            if (*outLeft < 0.15f) {
+                *outLeft = 0.15f;
+            }
+        }
+    }
+
+    if (frontBack < -0.2f) {
+        const float backFactor = fminf(fabsf(frontBack + 0.2f) / 0.8f, 1.0f);
+        const float backAtt = 0.55f + 0.45f * backFactor;
+        *outLeft *= backAtt;
+        *outRight *= backAtt;
+    }
+}
+
 void prox_rear_psychoacoustics(float frontBack, ProxRearPsycho* out) {
     if (!out) {
         return;

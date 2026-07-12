@@ -110,7 +110,7 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 | # | Maßnahme | Anmerkung | Review | Priorität |
 |---|----------|-----------|--------|-----------|
 | **5.1** | 3D apply: max. N Updates pro Tick, Rest nächster Tick | Deckel ~500 API-Calls/s | **Teilweise abgedeckt:** `ts3d_apply` 20 Hz + Hear-Range-Cull + Pos-Dedup (0,25 m). Worst-Case bleibt: 200 in Range, alle bewegen sich → bis ~4000 `set3DClient`/s theoretisch. Kein per-Tick-Cap. | **Mittel** — nur bei echtem 200-in-Range-Test |
-| **5.2** | `ts3_audio_reset`: nur belegte Client-IDs scannen (Bitmap/Ring) | Schnellerer Tab-Wechsel | **Noch offen:** Loop 1..4095, jeder `invalidate` nimmt `g_writerLock`. Disconnect/Tab-Wechsel = spürbarer Ruckler. | **Hoch** — kleiner Diff, spürbarer Gewinn |
+| **5.2** | `ts3_audio_reset`: nur belegte Client-IDs scannen (Bitmap/Ring) | Schnellerer Tab-Wechsel | **Erledigt:** Scan nur `g_snap.valid`, Reverb-Slot, Pending-Unmute, Dirty-Flags + verwaiste Cave-Owner (~O(aktive) statt 4096× Lock). | **Hoch** — kleiner Diff, spürbarer Gewinn |
 | **5.3** | Player-Table Hash statt O(512) linear | Nur wenn Table weiter wächst | **Nicht nötig:** 512 Slots, Lookup ~512 Iterationen — für Callback ok. | **Niedrig / zurückstellen** |
 | **5.4** | Lasttest-Automatisierung: simulierter CEPOS-Flood + Pos-Poll | CI/manuell | **Noch offen:** `PROX-TEST` prüft Kurve/Timing, nicht 200-Client-Last. | **Mittel** — vor 5.1 sinnvoll (Baseline messen) |
 
@@ -120,7 +120,7 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 |-------|-------|-------|
 | 3D Rate + Cull | `ts3_3d.c` | `TS3D_APPLY_MIN_MS=50` (20 Hz), `ts3d_in_hear_range`, Dedup invalidiert bei Disconnect/Eviction (4.4) |
 | 3D kein Leave-Range-Cleanup | `ts3_3d.c` | Out-of-range: kein `set3DClient`, Dedup-State bleibt — Position in TS kann veralten bis Re-Entry |
-| Audio-Reset | `ts3_proximity_audio.c` | `ts3_audio_reset()` → O(4096) × `invalidate` (Writer-Lock je Client) |
+| Audio-Reset | `ts3_proximity_audio.c` | `ts3_audio_reset()` → nur Clients mit Snap/Reverb/Unmute/Dirty (~O(aktive)) |
 | Player-Table | `player_table.c` | Linear O(512), LRU-Eviction mit Metrik |
 
 ### Empfohlene Reihenfolge
@@ -173,9 +173,9 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 
 # Phase 6–9 — Realistic Audio (Mumble-Parität + Server-Toggle)
 
-**Stand:** 2026-07-12 · **Plugin:** 7.0.3  
-**Referenz:** `E:\programme\Conan-Exiles-Mumblee\plugin.c` (~3219–3659) — **lesen, nicht kopieren**  
-**Kontext:** Spieler-Feedback („zu muffled“) vs. Mumble-Autor („zu klar“) — **dieselbe Design-Entscheidung von zwei Seiten**. Phase 4 hat Filter **nicht** entfernt; der Rewrite begrenzt Lowpass/DRR/Richtung auf Reverb-Zonen (REWRITE_PLAN Phase 10.3).
+**Stand:** 2026-07-12 · **Plugin:** 7.0.3+ (Realistic + Binaural Stereo ✅)  
+**Referenz:** `E:\programme\Conan-Exiles-Mumblee\plugin.c` (~3219–3659, ~4077–4137) — **lesen, nicht kopieren**  
+**Kontext:** Spieler-Feedback („zu muffled“) vs. Mumble-Autor („zu klar“) — **dieselbe Design-Entscheidung von zwei Seiten**. Phase 4 hat Filter **nicht** entfernt; der Rewrite begrenzte Lowpass/DRR/Richtung auf Reverb-Zonen (REWRITE_PLAN Phase 10.3). **Phase 6–8 + Binaural (8.6) umgesetzt 2026-07-12.**
 
 ---
 
@@ -190,20 +190,17 @@ Das Plugin stabil und performant für Server mit **200+ verbundenen Spielern** b
 
 ## Ist-Zustand vs. Mumble (Gap-Analyse)
 
-| Feature | Mumble (`plugin.c`) | TS 7.0.3 | Datei (TS) |
-|---------|---------------------|----------|------------|
-| Lowpass nach Distanz | ✅ global | ❌ nur Reverb-Zone | `proximity_math.c`, `ts3_proximity_audio.c` |
-| Double-Pass-Lowpass | ✅ (2×, α×0.7) | ❌ 1-Pass | `ts3_proximity_audio.c` `audio_apply_lowpass` |
-| DRR + Diffuse | ✅ `applyDiffuseSimulation` | ❌ fehlt | — |
-| Richtung hinten | ✅ −12 % Vol, Cut×0.75, DRR×0.85 | ⚠️ nur Reverb (`rear_duck`) | `ts3_proximity_audio.c` |
-| Lautstärke + Pan | ✅ | ✅ | `proximity_math.c` |
-| Cave-Reverb in Zonen | ✅ | ✅ | `ts3_proximity_audio.c` |
-| Hub-Toggle | ❌ (`hubAudioFilterIntensity` dekl., nie verdrahtet) | ❌ | `plugin.h`, `hub_parser.c` |
-| Humidity / echtes HRTF | ❌ in beiden Repos | ❌ | — |
+| Feature | Mumble (`plugin.c`) | TS (aktuell) | Datei (TS) |
+|---------|---------------------|--------------|------------|
+| Lowpass nach Distanz | ✅ global | ✅ bei `RealisticAudio=True` | `proximity_math.c`, `ts3_proximity_audio.c` |
+| Double-Pass-Lowpass | ✅ (2×, α×0.7) | ✅ | `ts3_proximity_audio.c` |
+| DRR + Diffuse | ✅ | ✅ `prox_apply_diffuse_samples` | `proximity_math.c` |
+| Richtung hinten (Filter) | ✅ Cut×0.75, DRR×0.85, −12 % | ✅ `prox_rear_psychoacoustics` | `proximity_math.c` |
+| TRUE stereo / „leichtes HRTF“ | ✅ ~4090–4128 | ✅ **immer** im Proximity-Modus (`prox_binaural_stereo_gains`) | `proximity_math.c` |
+| Hub-Toggle (schwere Filter) | ❌ | ✅ `RealisticAudio` / `FilterIntensity` | `hub_parser.c` |
+| Humidity / echtes HRTF (HRIR) | ❌ in beiden Repos | ❌ nicht geplant | — |
 
-**Open World heute:** `TS3_LPF_BYPASS_HZ = 19000` → praktisch kein Filter (`audio_compute_client` setzt Cutoff nur bei `reverbZone`).
-
-**Mathe bereits portiert (rein):** `prox_lowpass_cutoff_hz`, `prox_direct_reverb_ratio` in `proximity_math.c` — Formeln entsprechen Mumble.
+**Realistic OFF:** klarer Klang (Bypass-Filter), aber **räumliches L/R wie Mumble**. **Realistic ON:** zusätzlich Lowpass + Diffuse + Richtungs-Filter.
 
 ---
 
@@ -287,6 +284,7 @@ Lowpass (ggf. double-pass) → Diffuse/DRR → Gain × directionVolume → Pan
 | **8.3** | `snap_publish` / `snap_read` — neue Felder | `ts3_proximity_audio.c` | ✅ |
 | **8.4** | `audio_apply_lowpass` — optional Double-Pass (α×0.7 zweiter Pass) | `ts3_proximity_audio.c` | ✅ |
 | **8.5** | `ts3_audio_process_playback` — Reihenfolge: LPF → Diffuse → Gain/Pan; Intensity skaliert | `ts3_proximity_audio.c` | ✅ |
+| **8.6** | Mumble TRUE stereo — `prox_binaural_stereo_gains` (immer Proximity, nicht nur Realistic) | `proximity_math.c`, `ts3_proximity_audio.c` | ✅ |
 
 **8.2 Details:**
 
@@ -315,10 +313,11 @@ Unabhängig von Realismus — bekannte Symptome (Knacks / zu leise nach Stunden)
 
 | # | Maßnahme | Datei | Status |
 |---|----------|-------|--------|
-| **9.1** | Pan-Glättung (keine Sprünge Sample-zu-Sample) | `ts3_proximity_audio.c` | ⬜ |
-| **9.2** | Sanfte Mute-Grenze statt hartem `memset(0)` bei `TS3_AUDIBLE_GAIN` | `ts3_proximity_audio.c` | ⬜ |
-| **9.3** | Cave-Reverb: Buffer nicht mitten abbrechen | `ts3_proximity_audio.c` | ⬜ |
-| **9.4** | Unmute robuster (Rearm ~500 ms, Batch 128) | `ts3_proximity_audio.c` | ⬜ |
+| **9.1** | Pan-Glättung (keine Sprünge Sample-zu-Sample) | `ts3_proximity_audio.c` | ✅ |
+| **9.2** | Sanfte Mute-Grenze statt hartem `memset(0)` bei `TS3_AUDIBLE_GAIN` | `ts3_proximity_audio.c` | ✅ |
+| **9.3** | Cave-Reverb: Buffer nicht mitten abbrechen | `ts3_proximity_audio.c` | ✅ |
+| **9.4** | Unmute robuster (Rearm ~500 ms, Batch 128) | `ts3_proximity_audio.c` | ✅ |
+| **9.5** | Pos/CEPOS `0,0,0` ablehnen (Lade-Placeholder) | `pos_file.c`, `ts3_cepos.c` | ✅ |
 
 **Priorität:** 9.1 + 9.4 zuerst wenn Knacks/Leise gemeldet wird.
 
@@ -344,12 +343,12 @@ Output: changed files + manual TS test steps
 |---------|--------|----------|-------|
 | 6.1–6.4 Hub | S2 | `generalPurpose` | `composer-2.5-fast` |
 | 7.1–7.2 Mathe | S2 | `generalPurpose` | `composer-2.5-fast` |
-| 8.1–8.5 PCM | S3 | `generalPurpose` | `claude-sonnet-5-thinking-high` |
+| 8.1–8.6 PCM/Binaural | S3 | `generalPurpose` | `claude-sonnet-5-thinking-high` |
 | Review nach 8.5 | S4 | `bugbot` | readonly |
 
-**Reihenfolge:** 6 → 7 → 8 (strikt nacheinander); 9 parallel oder danach.  
+**Reihenfolge:** 6 → 7 → 8 ✅ · 9 parallel · Phase 5 optional  
 **Build/Deploy:** nur auf Anweisung (`build_msvc.ps1` → TS-Client neu starten).  
-**Version:** Bump in `ts3_entry.c` nur wenn User „version“ sagt (Vorschlag: **7.1.0** Feature, oder **7.0.4** Patch).
+**Version:** Bump in `ts3_entry.c` nur wenn User „version“ sagt (Vorschlag: **7.1.0** Realistic/Binaural).
 
 ---
 
@@ -368,7 +367,7 @@ Output: changed files + manual TS test steps
 
 | Punkt | Grund |
 |-------|-------|
-| Humidity / echtes HRTF | Nie in Mumble implementiert |
+| Humidity / echtes HRTF (HRIR-Faltung) | Nie in Mumble; bewusst nicht geplant |
 | Exakt identischer Klang ohne Autor-Review | TS vs. Mumble API, Sample-Rate, Client-Mixer |
 | Blind-Copy aus `plugin.c` | Vibecoding Rewrite-Regel |
 | `ui_settings.c` reaktivieren | F10/Extras = `ui_main.c` |
@@ -388,16 +387,12 @@ Output: changed files + manual TS test steps
 
 ---
 
-## Prioritäten-Reihenfolge (Realistic Audio)
+## Prioritäten-Reihenfolge (gesamt)
 
-1. **6.1** — Hub-Key parsen *(klein, testbar, kein Audio-Risiko)*
-2. **6.3** — Getter ins Profil
-3. **7.1** — Diffuse rewrite
-4. **7.2** — Rear-Psychoakustik rewrite
-5. **8.2** — `audio_compute_client` Realistic-Pfad
-6. **8.5** — PCM-Reihenfolge + Intensity
-7. **8.4** — Double-Pass-Lowpass
-8. **9.x** — Qualität nach Bedarf
-9. **Review + Version-Bump** — auf Anfrage
+**Erledigt:** Phase 6–8 + Binaural 8.6 + Phase 9 (9.1–9.5) + **5.2** ✅
 
-**Nächster Schritt:** User sagt **„start 6.1“** → Subagent Phase 6.1 mit Research-Protokoll.
+**Als Nächstes (wahlweise):**
+
+1. **5.4** — Lasttest / CEPOS-Flood (Baseline vor 5.1)
+2. **5.1** — 3D apply per-Tick-Cap (nur wenn Lasttest es zeigt)
+3. **Version 7.1.0** — Realistic/Binaural/Phase 9 (auf Anfrage)
