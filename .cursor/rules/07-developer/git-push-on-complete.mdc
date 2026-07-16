@@ -1,0 +1,54 @@
+---
+description: Am Ende jeder Implementierung committen und auf Git pushen.
+alwaysApply: true
+---
+
+# Git Push on Complete
+
+## Objective
+
+Jede abgeschlossene Implementierungsaufgabe mit Dateiänderungen endet mit Commit und Push — nicht nur mit Code im Workspace.
+
+## Wann gilt das
+
+- Nach Bugfixes, Features, Refactors und Security-Fixes
+- Wenn mindestens ein betroffenes Repo uncommittete Änderungen hat
+- **Nicht** bei reinen Fragen, Reviews ohne Code-Änderung oder wenn der User explizit sagt: kein Push
+
+## Workflow (Pflicht am Ende)
+
+1. **Repo(s) finden** — dieses Projekt nutzt oft separate Git-Repos pro `Silly_*`-Ordner; jedes betroffene Repo einzeln behandeln
+2. **Status prüfen** — `git status`, `git diff`; keine Secrets committen (`.env`, Keys, Tokens)
+3. **Committen** — nur relevante Dateien; Message kurz, warum-fokussiert, Stil des Repos übernehmen
+4. **Pushen** — `git push` (mit `-u origin HEAD` falls kein Upstream)
+5. **Melden** — Branch, Commit-Message und ob Push erfolgreich war
+
+## Git Safety (immer einhalten)
+
+- Nie `git config` ändern
+- Kein `--force` auf `main`/`master`
+- Keine Hooks überspringen (`--no-verify`)
+- Kein Push wenn nur ungefragte/unfertige Änderungen im Repo liegen
+- Bei fehlgeschlagenem Push: Ursache nennen und beheben oder User informieren
+
+## Multi-Repo
+
+```text
+Silly_PedMenu/     → eigenes Repo
+Silly_Bandits/     → eigenes Repo
+...
+```
+
+Pro geändertem `Silly_*`-Ordner: separat commit + push. Root `REDM/` ist kein Git-Repo — `.cursor/rules/` ggf. manuell oder in passendem Repo versionieren.
+
+## Self Review
+
+Vor Abschluss prüfen:
+
+✓ Alle betroffenen Repos committed  
+✓ Push durchgeführt oder Blocker dokumentiert  
+✓ User weiß, was gepusht wurde  
+
+## Golden Rule
+
+Fertig = committed und gepusht. Code nur lokal zu lassen gilt als unvollständig.
