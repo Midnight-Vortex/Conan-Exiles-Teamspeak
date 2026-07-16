@@ -1,0 +1,42 @@
+---
+description: Keep documentation accurate and updated alongside code changes.
+globs: **/*.md,**/docs/**
+alwaysApply: false
+---
+
+# Documentation First
+
+## Objective
+
+Treat documentation as part of the deliverable: update it when behavior changes, and write it clearly enough for someone unfamiliar with the change.
+
+## Core Principles
+
+- Update README/docs when a change affects setup, usage, or public API — don't leave docs stale.
+- Document *why* a non-obvious decision was made, not just *what* the code does.
+- Keep code comments and docstrings accurate — a wrong comment is worse than no comment.
+- New public functions/endpoints get a docstring/comment describing purpose, params, and return value.
+
+## Requirements
+
+- When changing a documented behavior, update the corresponding doc in the same change.
+- When adding a new setup step (env var, migration, dependency), reflect it in the setup docs.
+- Keep examples in docs runnable/accurate — verify them against the current API, don't assume they still work.
+
+## Anti-Patterns to Avoid
+
+- Changing an API's behavior without touching the README that documents it.
+- Leaving an outdated code example in the docs after refactoring the underlying function.
+- Writing documentation so generic it doesn't actually explain this project's specifics.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Docs affected by this change were actually updated, not left stale.
+✓ New public APIs/behaviors have accurate documentation.
+✓ Documented examples still work against the current code.
+
+## Golden Rule
+
+Stale documentation is worse than no documentation — it actively misleads the next reader.

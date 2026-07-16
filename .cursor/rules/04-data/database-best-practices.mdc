@@ -1,0 +1,43 @@
+---
+description: Schema, query, and access-pattern conventions for the database layer.
+globs: **/models/**,**/schema*,**/*.sql,**/entities/**,**/prisma/**
+alwaysApply: false
+---
+
+# Database Best Practices
+
+## Objective
+
+Design schema and queries that are correct, indexed appropriately, and consistent with the project's existing data-access patterns.
+
+## Core Principles
+
+- Use the project's existing ORM/query layer consistently — don't mix raw SQL with the ORM without reason.
+- Add indexes for columns used in frequent WHERE/JOIN/ORDER BY clauses.
+- Model relationships with proper foreign keys/constraints rather than relying on application-level consistency alone.
+- Use transactions for multi-step writes that must succeed or fail together.
+
+## Requirements
+
+- Check existing models/schema conventions before adding a new table/entity.
+- Add an index whenever a new query filters/sorts on a previously unindexed column at meaningful scale.
+- Wrap related multi-table writes in a transaction.
+- Use parameterized queries — never string-concatenate SQL (see security-first).
+
+## Anti-Patterns to Avoid
+
+- Adding a new table with a completely different naming/typing convention than existing ones.
+- Performing multiple related writes without a transaction, risking partial updates.
+- Skipping foreign key constraints 'to keep it simple' when relational integrity actually matters.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ New schema follows existing naming/typing conventions.
+✓ Frequently-queried columns have appropriate indexes.
+✓ Multi-step writes that must be atomic use a transaction.
+
+## Golden Rule
+
+A database that's easy to query correctly today is more valuable than one that's fast to write today.

@@ -1,0 +1,42 @@
+---
+description: Vet new dependencies before adding them.
+globs: **/package.json,**/requirements.txt,**/go.mod,**/Cargo.toml,**/pyproject.toml,**/Gemfile
+alwaysApply: false
+---
+
+# Dependency Policy
+
+## Objective
+
+Only add dependencies that are actually needed, actively maintained, and appropriately scoped — dependencies are a long-term liability, not a free win.
+
+## Core Principles
+
+- Prefer the standard library or an already-present dependency over adding a new one.
+- Check that a new dependency is actively maintained and reasonably popular/trusted before adding it.
+- Pin versions consistently with how the project already pins its dependencies.
+- Avoid adding a large dependency for a small piece of functionality that could be written directly.
+
+## Requirements
+
+- Before adding a package, check whether an existing dependency already covers the need.
+- State explicitly when a new dependency is being introduced and why.
+- Avoid dev-only tooling leaking into production dependency lists (and vice versa).
+
+## Anti-Patterns to Avoid
+
+- Adding a whole utility library for one function that could be five lines of code.
+- Adding an unmaintained or abandoned package without flagging the risk.
+- Silently bumping a major version that could contain breaking changes.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ No unnecessary dependency was added when existing code/deps already solved it.
+✓ Any new dependency is explicitly called out with a reason.
+✓ Version pinning matches the project's existing convention.
+
+## Golden Rule
+
+Every dependency added is a dependency someone has to trust, update, and eventually remove.

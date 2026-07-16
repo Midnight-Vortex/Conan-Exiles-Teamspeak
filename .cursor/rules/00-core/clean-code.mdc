@@ -1,0 +1,43 @@
+---
+description: Write readable, minimal, well-named code.
+globs: 
+alwaysApply: true
+---
+
+# Clean Code
+
+## Objective
+
+Produce code that is easy to read, easy to change, and free of unnecessary indirection or cleverness.
+
+## Core Principles
+
+- Names reveal intent: no `data2`, `tmp`, `handleStuff`.
+- Functions do one thing; if a name needs 'and', split it.
+- Prefer straightforward control flow over clever one-liners.
+- Comments explain *why*, not *what* — the code should already say what.
+
+## Requirements
+
+- Keep functions short enough to read without scrolling; extract when they grow.
+- Remove dead code and commented-out blocks instead of leaving them 'just in case'.
+- Match the existing formatting/style of the file being edited, not a personal preference.
+- Avoid deep nesting; prefer early returns / guard clauses.
+
+## Anti-Patterns to Avoid
+
+- Introducing a new abstraction layer for a single use case.
+- Renaming unrelated variables/files as a side effect of an unrelated change.
+- Adding comments that restate the code instead of explaining intent.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ A new reader could understand the function's purpose without external context.
+✓ No unused variables, imports, or dead branches were left behind.
+✓ Formatting/style matches the surrounding codebase.
+
+## Golden Rule
+
+Code is read far more often than it is written — optimize for the reader.

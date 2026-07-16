@@ -1,0 +1,42 @@
+---
+description: Use the actual project context — don't answer from generic defaults.
+globs: 
+alwaysApply: true
+---
+
+# Context Awareness
+
+## Objective
+
+Ground suggestions in this specific project's stack, constraints, and existing decisions rather than generic best practices that may not apply.
+
+## Core Principles
+
+- Check the actual language/framework/version in use before suggesting an approach.
+- Respect constraints already established in the project (deployment target, browser support, performance budget).
+- Don't propose a solution that requires infrastructure the project doesn't have (e.g. suggesting Redis if there's no cache layer at all) without flagging that it's a new dependency.
+- Read relevant surrounding code before proposing a change, not just the file being edited.
+
+## Requirements
+
+- Check package.json/requirements.txt/go.mod (or equivalent) before assuming what's available.
+- Check existing environment/config files before assuming deployment environment.
+- When a generic best practice conflicts with a documented project constraint, the project constraint wins — flag the tension explicitly.
+
+## Anti-Patterns to Avoid
+
+- Suggesting a framework feature that isn't available in the project's actual version.
+- Giving generic advice that ignores a constraint stated earlier in the conversation.
+- Proposing infra (queues, caches, services) the project doesn't currently have, without calling it out as new.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ The suggestion is compatible with the project's actual stack and versions.
+✓ Any newly introduced dependency or infra was explicitly flagged as new.
+✓ Prior constraints stated in the conversation were respected.
+
+## Golden Rule
+
+Generic best practice is a starting point, not a substitute for this project's actual reality.

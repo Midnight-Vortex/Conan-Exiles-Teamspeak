@@ -1,0 +1,42 @@
+---
+description: Handle configuration and secrets safely.
+globs: **/.env*,**/config/**,**/*.config.*,**/settings.py,**/appsettings*.json
+alwaysApply: false
+---
+
+# Configuration
+
+## Objective
+
+Keep configuration and secrets out of source code, environment-appropriate, and clearly documented.
+
+## Core Principles
+
+- Secrets/keys come from environment variables or a secrets manager, never hardcoded.
+- Provide sane, safe defaults for non-secret config; require explicit values for secrets.
+- Keep environment-specific config (dev/staging/prod) separated and clearly labeled.
+- Update `.env.example`/config templates when adding a new required config value.
+
+## Requirements
+
+- When adding a new config value, add it to the example/template file too, without the real value.
+- Fail fast with a clear error message if a required config value is missing, instead of silently defaulting.
+- Never commit an actual `.env` file or real credentials.
+
+## Anti-Patterns to Avoid
+
+- Hardcoding an API key directly in source as a 'temporary' measure.
+- Adding a new required env var without updating the example config file.
+- Letting the app silently run with an empty/undefined secret instead of failing clearly.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ No secret values are hardcoded in source.
+✓ New config values are reflected in example/template files.
+✓ Missing required config fails loudly with a clear message.
+
+## Golden Rule
+
+Configuration mistakes are invisible until production — default to failing loudly, not silently.

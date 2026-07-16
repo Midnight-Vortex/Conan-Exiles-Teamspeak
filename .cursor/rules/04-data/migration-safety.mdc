@@ -1,0 +1,42 @@
+---
+description: Make database migrations safe, reversible, and non-blocking where possible.
+globs: **/migrations/**
+alwaysApply: false
+---
+
+# Migration Safety
+
+## Objective
+
+Database migrations should be safe to run against production data: reversible where feasible, and avoiding destructive or blocking operations without an explicit plan.
+
+## Core Principles
+
+- Prefer additive changes (add nullable column, add table) over destructive ones (drop column, rename in place) when possible.
+- For genuinely destructive changes, provide a plan: e.g. add new -> backfill -> switch reads -> drop old, across multiple migrations.
+- Consider whether a migration will lock large tables in production and whether that's acceptable.
+- Write a down/rollback migration when the project's tooling supports it.
+
+## Requirements
+
+- Never drop a column/table in the same migration that stops using it — deploy the code change first, drop later.
+- Backfill existing rows explicitly when adding a non-nullable column with no default.
+- Test migrations against a realistic data volume when the table is large, not just an empty dev DB.
+
+## Anti-Patterns to Avoid
+
+- Renaming a column in one migration that both old and new code paths need simultaneously during rollout.
+- Adding a NOT NULL column with no default and no backfill step, breaking existing rows.
+- Writing a migration that locks a large, actively-used table without considering the impact.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Destructive changes are staged safely across the deploy, not done in one unsafe step.
+✓ New non-nullable columns have a default or an explicit backfill step.
+✓ Rollback/down migrations exist where the tooling supports them.
+
+## Golden Rule
+
+Assume the migration will run against real production data and real production traffic — plan accordingly.

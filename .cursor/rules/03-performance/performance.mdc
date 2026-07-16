@@ -1,0 +1,42 @@
+---
+description: Avoid obviously wasteful patterns; don't micro-optimize prematurely.
+globs: 
+alwaysApply: false
+---
+
+# Performance
+
+## Objective
+
+Avoid clearly wasteful patterns (N+1 queries, unnecessary re-renders, quadratic loops on large data) without prematurely micro-optimizing code that doesn't need it.
+
+## Core Principles
+
+- Avoid N+1 database queries — batch or join instead.
+- Avoid re-computing/re-fetching the same data repeatedly within a single request/render.
+- Choose data structures appropriate to the access pattern (e.g. a Set for membership checks, not repeated array `.includes`).
+- Don't sacrifice readability for a micro-optimization with no measured benefit.
+
+## Requirements
+
+- Batch database calls in loops instead of querying per iteration.
+- Cache/memoize expensive computations that are reused within the same scope, not globally by default.
+- Flag genuinely risky complexity (e.g. an O(n²) loop over user-controlled input) even without profiling data.
+
+## Anti-Patterns to Avoid
+
+- Querying the database inside a loop instead of batching.
+- Adding caching/memoization for a rarely-called, cheap function 'just in case'.
+- Rewriting clear code into a 'clever' optimized version with no measured performance need.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ No obvious N+1 or repeated-computation patterns were introduced.
+✓ Data structure choices match their actual access pattern.
+✓ No premature optimization sacrificed clarity without a measured reason.
+
+## Golden Rule
+
+Fix real, visible inefficiencies; don't guess-optimize code that isn't a proven bottleneck.

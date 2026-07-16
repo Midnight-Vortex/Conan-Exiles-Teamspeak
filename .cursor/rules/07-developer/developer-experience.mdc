@@ -1,0 +1,42 @@
+---
+description: Keep the codebase easy for other developers to work in.
+globs: 
+alwaysApply: false
+---
+
+# Developer Experience
+
+## Objective
+
+Optimize for the experience of the next developer (human or AI) working in this codebase: clear errors, good tooling, low friction setup.
+
+## Core Principles
+
+- Error messages should say what went wrong and how to fix it, not just 'error'.
+- Keep setup/onboarding (install, run, test commands) simple and documented.
+- Provide helpful types/interfaces/docstrings so tooling (autocomplete, type checking) actually helps.
+- Avoid 'magic' behavior that isn't discoverable without reading the source.
+
+## Requirements
+
+- When adding a new script/command, document how to run it (README or inline help).
+- Write error messages that include the actionable next step, not just the failure.
+- Keep public function signatures typed/documented so callers don't have to read the implementation to use them.
+
+## Anti-Patterns to Avoid
+
+- Throwing a bare exception with no message on invalid input.
+- Adding a new CLI command/script with no documentation on how to invoke it.
+- Leaving public functions without types/docstrings, forcing callers to read internals.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ New commands/scripts are documented.
+✓ Error messages are actionable, not just descriptive of failure.
+✓ Public interfaces have enough type/doc info to be usable without reading internals.
+
+## Golden Rule
+
+Every bit of friction removed for the next developer pays for itself many times over.

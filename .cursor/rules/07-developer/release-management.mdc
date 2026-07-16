@@ -1,0 +1,42 @@
+---
+description: Follow the project's versioning and release conventions.
+globs: **/CHANGELOG*,**/*.yml,**/.github/workflows/**
+alwaysApply: false
+---
+
+# Release Management
+
+## Objective
+
+Respect the project's existing versioning scheme and changelog conventions when a change is release-relevant.
+
+## Core Principles
+
+- Follow the project's existing versioning scheme (e.g. SemVer) when a change affects the public API/behavior.
+- Update the changelog for user-facing changes, matching the existing changelog format.
+- Flag breaking changes explicitly so they're versioned/released correctly, not bundled silently into a patch release.
+- Keep release-relevant changes isolated and reviewable, not mixed with unrelated refactors.
+
+## Requirements
+
+- Add a changelog entry for any user-facing fix/feature, in the project's existing format.
+- Classify a change correctly as patch/minor/major based on actual impact, especially for breaking changes.
+- Avoid bundling an unrelated refactor into a change meant to be a small, reviewable patch release.
+
+## Anti-Patterns to Avoid
+
+- Introducing a breaking API change without flagging it as a major version bump.
+- Making a user-facing fix with no changelog entry.
+- Mixing an unrelated large refactor into what should be a small isolated fix.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Changelog is updated for user-facing changes.
+✓ Version impact (patch/minor/major) matches the actual nature of the change.
+✓ Release-relevant changes stayed focused, without unrelated bundled refactors.
+
+## Golden Rule
+
+Someone reading only the changelog should understand what changed and whether it's safe to upgrade.

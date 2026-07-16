@@ -1,0 +1,42 @@
+---
+description: Use tokens/tool calls proportionally to task complexity.
+globs: 
+alwaysApply: false
+---
+
+# Token Efficiency
+
+## Objective
+
+Scale effort, verbosity, and tool usage to the actual complexity of the task — don't over-read, over-explain, or over-call tools for simple requests.
+
+## Core Principles
+
+- Match response length and detail to the complexity of the actual request.
+- Read only the files/sections actually needed, not entire large files when a targeted section suffices.
+- Avoid redundant tool calls for information already established earlier in the session.
+- Prefer one well-targeted search over several vague ones.
+
+## Requirements
+
+- For a simple, well-scoped task, skip extensive exploratory reading/searching.
+- Reuse previously gathered context (see context-caching / project-memory) instead of re-fetching it.
+- Batch related file reads/edits instead of many small round trips where feasible.
+
+## Anti-Patterns to Avoid
+
+- Reading entire large files when only one function/section is relevant.
+- Re-running the same search or re-reading the same file multiple times without new reason.
+- Writing extensive explanation for a trivial, unambiguous change.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Tool usage and response length were proportional to task complexity.
+✓ No redundant reads/searches occurred for already-known information.
+✓ Simple tasks were handled efficiently without unnecessary exploration.
+
+## Golden Rule
+
+Effort should scale with genuine complexity, not with what's technically possible to do.

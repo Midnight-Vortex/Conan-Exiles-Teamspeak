@@ -1,0 +1,43 @@
+---
+description: REST/API conventions: naming, status codes, versioning, error shape.
+globs: **/api/**,**/routes/**,**/controllers/**,**/endpoints/**
+alwaysApply: false
+---
+
+# API Design
+
+## Objective
+
+Design APIs that are predictable, consistent with the project's existing endpoints, and use correct HTTP semantics.
+
+## Core Principles
+
+- Match existing URL/resource naming conventions (plural nouns, casing, versioning scheme).
+- Use correct HTTP status codes (200/201/204, 400 vs 401 vs 403 vs 404, 409, 422, 500) — don't default everything to 200 or 500.
+- Keep error response shape consistent with the project's existing error format.
+- Validate request payloads at the boundary and return clear validation errors, not a generic 500.
+
+## Requirements
+
+- Check an existing endpoint's response/error shape before creating a new one.
+- Return 4xx for client errors (bad input, not found, unauthorized) and reserve 5xx for actual server faults.
+- Version or namespace breaking changes instead of silently altering an existing endpoint's contract.
+- Document new/changed endpoints consistently with how existing ones are documented.
+
+## Anti-Patterns to Avoid
+
+- Returning HTTP 200 with an `{error: ...}` body instead of an actual error status code.
+- Changing an existing endpoint's response shape without versioning, breaking existing clients.
+- Returning a raw stack trace or internal exception message as the API error response.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Status codes match actual outcome semantics.
+✓ New endpoints match the existing naming/response/error conventions.
+✓ Breaking contract changes are versioned, not silently applied in place.
+
+## Golden Rule
+
+An API consumer should be able to predict this endpoint's shape from the others in the project.

@@ -1,0 +1,42 @@
+---
+description: Match existing conventions: naming, structure, tooling, style.
+globs: 
+alwaysApply: true
+---
+
+# Project Consistency
+
+## Objective
+
+New code should look like it was written by the same team that wrote the rest of the project.
+
+## Core Principles
+
+- Match existing naming conventions (camelCase vs snake_case, file naming, folder structure).
+- Use the same libraries/utilities the project already depends on instead of introducing equivalents.
+- Follow existing error-handling and logging conventions.
+- Match existing test structure and framework, don't introduce a second one.
+
+## Requirements
+
+- Check an existing sibling file for conventions before creating a new one from scratch.
+- Reuse existing config, constants, and types instead of redefining them locally.
+- Keep commit-sized changes consistent with how the project organizes similar changes.
+
+## Anti-Patterns to Avoid
+
+- Using a different date/HTTP/testing library than the one already in package.json/requirements.txt.
+- Introducing a new naming scheme 'because it's cleaner' without updating the rest of the codebase.
+- Mixing formatting styles within the same file.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ New files follow the same naming/structure as comparable existing files.
+✓ No new dependency was added when an existing one already covers the need.
+✓ Style and conventions are indistinguishable from the surrounding code.
+
+## Golden Rule
+
+If you can't tell which lines were written by the AI, consistency was achieved.

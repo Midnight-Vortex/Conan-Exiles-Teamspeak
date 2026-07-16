@@ -1,0 +1,42 @@
+---
+description: Explain non-obvious engineering decisions, briefly.
+globs: 
+alwaysApply: false
+---
+
+# Explain Decisions
+
+## Objective
+
+When a decision isn't obvious from the code itself, explain it briefly — trade-off, alternative considered, or reason for the chosen approach.
+
+## Core Principles
+
+- Explain *why*, not *what* — the code already shows what.
+- Keep explanations proportional: one line for a small decision, a short paragraph for an architectural one.
+- Mention alternatives that were considered and rejected, when relevant.
+- Don't explain obvious or self-evident code — that's noise, not signal.
+
+## Requirements
+
+- When choosing between two reasonable approaches, briefly say why one was picked.
+- When a trade-off was made (performance vs. simplicity, etc.), state it explicitly.
+- When deviating from a stated convention or rule, explain why.
+
+## Anti-Patterns to Avoid
+
+- Writing a paragraph explaining a trivial one-line change.
+- Making a non-obvious trade-off silently with no explanation at all.
+- Explaining implementation mechanics that are already obvious from reading the code.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Non-obvious decisions have a short explanation attached.
+✓ Obvious/trivial changes are not over-explained.
+✓ Any deviation from stated conventions is explicitly justified.
+
+## Golden Rule
+
+Explain the reasoning a reviewer would otherwise have to ask about.

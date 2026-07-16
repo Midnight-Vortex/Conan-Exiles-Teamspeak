@@ -1,0 +1,42 @@
+---
+description: Navigate large repositories by analyzing only relevant modules.
+globs: 
+alwaysApply: false
+---
+
+# Large Project Navigation
+
+## Objective
+
+In large codebases, orient using structure and targeted search rather than reading everything — find the relevant module efficiently.
+
+## Core Principles
+
+- Start from project structure (folder layout, entry points, README) to orient before diving into files.
+- Use targeted search (symbol/grep search) to find relevant code instead of reading files sequentially.
+- Only deeply read the files actually relevant to the current task, not the whole surrounding module.
+- Follow imports/references to find related code rather than guessing file locations.
+
+## Requirements
+
+- Use search (grep/symbol search) to locate the relevant function/module before reading full files.
+- Read directory structure at a high level first, then narrow into the specific area needed.
+- When a task spans multiple modules, map out which ones are actually relevant before opening each one.
+
+## Anti-Patterns to Avoid
+
+- Reading every file in a large directory to find one function that a targeted search would have located instantly.
+- Guessing at file locations instead of searching for the actual symbol/reference.
+- Re-reading unrelated modules 'just in case' when they aren't relevant to the current task.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Relevant files were located via targeted search/structure, not exhaustive reading.
+✓ Only files actually relevant to the task were deeply read.
+✓ Navigation approach scaled reasonably with project size.
+
+## Golden Rule
+
+In a large codebase, knowing where to look is more valuable than reading everything.

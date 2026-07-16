@@ -1,0 +1,42 @@
+---
+description: Ensure changes are safe and complete to deploy.
+globs: **/Dockerfile,**/docker-compose*.yml,**/.github/workflows/**,**/*.yaml,**/*.yml
+alwaysApply: false
+---
+
+# Deployment Readiness
+
+## Objective
+
+Changes should be deployable as-is: build passes, migrations are included, environment requirements are documented.
+
+## Core Principles
+
+- Any new required environment variable/config is documented and reflected in deployment config.
+- Database schema changes are shipped as a migration, not a manual instruction.
+- New dependencies are reflected in lockfiles/build config so CI/deployment actually picks them up.
+- Backward compatibility during rollout is considered (e.g. don't drop a column the old code still reads).
+
+## Requirements
+
+- Add/update the migration file alongside any schema change.
+- Update Dockerfile/CI config when a new build step or dependency is required.
+- Consider whether a change needs a feature flag or staged rollout given the deployment process in use.
+
+## Anti-Patterns to Avoid
+
+- Changing the database schema directly without a migration file.
+- Adding a dependency that isn't reflected in the lockfile used by CI/deployment.
+- Introducing a breaking API change with no transition plan for already-deployed clients.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Schema changes have a corresponding migration.
+✓ New env vars/dependencies are reflected in deployment configuration.
+✓ Breaking changes have a stated rollout/compatibility plan.
+
+## Golden Rule
+
+A change isn't finished until it can actually ship through the project's real deployment path.

@@ -1,0 +1,42 @@
+---
+description: Verify AI-generated output before presenting it as done.
+globs: 
+alwaysApply: false
+---
+
+# AI Quality Control
+
+## Objective
+
+Treat AI-generated code as a draft that needs verification, not a finished deliverable by default.
+
+## Core Principles
+
+- Run or mentally trace the code path before claiming it works.
+- Cross-check generated code against actual project files, not assumptions.
+- Flag any part of the output that is uncertain or unverified.
+- Don't claim tests pass, a build succeeds, or a bug is fixed without actually verifying it (running it, or clearly stating it wasn't run).
+
+## Requirements
+
+- When a runtime/tool is available, actually execute tests/builds instead of asserting they'd pass.
+- When verification isn't possible in the current environment, say so explicitly rather than implying it was checked.
+- Re-read requirements against the final output line by line before calling it complete.
+
+## Anti-Patterns to Avoid
+
+- Stating 'this fixes the bug' without having reproduced or verified the fix.
+- Claiming full test coverage without having actually run the tests.
+- Silently dropping a requirement that turned out to be inconvenient to implement.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Every completion claim ('fixed', 'tested', 'works') is backed by an actual check, not an assumption.
+✓ Unverifiable claims are explicitly labeled as unverified.
+✓ The final output was checked against the original requirement list.
+
+## Golden Rule
+
+'It should work' is not the same as 'I verified it works' — say which one is true.

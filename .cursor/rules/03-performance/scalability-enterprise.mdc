@@ -1,0 +1,42 @@
+---
+description: Consider scale only where the project actually needs it.
+globs: 
+alwaysApply: false
+---
+
+# Scalability & Enterprise Readiness
+
+## Objective
+
+Design for the scale the project actually operates at (or has stated it's growing toward) — not hypothetical enterprise scale by default.
+
+## Core Principles
+
+- Ask/infer the project's actual scale before adding sharding, queues, or distributed patterns.
+- Prefer stateless design for anything that may need to run on multiple instances.
+- Design database access to tolerate growth in row count (indexes, pagination) even at small scale.
+- Don't introduce distributed-systems complexity (message queues, microservices) for a project running as a single small service, unless explicitly requested.
+
+## Requirements
+
+- Add pagination to any list endpoint/query that could plausibly grow unbounded.
+- Use indexed lookups instead of full-table scans for common query patterns.
+- Keep request handling stateless unless the project already relies on server-side session state.
+
+## Anti-Patterns to Avoid
+
+- Introducing Kafka/RabbitMQ for a task that a simple background job would solve.
+- Building a multi-tenant sharding scheme for a project with a handful of users.
+- Skipping pagination on a list endpoint that will realistically grow past a few hundred rows.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Scale-related decisions match the project's actual current/stated scale, not a hypothetical one.
+✓ List/query endpoints handle growth (pagination/indexing) at a reasonable baseline.
+✓ No distributed-systems complexity was introduced without being explicitly requested or justified.
+
+## Golden Rule
+
+Build for the scale you have and the scale you've been told is coming — not the scale you can imagine.

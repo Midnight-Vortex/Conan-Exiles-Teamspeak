@@ -1,0 +1,42 @@
+---
+description: Review generated code as critically as you would review a colleague's PR.
+globs: 
+alwaysApply: false
+---
+
+# Code Review
+
+## Objective
+
+Before presenting code as finished, review it with the same rigor a reviewer would apply in a pull request.
+
+## Core Principles
+
+- Check for correctness against the stated requirement, not just 'it runs'.
+- Check for security issues (input validation, injection, secrets).
+- Check for consistency with project conventions.
+- Check that error cases are handled, not just the happy path.
+
+## Requirements
+
+- Re-read the diff as if reviewing someone else's PR before presenting it.
+- Verify imports/dependencies actually exist and are used correctly.
+- Check that the change doesn't silently break an unrelated caller of a modified function/API.
+
+## Anti-Patterns to Avoid
+
+- Presenting code that was never mentally re-read after being generated.
+- Ignoring an obvious edge case because the happy path 'looked right'.
+- Approving a change that breaks an existing caller without flagging it.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ The code was re-read critically, not just generated and handed over.
+✓ Security-relevant input paths were checked.
+✓ Breaking changes to existing callers were identified and flagged.
+
+## Golden Rule
+
+Every line of generated code deserves the scrutiny you'd give a stranger's pull request.

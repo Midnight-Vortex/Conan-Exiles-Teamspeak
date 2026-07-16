@@ -1,0 +1,43 @@
+---
+description: Testing conventions and coverage expectations for this project.
+globs: **/*.test.*,**/*.spec.*,**/tests/**,**/__tests__/**
+alwaysApply: false
+---
+
+# Testing
+
+## Objective
+
+Write tests that actually catch regressions, matching the project's existing test framework and conventions.
+
+## Core Principles
+
+- Match the existing test framework/runner — don't introduce a second one.
+- Test behavior and edge cases, not implementation details.
+- New logic branches (especially error paths) get a corresponding test.
+- Tests must be deterministic — no reliance on real time, network, or execution order.
+
+## Requirements
+
+- Any new bug fix includes a regression test that fails without the fix.
+- New public functions/endpoints get at least one happy-path and one failure-path test.
+- Mocks/stubs are used for external dependencies (network, DB, filesystem) unless the test is explicitly an integration test.
+- Test names describe the scenario and expected outcome, not just the function name.
+
+## Anti-Patterns to Avoid
+
+- Writing tests that only assert 'it doesn't throw' without checking actual output.
+- Testing private implementation details that make refactors break tests unnecessarily.
+- Skipping tests for error/edge-case paths.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ New/changed logic has corresponding tests, including at least one edge case.
+✓ Tests pass deterministically, not flakily.
+✓ Test style/framework matches the rest of the suite.
+
+## Golden Rule
+
+A test suite is only valuable if it fails when the code is actually broken.

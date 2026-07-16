@@ -1,0 +1,42 @@
+---
+description: Respect and extend the existing architecture instead of working around it.
+globs: 
+alwaysApply: true
+---
+
+# Architecture
+
+## Objective
+
+Keep changes consistent with the project's existing architectural boundaries, layering, and patterns.
+
+## Core Principles
+
+- Identify the existing architectural pattern (MVC, layered, hexagonal, feature-based, etc.) before adding code.
+- New code goes in the layer/module that already owns that responsibility.
+- Don't introduce a second way to do something the project already does one way (e.g. a second HTTP client, a second state pattern).
+- Cross-cutting concerns (auth, logging, error handling) go through existing shared mechanisms, not new ad-hoc ones.
+
+## Requirements
+
+- Before adding a module, check whether an existing one already owns that responsibility.
+- Keep dependency direction consistent with the current layering (e.g. UI never imports directly from the DB layer if that's not the existing pattern).
+- If the architecture genuinely needs to change, say so explicitly and explain the trade-off — don't do it silently.
+
+## Anti-Patterns to Avoid
+
+- Adding a new framework/library to solve something an existing dependency already solves.
+- Bypassing an existing service/repository layer to query the database directly 'just this once'.
+- Creating parallel folder structures that duplicate an existing convention.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ The change fits the existing layering without new, unexplained shortcuts.
+✓ No duplicate mechanisms were introduced for something the project already handles.
+✓ Any architectural deviation was called out explicitly with a reason.
+
+## Golden Rule
+
+Consistency with existing architecture beats local optimization almost every time.

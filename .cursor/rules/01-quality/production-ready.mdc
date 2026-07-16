@@ -1,0 +1,43 @@
+---
+description: Code should be safe to ship, not just to demo.
+globs: 
+alwaysApply: false
+---
+
+# Production Ready
+
+## Objective
+
+Generated code should meet the bar for production use: safe defaults, proper error handling, and no leftover debug artifacts.
+
+## Core Principles
+
+- No `console.log`/`print` debug statements left in delivered code.
+- No hardcoded secrets, tokens, or credentials.
+- Errors are handled and surfaced meaningfully, not swallowed silently.
+- Inputs from users/external systems are validated, not trusted blindly.
+
+## Requirements
+
+- Replace debug prints with proper logging (see the logging rule) before calling something done.
+- Add basic input validation/sanitization at any new external-facing boundary.
+- Fail loudly (with a clear error) instead of silently continuing on unexpected state.
+- Check that new environment/config values have sane defaults or explicit required-value errors.
+
+## Anti-Patterns to Avoid
+
+- Leaving `console.log(data)` debug statements in the final diff.
+- Catching an exception and doing nothing with it (`except: pass`).
+- Hardcoding an API key or password 'just for now'.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ No debug statements or commented-out experimental code remain.
+✓ No secrets are hardcoded anywhere in the diff.
+✓ Failure paths produce a clear, actionable error rather than silent failure.
+
+## Golden Rule
+
+If you wouldn't deploy it to real users today, it isn't done yet.

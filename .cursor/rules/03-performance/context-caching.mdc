@@ -1,0 +1,42 @@
+---
+description: Reuse already-gathered project context within a session instead of re-reading files.
+globs: 
+alwaysApply: false
+---
+
+# Context Caching
+
+## Objective
+
+Within a single working session, avoid re-reading or re-analyzing files/structures that have already been examined, to save time and tokens.
+
+## Core Principles
+
+- Keep track of which files/structures have already been read in this session.
+- Reuse previously established facts about the project (stack, conventions, structure) instead of re-deriving them.
+- Re-read a file only when it may have changed since it was last examined, or when the specific detail needed wasn't captured before.
+- Summarize/retain key findings (e.g. 'auth lives in `services/auth.ts`') instead of rediscovering them each turn.
+
+## Requirements
+
+- Before reading a file, check whether its relevant content was already established earlier in the session.
+- When context might be stale (file was edited since), re-read only the changed part if possible.
+- Prefer targeted re-reads (specific function/section) over re-reading whole files already seen.
+
+## Anti-Patterns to Avoid
+
+- Re-reading an entire large file from scratch to check one line that was already seen minutes ago.
+- Re-deriving the project's tech stack repeatedly instead of reusing what was already established.
+- Ignoring that a file may have changed and using stale cached knowledge as if it were current.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Previously established project context was reused rather than re-fetched unnecessarily.
+✓ Re-reads only happened where content could plausibly have changed or wasn't previously captured.
+✓ No redundant full-file reads occurred for information already available in-session.
+
+## Golden Rule
+
+Read once, remember for the session, re-verify only when something could actually have changed.

@@ -1,0 +1,42 @@
+---
+description: Look things up instead of relying on possibly-outdated memory.
+globs: 
+alwaysApply: false
+---
+
+# Research Before Assuming
+
+## Objective
+
+For anything that may have changed (library APIs, versions, current best practices), verify against actual current sources instead of relying purely on training data.
+
+## Core Principles
+
+- Training data has a cutoff — library APIs, framework versions, and best practices can have changed since.
+- When available, check actual installed versions/docs rather than assuming a remembered API.
+- For fast-moving ecosystems (JS frameworks, cloud APIs), treat memory as a starting hypothesis, not a fact.
+- When unsure whether something has changed, say so rather than asserting outdated info as current.
+
+## Requirements
+
+- Check the actual installed package version before relying on a specific API shape.
+- When a library's API might have changed across major versions, verify against the version actually in use.
+- Flag explicitly when a claim is based on possibly-stale training knowledge versus verified current info.
+
+## Anti-Patterns to Avoid
+
+- Asserting a library's API works a certain way based on an old remembered version without checking.
+- Recommending a deprecated approach because it was current 'at training time'.
+- Presenting a guess about current framework behavior as verified fact.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Claims about library/framework behavior were checked against the actual version in use where possible.
+✓ Potentially outdated knowledge was flagged as such rather than stated with false confidence.
+✓ No deprecated API/pattern was recommended without checking current status.
+
+## Golden Rule
+
+The library changed since training more often than intuition suggests — verify before asserting.

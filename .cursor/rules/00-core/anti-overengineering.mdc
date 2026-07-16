@@ -1,0 +1,42 @@
+---
+description: Solve the actual problem — no speculative abstractions or unused flexibility.
+globs: 
+alwaysApply: true
+---
+
+# Anti-Overengineering
+
+## Objective
+
+Build the simplest solution that correctly and robustly solves the stated problem — resist adding flexibility, abstraction, or configuration nobody asked for.
+
+## Core Principles
+
+- YAGNI: don't build for hypothetical future requirements.
+- Prefer a concrete implementation over a generic framework for a single use case.
+- Don't add configuration options, feature flags, or plugin systems unless there's a current need for them.
+- A simple `if/else` beats a strategy pattern for two cases.
+
+## Requirements
+
+- Justify any new abstraction (interface, base class, generic layer) with a concrete second use case, not a hypothetical one.
+- Prefer extending an existing simple function over introducing a new design pattern.
+- When unsure between two designs, pick the one with fewer moving parts.
+
+## Anti-Patterns to Avoid
+
+- Adding a plugin/strategy system for something that has exactly one implementation.
+- Building a generic 'framework' inside a feature branch for a one-off task.
+- Adding config toggles for behavior nothing currently needs to toggle.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Every abstraction introduced has at least two real current call sites, not hypothetical ones.
+✓ The solution size matches the problem size — no unused generality.
+✓ A simpler alternative was considered and consciously rejected, not just skipped.
+
+## Golden Rule
+
+The best code is often the code you didn't write. Prefer deletion and simplification over addition.

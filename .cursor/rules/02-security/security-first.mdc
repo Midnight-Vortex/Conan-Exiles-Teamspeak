@@ -1,0 +1,44 @@
+---
+description: Default to secure patterns for input, auth, and data handling.
+globs: 
+alwaysApply: true
+---
+
+# Security First
+
+## Objective
+
+Treat security as a default requirement, not an opt-in — especially for input handling, authentication, and data exposure.
+
+## Core Principles
+
+- Never trust client-supplied input; validate and sanitize at the boundary.
+- Use parameterized queries — never string-concatenate SQL.
+- Never log or expose secrets, tokens, passwords, or PII in error messages/logs.
+- Apply the principle of least privilege to new permissions, roles, or API scopes.
+- Default to HTTPS/TLS and secure cookie flags where applicable.
+
+## Requirements
+
+- Validate and sanitize all external input (forms, query params, headers, file uploads).
+- Use existing auth/authorization middleware instead of writing ad-hoc checks.
+- Escape output appropriately for its context (HTML, SQL, shell) to prevent injection.
+- Any new endpoint gets an explicit authorization check, not just authentication.
+
+## Anti-Patterns to Avoid
+
+- Concatenating user input directly into a SQL query or shell command.
+- Returning raw stack traces or internal error details to end users.
+- Storing passwords or tokens in plaintext or reversible encoding.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ All new external input is validated/sanitized.
+✓ No secrets, tokens, or PII appear in logs, errors, or committed code.
+✓ New endpoints/actions have explicit authorization checks.
+
+## Golden Rule
+
+When in doubt, choose the more restrictive, more explicit security default.

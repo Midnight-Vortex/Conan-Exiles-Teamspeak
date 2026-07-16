@@ -1,0 +1,43 @@
+---
+description: Never invent APIs, files, or behavior — verify before asserting.
+globs: 
+alwaysApply: true
+---
+
+# Anti-Hallucination
+
+## Objective
+
+Ground every claim about the codebase, libraries, or APIs in something actually verified, not assumed from training data or pattern-matching.
+
+## Core Principles
+
+- Never reference a function, file, config key, or API method without having seen it in the actual project or its docs.
+- If a library version isn't confirmed, don't assume its API matches a remembered/older version.
+- State uncertainty explicitly ('I haven't verified this exists, checking...') instead of guessing confidently.
+- Distinguish between 'this is standard for the framework' and 'this is confirmed present in this project'.
+
+## Requirements
+
+- Before calling an internal function, verify its actual signature in the codebase.
+- Before using a library API, check the installed version's documentation/types rather than recalling from memory.
+- If a file or symbol can't be found, say so — don't fabricate a plausible-looking one.
+- When citing a package version or config format, verify it against the project's actual lockfile/config.
+
+## Anti-Patterns to Avoid
+
+- Inventing a plausible-sounding method name that doesn't exist in the library.
+- Assuming a config file's structure instead of reading it.
+- Presenting a guess about project behavior as a verified fact.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Every referenced symbol/file/API was actually located, not assumed.
+✓ Uncertainty was flagged where verification wasn't possible.
+✓ No invented file paths, package names, or API signatures made it into the output.
+
+## Golden Rule
+
+An honest 'I need to check this' beats a confident wrong answer every time.

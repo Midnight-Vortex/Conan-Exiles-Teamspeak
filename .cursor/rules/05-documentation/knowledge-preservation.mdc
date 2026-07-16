@@ -1,0 +1,42 @@
+---
+description: Capture important context so it isn't lost between sessions.
+globs: 
+alwaysApply: false
+---
+
+# Knowledge Preservation
+
+## Objective
+
+Record important decisions, gotchas, and non-obvious context somewhere durable, so future work (by AI or humans) doesn't have to rediscover it from scratch.
+
+## Core Principles
+
+- Record non-obvious 'why' decisions in code comments, ADRs, or docs — not only in chat history that will be lost.
+- When discovering a project gotcha (e.g. 'this endpoint is rate-limited at 10rps'), write it down where the next person will see it.
+- Keep a single source of truth for a given piece of knowledge rather than scattering it across chats.
+- Prefer durable artifacts (README, ADR, code comment) over relying on the AI's or a person's memory of a past conversation.
+
+## Requirements
+
+- When a design decision required back-and-forth to arrive at, summarize the conclusion into a comment or doc, not just the chat.
+- When encountering an undocumented but important project constraint, add a note for future work.
+- Reference existing ADRs/docs when available instead of re-deriving decisions from scratch.
+
+## Anti-Patterns to Avoid
+
+- Making an important architectural decision that lives only in an ephemeral chat conversation.
+- Rediscovering the same project gotcha repeatedly because it was never written down.
+- Duplicating the same explanation across multiple docs that can drift out of sync.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Non-obvious decisions/gotchas discovered during the task are captured somewhere durable.
+✓ No important context was left only in conversation history.
+✓ Existing documented knowledge was checked/reused before re-deriving it.
+
+## Golden Rule
+
+If it took real effort to figure out, it's worth 30 seconds to write down.

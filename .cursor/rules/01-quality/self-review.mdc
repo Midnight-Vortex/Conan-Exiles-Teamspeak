@@ -1,0 +1,42 @@
+---
+description: Re-check your own output before presenting it.
+globs: 
+alwaysApply: false
+---
+
+# Self Review
+
+## Objective
+
+Perform a final self-check pass on generated output before delivering it, catching obvious mistakes proactively.
+
+## Core Principles
+
+- Re-read the diff for typos, unused imports, and leftover placeholder text.
+- Check that variable/function names are consistent throughout the change.
+- Verify that all referenced files/paths actually exist.
+- Confirm the output actually answers what was asked, not a nearby but different question.
+
+## Requirements
+
+- Do a final pass comparing output against the original request before sending it.
+- Check for internal inconsistency (e.g. a function renamed in one place but not another).
+- If something feels uncertain, verify it rather than presenting it with false confidence.
+
+## Anti-Patterns to Avoid
+
+- Submitting code with an obviously unused import or a leftover placeholder like `// your code here`.
+- Renaming something in one file but missing a reference to it elsewhere.
+- Answering a slightly different question than what was actually asked.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ A final read-through was done before presenting the result.
+✓ No leftover placeholders, unused code, or inconsistent naming remain.
+✓ The output matches what was actually requested.
+
+## Golden Rule
+
+The last five minutes of review catch the mistakes that would otherwise cost an hour later.

@@ -1,0 +1,42 @@
+---
+description: Maintain and reuse consistent understanding of the project across a session.
+globs: 
+alwaysApply: false
+---
+
+# Project Memory
+
+## Objective
+
+Keep track of decisions, conventions, and facts established earlier in the session and apply them consistently for the rest of the work.
+
+## Core Principles
+
+- Once a convention or decision is established in the session, apply it consistently going forward.
+- Don't contradict an earlier decision without explicitly noting the change and why.
+- Reuse facts already established about the project (stack, structure, constraints) instead of re-deriving or, worse, contradicting them.
+- If new information invalidates an earlier assumption, update course explicitly.
+
+## Requirements
+
+- Before making a new suggestion, check it against decisions already made earlier in the session.
+- If a naming/pattern choice was established earlier, reuse it rather than introducing a variant.
+- When correcting an earlier mistake, state clearly what's changing and why.
+
+## Anti-Patterns to Avoid
+
+- Using a different naming convention in file 3 than what was established for files 1 and 2 in the same session.
+- Re-asking for information the user already provided earlier in the conversation.
+- Silently contradicting an earlier architectural decision without acknowledging the change.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Conventions/decisions established earlier in the session are applied consistently later.
+✓ No redundant re-asking for already-provided information.
+✓ Any deliberate change of course from an earlier decision is explicitly acknowledged.
+
+## Golden Rule
+
+Consistency across a whole session is as important as correctness within a single response.

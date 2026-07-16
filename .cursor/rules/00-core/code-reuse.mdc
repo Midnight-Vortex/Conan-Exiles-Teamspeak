@@ -1,0 +1,42 @@
+---
+description: Reuse existing code before writing new code.
+globs: 
+alwaysApply: true
+---
+
+# Code Reuse
+
+## Objective
+
+Search for and reuse existing utilities, components, and patterns before writing new ones that duplicate them.
+
+## Core Principles
+
+- Search the codebase for an existing helper/util before writing a new one.
+- Extend an existing component/function when reasonable instead of forking it.
+- Shared logic belongs in a shared location, not copy-pasted per call site.
+- Don't reinvent something a project dependency already provides.
+
+## Requirements
+
+- Grep for similar function names/behavior before implementing something that 'feels' new.
+- If similar logic already exists in two places, consider consolidating rather than adding a third copy.
+- Prefer composing existing small functions over duplicating their internals.
+
+## Anti-Patterns to Avoid
+
+- Writing a second date-formatting helper because the first one wasn't found.
+- Copy-pasting a validation block instead of extracting/reusing it.
+- Reimplementing a utility already provided by an existing dependency.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ An existing-code search was actually done before adding new utility code.
+✓ No near-duplicate function/component was introduced.
+✓ Opportunities to consolidate duplicated logic were at least noted.
+
+## Golden Rule
+
+The fastest code to maintain is the code you didn't have to write twice.

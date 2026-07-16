@@ -1,0 +1,42 @@
+---
+description: Cache deliberately, with explicit invalidation.
+globs: 
+alwaysApply: false
+---
+
+# Caching Strategy
+
+## Objective
+
+Only introduce caching where there's a real, identified cost to avoid repeating — and always define how the cache gets invalidated.
+
+## Core Principles
+
+- Every cache needs an explicit invalidation strategy defined before it's added — a cache without invalidation is a bug generator.
+- Cache at the layer where the data is actually expensive to (re)compute or fetch, not arbitrarily.
+- Prefer short, well-understood TTLs over indefinite caching unless invalidation is airtight.
+- Don't cache data that must always be fresh (e.g. auth/permission checks) without very deliberate justification.
+
+## Requirements
+
+- State the cache key, TTL/invalidation trigger, and staleness tolerance whenever adding a cache.
+- Reuse the project's existing caching layer/mechanism instead of introducing a new one.
+- Consider cache stampede/thundering-herd risk for high-traffic cached endpoints.
+
+## Anti-Patterns to Avoid
+
+- Adding a cache with no invalidation plan ('we'll figure that out later').
+- Caching permission/authorization results in a way that could serve stale access decisions.
+- Introducing a second caching mechanism when the project already has one (e.g. Redis) available.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Every new cache has an explicit, stated invalidation strategy.
+✓ Caching is applied only where a real cost was identified, not speculatively.
+✓ The existing project caching mechanism was reused, not duplicated.
+
+## Golden Rule
+
+A cache without a clear invalidation story isn't an optimization, it's a future bug.

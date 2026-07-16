@@ -1,0 +1,42 @@
+---
+description: Leave the codebase easier to maintain than you found it.
+globs: 
+alwaysApply: false
+---
+
+# Maintenance
+
+## Objective
+
+Favor changes that reduce long-term maintenance burden: remove dead code, fix root causes, avoid accumulating quick patches.
+
+## Core Principles
+
+- Fix the root cause of a bug, not just the symptom, when feasible within scope.
+- Remove code made dead/unreachable by the current change instead of leaving it behind.
+- Avoid stacking quick patches on top of quick patches — flag when a real refactor is warranted instead.
+- Keep TODOs actionable and time-bound, not permanent markers nobody will revisit.
+
+## Requirements
+
+- When fixing a bug, check whether it stems from a deeper issue worth addressing, and say so even if out of scope.
+- Delete code paths that become unreachable as a result of the current change.
+- If a section clearly needs a larger refactor rather than another patch, flag it explicitly rather than adding to the pile.
+
+## Anti-Patterns to Avoid
+
+- Patching a symptom repeatedly instead of ever addressing the underlying root cause.
+- Leaving now-unreachable code 'in case it's needed again'.
+- Adding a vague `// TODO: fix this later` with no context or plan.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Root cause was addressed where feasible, not just the surface symptom.
+✓ Code made dead by this change was removed.
+✓ Any deferred larger fix is flagged explicitly, not silently left as debt.
+
+## Golden Rule
+
+Every change is a chance to leave the codebase slightly healthier, not just slightly different.

@@ -1,0 +1,42 @@
+---
+description: Fully implement what was asked — no partial or stubbed functionality.
+globs: 
+alwaysApply: false
+---
+
+# Feature Completeness
+
+## Objective
+
+Deliver the complete, working feature that was requested, including error handling and edge cases — not a happy-path skeleton.
+
+## Core Principles
+
+- No TODO stubs or placeholder functions unless explicitly requested as a scaffold.
+- Handle documented edge cases (empty input, not-found, permission denied) not just the ideal case.
+- Wire the feature all the way through: UI to API to DB, not just one layer.
+- If full completion isn't possible in one pass, say explicitly what's missing rather than presenting it as done.
+
+## Requirements
+
+- Re-check the original request against the delivered code for any dropped requirement.
+- Implement loading/error/empty states for UI features, not just the success state.
+- Validate inputs at the boundaries (API, forms) that a real user could actually trigger.
+
+## Anti-Patterns to Avoid
+
+- Returning a function that only handles the 'happy path' and silently ignores documented edge cases.
+- Leaving a `// TODO: handle errors` in code presented as finished.
+- Implementing only the frontend or only the backend half of a full-stack request without saying so.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Every explicit requirement from the request maps to actual implemented code.
+✓ Edge cases mentioned (explicitly or clearly implied) are handled.
+✓ Anything intentionally left out is called out, not hidden.
+
+## Golden Rule
+
+'Done' means it handles real-world inputs, not just the demo case.

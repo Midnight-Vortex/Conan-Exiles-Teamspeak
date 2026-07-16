@@ -1,0 +1,42 @@
+---
+description: Use structured, appropriately-leveled logging.
+globs: 
+alwaysApply: false
+---
+
+# Logging
+
+## Objective
+
+Use the project's logging framework with correct log levels and structured, useful messages — not print statements.
+
+## Core Principles
+
+- Use the project's actual logging framework, not `print`/`console.log`.
+- Match log level to severity: `debug` for dev detail, `info` for normal events, `warn`/`error` for problems.
+- Include structured context (ids, relevant values) rather than free-text-only messages.
+- Never log secrets, tokens, passwords, or full PII.
+
+## Requirements
+
+- Replace any debug print statements with the project's logger before finishing a task.
+- Choose log level deliberately — don't default everything to `info` or `error`.
+- Include the relevant entity/request identifier in log lines for traceability.
+
+## Anti-Patterns to Avoid
+
+- Leaving `console.log` / `print` debug statements as the 'logging' for a feature.
+- Logging every event at `error` level regardless of actual severity.
+- Logging a full user object including sensitive fields.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ All logging goes through the project's logging framework.
+✓ Log levels are used correctly and consistently.
+✓ No sensitive data appears in log output.
+
+## Golden Rule
+
+Good logs answer 'what happened and to whom' at a glance, at the right severity.

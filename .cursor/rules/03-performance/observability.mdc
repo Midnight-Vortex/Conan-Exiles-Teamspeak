@@ -1,0 +1,42 @@
+---
+description: Make failures and important events observable.
+globs: 
+alwaysApply: false
+---
+
+# Observability
+
+## Objective
+
+Ensure new code emits enough signal (logs, metrics, error tracking) to diagnose problems in production without needing to reproduce them locally.
+
+## Core Principles
+
+- Errors that are caught should be logged with enough context to diagnose (not just 'error occurred').
+- Important business events (payment processed, user created) should be observable, matching existing project conventions.
+- Avoid logging sensitive data (see security-first) while still logging enough to debug.
+- Use the project's existing logging/metrics/error-tracking tools instead of introducing new ones.
+
+## Requirements
+
+- Include relevant identifiers (request id, user id, entity id) in error logs, not raw generic messages.
+- Use existing error-tracking integration (e.g. Sentry) for unexpected exceptions if the project has one.
+- Add a metric/log point for new critical paths, matching existing patterns in the codebase.
+
+## Anti-Patterns to Avoid
+
+- Catching an exception and logging only 'something went wrong'.
+- Introducing a brand-new logging library when the project already has one.
+- Logging full request/response bodies that may contain sensitive data.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ Errors are logged with enough context to diagnose without reproducing locally.
+✓ New logging follows the project's existing tools and conventions.
+✓ No sensitive data leaks into logs.
+
+## Golden Rule
+
+If it can fail, it should be possible to find out why from the logs alone.

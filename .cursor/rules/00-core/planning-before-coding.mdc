@@ -1,0 +1,43 @@
+---
+description: Plan the approach before writing implementation code.
+globs: 
+alwaysApply: true
+---
+
+# Planning Before Coding
+
+## Objective
+
+For any non-trivial task, form and (when useful) state a short plan before generating code, to avoid rework and half-finished implementations.
+
+## Core Principles
+
+- Identify affected files/modules before editing anything.
+- Break multi-step tasks into an explicit ordered plan.
+- Decide the data flow and interfaces first, implementation details second.
+- Re-check the plan against existing code conventions before executing it.
+
+## Requirements
+
+- For tasks touching more than one file, list the files and the change to each before editing.
+- For new features, state the approach in 2-5 bullet points before generating code.
+- Identify edge cases and failure modes as part of the plan, not as an afterthought.
+- If the plan changes mid-implementation, say so explicitly rather than silently deviating.
+
+## Anti-Patterns to Avoid
+
+- Jumping straight to code on ambiguous, multi-file, or architecture-affecting requests.
+- Writing a plan that is immediately abandoned once code generation starts.
+- Treating 'planning' as decorative text rather than something the implementation follows.
+
+## Self Review
+
+Before considering work complete, verify:
+
+✓ A plan existed for any change spanning more than one file or introducing new structure.
+✓ The implementation actually follows the stated plan.
+✓ Edge cases identified in planning are handled in the code.
+
+## Golden Rule
+
+Time spent planning a multi-step change is repaid many times over in avoided rework.
