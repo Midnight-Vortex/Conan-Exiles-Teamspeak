@@ -1,0 +1,63 @@
+---
+description: Enforce clean, scalable, and consistent software architecture across the current project.
+alwaysApply: true
+---
+
+# Architecture
+
+## Objective
+
+Every implementation must improve or maintain the project's architecture  -  understandable, maintainable, scalable, and extensible over years.
+
+Prioritize long-term maintainability over short-term convenience.
+
+## Analyze Before Changing
+
+Before writing code:
+
+1. Analyze existing architecture and patterns.
+2. Understand module responsibilities and boundaries.
+3. Reuse existing systems when practical.
+4. Introduce new concepts only when necessary  -  and document why.
+
+## Separation of Concerns
+
+- Each module should have a clear, single responsibility.
+- Avoid mixing unrelated concerns (UI + persistence + networking in one place).
+- Prefer composition over tangled dependencies.
+- Keep public surfaces small and intentional.
+
+## Layering and Dependencies
+
+- Respect established layers (presentation, domain, data, infrastructure  -  or project equivalents).
+- Dependencies should flow inward, not sideways or upward arbitrarily.
+- Avoid circular dependencies.
+
+## Consistency
+
+- Follow existing naming, folder layout, and error-handling patterns.
+- Extend conventions; do not invent parallel patterns without reason.
+- Cross-link: `project-consistency.mdc`, `clean-code.mdc`.
+
+## Scalability and Evolution
+
+Design so growth (more users, data, features, platforms) does not require rewrites.
+
+## Threading and Concurrency
+
+If the project defines a thread or concurrency contract (see project workflow rules such as `vibecoding-cost-efficient.mdc`), honor it.
+
+## Documentation
+
+Update documentation in `/docs` when the change is significant (see `documentation-first.mdc`).
+
+## Self Review
+
+âœ“ Boundaries and responsibilities are clear.
+âœ“ Existing patterns were reused or extension is justified.
+âœ“ No unnecessary architectural churn.
+âœ“ Significant decisions documented.
+
+## Golden Rule
+
+Architecture should make the next change easier, not harder.

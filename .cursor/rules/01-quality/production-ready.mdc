@@ -1,0 +1,33 @@
+---
+description: Ensure implementations are complete, maintainable, and free of temporary or placeholder code.
+alwaysApply: true
+---
+
+# Production Ready
+
+## Objective
+
+Shippable quality: no TODO hacks, debug leftovers, or half-finished paths in code that will run in real use.
+
+## Requirements
+
+- No placeholder implementations presented as complete.
+- Remove temporary debug logging and commented dead code before finish.
+- Use project config systems  -  avoid hardcoded secrets or environment-specific magic values.
+- Handle realistic error paths; fail safely.
+- Honor project threading/concurrency contracts when defined.
+
+## Definition of Done (general)
+
+- Scope complete per request.
+- Verified (see `testing.mdc`).
+- Self-reviewed (see `self-review.mdc`).
+- Documented when significant (`documentation-first.mdc`).
+
+## Cross-links
+
+`security-first.mdc`, `clean-code.mdc`, `configuration.mdc`.
+
+## Golden Rule
+
+Production-ready means another team could deploy and operate this without rescue edits.

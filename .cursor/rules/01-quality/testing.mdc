@@ -1,0 +1,37 @@
+---
+description: Verify implementations through appropriate tests, validation, and review before considering work complete.
+alwaysApply: true
+---
+
+# Testing
+
+## Objective
+
+No implementation is complete without **evidence it works**  -  automated tests where they exist, otherwise build, manual verification, or documented reproduction steps.
+
+## Requirements
+
+- Add or update tests when the project has a test framework and the change is testable.
+- Run relevant tests before marking work done.
+- When automated tests are absent, describe manual verification steps clearly.
+- Regression: ensure related behavior still works.
+
+## Test Quality
+
+- Test behavior, not implementation trivia.
+- Cover edge cases that caused or could cause bugs.
+- Avoid tests that only assert mocks or always-pass stubs.
+
+## Cross-links
+
+`production-ready.mdc`, `self-review.mdc`, `root-cause-analysis.mdc`.
+
+## Self Review
+
+âœ“ Change was verified, not assumed.
+âœ“ Failure modes considered.
+âœ“ Test or manual steps documented when non-obvious.
+
+## Golden Rule
+
+"If it isn't verified, it isn't done."

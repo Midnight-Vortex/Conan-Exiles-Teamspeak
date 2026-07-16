@@ -1,0 +1,26 @@
+---
+description: Control AI-assisted output quality through verification, scope discipline, and project rule compliance.
+alwaysApply: true
+---
+
+# AI Quality Control
+
+## Objective
+
+AI-generated work must meet the same bar as human work  -  accurate, scoped, and verifiable.
+
+## Requirements
+
+- Verify file paths, APIs, and dependencies exist before using them (`anti-hallucination.mdc`).
+- Follow all `alwaysApply` rules in `.cursor/rules/`.
+- Prefer small, reviewable diffs.
+- State uncertainty explicitly; investigate instead of guessing (`uncertainty-handling.mdc`).
+- Self-review every change (`self-review.mdc`).
+
+## Subagents and Delegation
+
+When delegating, inject project rules into subagent prompts. Parent orchestrates; subagents must not expand scope silently.
+
+## Golden Rule
+
+AI output is a draft until evidence and review say otherwise.

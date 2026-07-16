@@ -1,0 +1,27 @@
+---
+description: Design for growth in users, data, and complexity without requiring architectural rewrites.
+alwaysApply: true
+---
+
+# Scalability
+
+## Objective
+
+Assume the current project may grow. Choose approaches that scale in complexity, data volume, and load  -  proportionally to realistic expectations.
+
+## Principles
+
+- Bound resource use (memory, connections, file handles).
+- Paginate or stream large datasets.
+- Avoid O(nÂ²) patterns on unbounded inputs.
+- Stateless services scale horizontally when applicable.
+> **If this project has no database surface:** apply the same principles to the nearest persistent equivalent (files, config, key-value stores, local caches) or skip.
+> **If this project has no HTTP/REST API surface:** apply the same principles to the nearest public interface (module APIs, SDK callbacks, CLI commands, RPC, message contracts) or skip.
+
+## Cross-links
+
+`architecture.mdc`, `performance.mdc`, `database-best-practices.mdc`.
+
+## Golden Rule
+
+Scale the design to the product's trajectory  -  not every hobby project needs Kubernetes.

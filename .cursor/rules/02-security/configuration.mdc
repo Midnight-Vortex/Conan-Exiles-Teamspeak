@@ -1,0 +1,26 @@
+---
+description: Manage configuration safely  -  validated defaults, clear keys, no secrets in source, environment-aware behavior.
+alwaysApply: true
+---
+
+# Configuration
+
+## Objective
+
+Configuration should be **discoverable, validated, and safe**  -  not scattered magic constants or brittle hardcodes.
+
+## Requirements
+
+- Use the project's established config system (env, files, settings UI, etc.).
+- Sensible defaults; document non-obvious keys.
+- Validate on load; fail fast with clear messages for invalid config.
+- Secrets only via secure mechanisms  -  never in repo source.
+- Environment-specific values belong in config, not `#ifdef` sprawl unless that is the project norm.
+
+## Cross-links
+
+`security-first.mdc`, `documentation-first.mdc`, `deployment-readiness.mdc`.
+
+## Golden Rule
+
+If an operator cannot tell how to configure it, it is not production-ready.

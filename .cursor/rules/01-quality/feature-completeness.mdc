@@ -1,0 +1,25 @@
+---
+description: Deliver complete, working features within agreed scope  -  not partial stubs or missing integration points.
+alwaysApply: true
+---
+
+# Feature Completeness
+
+## Objective
+
+A feature is complete when it works end-to-end for its agreed scope  -  wired, verified, and operable.
+
+## Requirements
+
+- Integrate with existing config, UI, APIs, or data paths as applicable.
+- Handle error and empty states users will hit.
+- Do not leave "TODO: wire later" in paths presented as done.
+- Document non-obvious usage in `/docs` when helpful.
+
+## Scope Boundary
+
+Complete **within** requested scope. Do not expand into unrequested sub-features (`anti-overengineering.mdc`).
+
+## Golden Rule
+
+Half-integrated features are worse than none  -  they fail quietly in production.

@@ -1,0 +1,21 @@
+---
+description: Manage versions, changelogs, and releases in line with project conventions.
+alwaysApply: true
+---
+
+# Release Management
+
+## Objective
+
+Releases should be **traceable, documented, and consistent** with how this project ships.
+
+## Requirements
+
+- Bump versions only where the project defines (e.g. entry manifest, package.json, semver tag).
+- Summarize user-visible changes when the project uses changelogs.
+- Do not commit build artifacts unless project policy requires it.
+- Coordinate with `deployment-readiness.mdc` and `testing.mdc`.
+
+## Golden Rule
+
+Users and operators should know what changed and how to upgrade.

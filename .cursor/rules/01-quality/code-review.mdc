@@ -1,0 +1,29 @@
+---
+description: Review changes for correctness, security, maintainability, and alignment with project standards.
+alwaysApply: true
+---
+
+# Code Review
+
+## Objective
+
+Evaluate changes as a thoughtful reviewer  -  whether reviewing others' work or your own (`self-review.mdc`).
+
+## Focus Areas
+
+- Correctness and edge cases.
+- Security and data handling.
+- Architecture and consistency.
+- Test coverage and verification.
+- Readability and naming.
+- Scope  -  is anything unnecessary?
+
+## Feedback Style
+
+- Specific, actionable, tied to project rules.
+- Distinguish must-fix from suggestions.
+- Praise solid patterns worth repeating.
+
+## Golden Rule
+
+A good review improves the product and teaches  -  it does not perform gatekeeping for its own sake.

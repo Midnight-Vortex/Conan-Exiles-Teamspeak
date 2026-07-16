@@ -1,0 +1,34 @@
+---
+description: Prefer the simplest correct solution; avoid unnecessary abstraction and scope creep.
+alwaysApply: true
+---
+
+# Anti Overengineering
+
+## Objective
+
+Solve the requested problem with the **minimum correct change**. Extra layers, helpers, and frameworks create debt faster than they create value.
+
+## Core Principles
+
+- One task, one focused diff (align with project Golden Rule if defined).
+- Reuse existing patterns before introducing new ones.
+- No preemptive features "for later."
+- Cross-link: `architecture.mdc`, `planning-before-coding.mdc`, `code-reuse.mdc`.
+
+## Requirements
+
+- Question every new abstraction: is it required now?
+- Avoid generic utilities used once.
+- Keep error handling proportional to real failure modes.
+- Document only non-obvious design choices.
+
+## Self Review
+
+âœ“ Scope matches the request  -  nothing extra.
+âœ“ No unnecessary indirection or frameworks.
+âœ“ Solution is maintainable by the next developer.
+
+## Golden Rule
+
+The best engineering is often the smallest change that fully solves the problem.

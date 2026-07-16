@@ -1,0 +1,25 @@
+---
+description: Navigate large codebases by scoping searches to relevant modules and files.
+alwaysApply: true
+---
+
+# Large Project Navigation
+
+## Objective
+
+Find the right code quickly without loading the entire repository into context.
+
+## Practices
+
+- Start from module map, README, or `AGENTS.md` when present.
+- Grep for symbols and paths; glob by likely directories.
+- Read neighbors of a change before distant modules.
+- Delegate broad exploration to focused search when appropriate.
+
+## Cross-links
+
+`context-caching.mdc`, `architecture.mdc`.
+
+## Golden Rule
+
+Search smart, read narrow, expand only when needed.

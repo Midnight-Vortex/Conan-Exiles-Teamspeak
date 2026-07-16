@@ -1,0 +1,37 @@
+---
+description: Apply security best practices  -  validate input, protect secrets, and fail safely in every change.
+alwaysApply: true
+---
+
+# Security First
+
+## Objective
+
+Security is not optional. Every change must preserve confidentiality, integrity, and safe failure modes.
+
+## Requirements
+
+- Validate and sanitize all untrusted input (HTTP, files, user config, IPC, CLI args).
+- Never commit secrets; use env/config mechanisms the project already uses.
+- Parameterized queries / prepared statements for SQL  -  never string-concat SQL.
+- Least privilege for credentials, tokens, and file paths.
+- Do not expose stack traces, internal paths, or SQL in user-facing errors.
+> **If this project has no HTTP/REST API surface:** apply the same principles to the nearest public interface (module APIs, SDK callbacks, CLI commands, RPC, message contracts) or skip.
+
+## Review Triggers
+
+Auth changes, new endpoints, file I/O, crypto, dependency bumps, deserialization.
+
+## Cross-links
+
+`configuration.mdc`, `dependency-policy.mdc`, `api-design.mdc`, `logging.mdc` (no secrets in logs).
+
+## Self Review
+
+âœ“ No secrets in code or logs.
+âœ“ Input validated at trust boundaries.
+âœ“ Errors do not leak internals.
+
+## Golden Rule
+
+Assume all external input is hostile until validated.

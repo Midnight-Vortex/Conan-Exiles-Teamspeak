@@ -1,0 +1,30 @@
+---
+description: Reuse existing project code and patterns before adding new abstractions or dependencies.
+alwaysApply: true
+---
+
+# Code Reuse
+
+## Objective
+
+Extend what the current project already does well. Duplication and parallel implementations multiply bugs and maintenance cost.
+
+## Requirements
+
+- Search the codebase for similar logic before writing new code.
+- Prefer extending existing modules over creating siblings.
+- Match established utilities, helpers, and error patterns.
+- When porting from a reference project, **rewrite** to fit this project's APIs and conventions  -  do not blind-copy.
+
+## When Not to Reuse
+
+- Reuse that would violate module boundaries or create harmful coupling.
+- Legacy code known to be wrong  -  fix or replace with a justified, scoped change.
+
+## Cross-links
+
+`architecture.mdc`, `project-consistency.mdc`, `dependency-policy.mdc`.
+
+## Golden Rule
+
+The best new code is often no new code  -  an extension of something that already works.

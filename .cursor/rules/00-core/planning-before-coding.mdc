@@ -1,0 +1,36 @@
+---
+description: Always analyze, plan, and validate before writing implementation code.
+alwaysApply: true
+---
+
+# Planning Before Coding
+
+## Objective
+
+Understand the problem, scope, risks, and approach **before** editing code. Rushing to implementation produces rework.
+
+## Workflow
+
+1. **Clarify scope**  -  what is in, what is explicitly out?
+2. **Research**  -  read affected files, callers, config, tests.
+3. **Brief plan** - 5-8 bullets: files, approach, risks, verification.
+4. **Confirm**  -  one clarifying question beats a wrong implementation.
+5. **Implement**  -  smallest correct change.
+6. **Verify**  -  tests, build, or manual checks as appropriate.
+
+Align with project research/orchestration rules when present (e.g. effort tiers in `vibecoding-cost-efficient.mdc`).
+
+## Risks to Identify Early
+
+- Threading, races, and boundary violations.
+- Security and data integrity.
+- Breaking public APIs or config contracts.
+- Out-of-scope creep.
+
+## Cross-links
+
+`root-cause-analysis.mdc`, `architecture.mdc`, `testing.mdc`, `explain-decisions.mdc`.
+
+## Golden Rule
+
+Ten minutes of planning often saves hours of debugging.

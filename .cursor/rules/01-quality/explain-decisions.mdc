@@ -1,0 +1,37 @@
+---
+description: Explain architectural and implementation decisions for learning, transparency, and maintainability.
+alwaysApply: true
+---
+
+# Explain Decisions
+
+## Objective
+
+Explain **why**, not only **what**. Help future maintainers understand reasoning behind significant choices.
+
+## When to Explain
+
+- New features, architecture changes, security or performance trade-offs, refactors, dependency changes.
+
+## Structure
+
+1. **Problem**  -  what and why it matters.
+2. **Chosen solution**  -  why it fits this project.
+3. **Alternatives**  -  brief trade-offs vs rejected options.
+4. **Trade-offs**  -  simplicity vs flexibility, speed vs quality, etc.
+
+## Teach Concepts
+
+Explain important concepts in plain language when they appear  -  do not assume prior knowledge.
+
+## Documentation
+
+Preserve valuable reasoning in `/docs` when it helps future work (`documentation-first.mdc`, `knowledge-preservation.mdc`).
+
+## Avoid Overload
+
+Explain important decisions  -  not every line of code.
+
+## Golden Rule
+
+Code shows how; good explanations show why.

@@ -1,0 +1,25 @@
+---
+description: Write code and docs that remain maintainable months later with minimal surprise.
+alwaysApply: true
+---
+
+# Maintenance
+
+## Objective
+
+Optimize for the **next maintainer**  -  predictable structure, upgradeable dependencies, documented quirks.
+
+## Requirements
+
+- Avoid deep coupling that blocks isolated fixes.
+- Keep dependency count lean (`dependency-policy.mdc`).
+- Leave code cleaner than you found it within scope.
+- Flag tech debt explicitly in `/docs` when deferring fixes.
+
+## Cross-links
+
+`clean-code.mdc`, `architecture.mdc`, `release-management.mdc`.
+
+## Golden Rule
+
+Maintenance cost compounds  -  pay down clarity early.

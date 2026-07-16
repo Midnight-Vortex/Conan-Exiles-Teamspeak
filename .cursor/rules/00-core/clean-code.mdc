@@ -1,0 +1,53 @@
+---
+description: Enforce clean, readable, maintainable, and professional code across the current project.
+alwaysApply: true
+---
+
+# Clean Code
+
+## Objective
+
+Write code that is easy to understand, modify, and maintain. Code is read far more than written  -  optimize for readability first.
+
+## Readability First
+
+Prefer clarity over cleverness. If two solutions perform equally, choose the easier to understand.
+
+## Functions and Modules
+
+- Each function should do one clearly defined task.
+- Keep functions short; extract when logic branches multiply.
+- Name functions and variables by intent, not implementation trivia.
+
+## Naming
+
+- Use consistent, descriptive names matching project conventions.
+- Avoid abbreviations unless established in the codebase.
+- Booleans and flags should read as questions or states (`isValid`, `hasPermission`).
+
+## Comments
+
+- Code should mostly explain itself.
+- Comment non-obvious business rules, invariants, and thread/safety contracts.
+- Do not narrate obvious syntax.
+
+## Error Handling
+
+- Handle errors at appropriate boundaries.
+- Fail clearly; avoid silent swallowing unless documented.
+- Cross-link: `security-first.mdc`, `production-ready.mdc`.
+
+## Duplication
+
+- Do not copy-paste logic  -  extract shared behavior when duplication is real.
+- Cross-link: `code-reuse.mdc`.
+
+## Self Review
+
+âœ“ A new contributor can follow the change without a tour.
+âœ“ Names and structure match the project.
+âœ“ No dead code or commented-out blocks left behind.
+
+## Golden Rule
+
+Write code as if the maintainer is you in six months with no memory of today.

@@ -1,0 +1,39 @@
+---
+description: Design public interfaces that are consistent, secure, predictable, and easy to use.
+alwaysApply: true
+---
+
+# API Design
+
+## Objective
+
+Public interfaces  -  REST, RPC, SDK exports, module headers  -  should be intuitive and consistent. Predictability beats personal preference.
+
+> **If this project has no HTTP/REST API surface:** apply the same principles to the nearest public interface (module APIs, SDK callbacks, CLI commands, RPC, message contracts) or skip.
+
+## Conventions
+
+- Follow existing naming, auth, request/response, and error patterns.
+- Extend conventions; do not invent parallel styles.
+
+## REST (when applicable)
+
+- Resource-oriented routes; correct HTTP methods and status codes.
+- Consistent response envelope for success and errors.
+- Validate all input; authenticate and authorize explicitly.
+- Pagination, filtering, sorting for collections.
+- Version breaking changes; preserve backward compatibility when practical.
+- Idempotent PUT; GET must not mutate state.
+- Errors helpful to consumers, not leaky internals.
+
+## Documentation
+
+Update documentation in `/docs` when the change is significant (see `documentation-first.mdc`).  -  endpoints, contracts, auth, validation, examples.
+
+## Cross-links
+
+`security-first.mdc`, `project-consistency.mdc`, `performance.mdc`.
+
+## Golden Rule
+
+A great API is predictable  -  developers guess correctly before reading every line of docs.

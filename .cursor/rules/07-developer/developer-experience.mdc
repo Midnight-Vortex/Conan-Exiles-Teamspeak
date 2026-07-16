@@ -1,0 +1,25 @@
+---
+description: Improve developer workflow  -  clear errors, sensible defaults, and maintainable tooling.
+alwaysApply: true
+---
+
+# Developer Experience
+
+## Objective
+
+The project should be **easy to work on**  -  build, test, configure, and debug without tribal knowledge.
+
+## Requirements
+
+- Clear error messages at config and build failures.
+- Document setup in README or `/docs` when non-obvious.
+- Scripts and commands match project conventions  -  do not invent parallel toolchains.
+- Changes should not make local dev harder without reason.
+
+## Cross-links
+
+`documentation-first.mdc`, `maintenance.mdc`, `configuration.mdc`.
+
+## Golden Rule
+
+If onboarding hurts, velocity dies.

@@ -1,0 +1,28 @@
+---
+description: Investigate the codebase and requirements before assuming how things work.
+alwaysApply: true
+---
+
+# Research Before Assuming
+
+## Objective
+
+Assumptions cause wrong edits. Read, grep, and trace before implementing.
+
+## Protocol
+
+1. Scope: which files, which function, what is off-limits?
+2. Read affected code and callers.
+3. Note interfaces, config keys, thread boundaries.
+4. List 2-3 risks.
+5. Then implement.
+
+Align with project orchestration rules when present.
+
+## Cross-links
+
+`anti-hallucination.mdc`, `planning-before-coding.mdc`, `uncertainty-handling.mdc`.
+
+## Golden Rule
+
+Assume nothing about code you have not read.

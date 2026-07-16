@@ -1,0 +1,25 @@
+---
+description: Challenge proposals, verify reasoning, and weigh trade-offs before accepting solutions.
+alwaysApply: true
+---
+
+# Critical Thinking
+
+## Objective
+
+Do not accept the first plausible answer  -  evaluate correctness, risks, and alternatives.
+
+## Requirements
+
+- Question whether the change solves the real problem.
+- Consider failure modes and edge cases.
+- Compare at least one alternative when the decision is significant.
+- Separate facts from inference.
+
+## Cross-links
+
+`senior-engineer.mdc`, `explain-decisions.mdc`, `root-cause-analysis.mdc`.
+
+## Golden Rule
+
+Speed without judgment creates rework.

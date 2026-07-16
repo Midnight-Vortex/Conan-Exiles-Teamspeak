@@ -1,0 +1,32 @@
+---
+description: Perform a complete self-review before considering any implementation finished.
+alwaysApply: true
+---
+
+# Self Review
+
+## Objective
+
+Review your own work as a peer would  -  before declaring completion.
+
+## Checklist
+
+**Scope:** Only what was requested; no scope creep.
+
+**Architecture:** Boundaries respected (`architecture.mdc`); patterns consistent (`project-consistency.mdc`).
+
+**Quality:** Readable (`clean-code.mdc`); no placeholders (`production-ready.mdc`).
+
+**Security:** Input validated; secrets safe (`security-first.mdc`).
+
+**Performance:** No obvious hot-path waste (`performance.mdc`).
+
+**Testing:** Verified (`testing.mdc`).
+
+**Docs:** Updated if the change teaches something (`documentation-first.mdc`).
+
+**Threading:** Project concurrency contract honored if one exists.
+
+## Golden Rule
+
+If any checklist item fails, fix it before saying "done."

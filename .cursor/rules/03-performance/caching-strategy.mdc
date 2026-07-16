@@ -1,0 +1,26 @@
+---
+description: Apply caching deliberately with clear invalidation and measurable benefit.
+alwaysApply: true
+---
+
+# Caching Strategy
+
+## Objective
+
+Cache to reduce expensive, repeated work  -  never cache without understanding staleness and invalidation.
+
+## Good Candidates
+
+Expensive computation, stable config, repeated lookups, static reference data.
+
+## Avoid
+
+Caching rapidly changing data without invalidation strategy; caching errors; unbounded caches.
+
+## Cross-links
+
+`performance.mdc`, `context-caching.mdc`, `architecture.mdc`.
+
+## Golden Rule
+
+A cache you cannot invalidate is a bug waiting to happen.

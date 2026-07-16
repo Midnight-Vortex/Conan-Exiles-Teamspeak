@@ -1,0 +1,31 @@
+---
+description: Maintain consistent coding style, architecture, and development approach throughout the current project.
+alwaysApply: true
+---
+
+# Project Consistency
+
+## Objective
+
+The codebase should feel like it was written by one team  -  consistent style, patterns, and vocabulary throughout.
+
+## Requirements
+
+- Match existing naming, formatting, and folder conventions.
+- Use the project's established logging, config, and error patterns.
+- Do not introduce a second way to do the same thing without migration plan.
+- New dependencies must follow `dependency-policy.mdc`.
+
+## When Extending
+
+- Copy the **structure** of neighboring modules, not arbitrary style from other projects.
+- Keep public API shapes predictable (see `api-design.mdc`).
+
+## Self Review
+
+âœ“ The change blends with surrounding code.
+âœ“ No mixed conventions (two config styles, two HTTP client wrappers, etc.).
+
+## Golden Rule
+
+Consistency reduces cognitive load  -  honor what is already there.

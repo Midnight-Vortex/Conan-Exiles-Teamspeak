@@ -1,0 +1,25 @@
+---
+description: Work efficiently  -  targeted reads, focused scope, minimal redundant output.
+alwaysApply: true
+---
+
+# Token Efficiency
+
+## Objective
+
+Achieve quality with **minimal unnecessary context and verbosity**  -  without skipping required research or review.
+
+## Practices
+
+- Grep and targeted reads before full-file dumps.
+- Batch parallel tool calls when independent.
+- Concise user replies; no essays for simple tasks.
+- Do not repeat unchanged context.
+
+## Cross-links
+
+`context-caching.mdc`, `large-project-navigation.mdc`.
+
+## Golden Rule
+
+Efficiency is doing the necessary work once, well.

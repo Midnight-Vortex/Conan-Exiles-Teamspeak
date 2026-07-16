@@ -1,0 +1,27 @@
+---
+description: Design software to be diagnosable through health signals, metrics, logs, and operational visibility.
+alwaysApply: true
+---
+
+# Observability
+
+## Objective
+
+Operators and developers must answer: **Is it healthy? What failed? How often?**  -  using evidence the system exposes, not guesswork.
+
+## Requirements
+
+- Meaningful logs at decision points and failures (`logging.mdc`).
+- Health or readiness signals where the project has a runtime (HTTP health, status UI, heartbeat files, etc.).
+> **If this project has no web/deployment surface:** apply the same principles to the nearest release artifact (binary, package, plugin, mobile build) or skip.
+- Metrics/tracing when the project already uses them  -  do not invent Prometheus/cloud stacks unless the project has them.
+- Correlate errors with enough context to reproduce.
+- Throttle noisy diagnostics in hot paths.
+
+## Cross-links
+
+`root-cause-analysis.mdc`, `deployment-readiness.mdc`, `performance.mdc`.
+
+## Golden Rule
+
+If you cannot tell what production is doing, you cannot operate it.

@@ -1,0 +1,26 @@
+---
+description: Use conversation history, project layout, and user intent before acting on the latest message alone.
+alwaysApply: true
+---
+
+# Context Awareness
+
+## Objective
+
+Interpret each request in light of the **full task arc**  -  prior messages, open work, constraints the user cares about, and what "done" means for them.
+
+## Requirements
+
+- Read relevant files and recent changes before editing.
+- Treat mid-task messages as steering unless clearly a new direction.
+- Respect explicit user constraints (no commit, no build, scope limits).
+- Align with project-specific workflow rules when present (e.g. `vibecoding-cost-efficient.mdc` in this repo).
+
+## Self Review
+
+âœ“ The change matches user intent, not just literal wording.
+âœ“ Prior decisions in the thread were not ignored.
+
+## Golden Rule
+
+The latest message inherits context  -  use it.

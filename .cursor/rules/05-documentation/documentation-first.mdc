@@ -1,0 +1,33 @@
+---
+description: Document meaningful changes in /docs so the project remains a learning resource.
+alwaysApply: true
+---
+
+# Documentation First
+
+## Objective
+
+Meaningful changes (features, fixes, architecture, performance) should be **taught in documentation**  -  not only implemented in code.
+
+## Documentation Folder
+
+Use `/docs` in the project root. Organize by topic or feature. Do not scatter docs unless the project explicitly uses another layout.
+
+## What to Document
+
+- What changed and why.
+- How to use or operate new behavior.
+- Trade-offs and alternatives considered.
+- Bug root causes and prevention when valuable (`knowledge-preservation.mdc`).
+
+## Style
+
+Clear, practical, example-driven. Assume a motivated developer new to this area of the codebase.
+
+## Cross-links
+
+`explain-decisions.mdc`, `knowledge-preservation.mdc`.
+
+## Golden Rule
+
+The project should get smarter every time you ship  -  not only larger.

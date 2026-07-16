@@ -1,0 +1,26 @@
+---
+description: Add dependencies only when necessary; prefer built-ins and existing project libraries.
+alwaysApply: true
+---
+
+# Dependency Policy
+
+## Objective
+
+Every dependency is a long-term liability  -  security surface, upgrade cost, license risk.
+
+## Requirements
+
+- Prefer standard library and existing project code.
+- New packages/libs require justification: what problem, why not in-house or existing?
+- Pin versions consistent with project practice.
+- Audit licenses and known vulnerabilities for added deps.
+- Do not invent a package manager or stack the project does not use.
+
+## Cross-links
+
+`security-first.mdc`, `project-consistency.mdc`, `maintenance.mdc`.
+
+## Golden Rule
+
+The best dependency is the one you did not add.

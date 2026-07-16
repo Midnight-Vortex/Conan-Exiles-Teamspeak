@@ -1,0 +1,28 @@
+---
+description: Apply schema and data migrations safely with rollback paths and backward compatibility.
+alwaysApply: true
+---
+
+# Migration Safety
+
+## Objective
+
+Schema and data changes must be **reproducible, reversible, and safe** under production data.
+
+> **If this project has no database surface:** apply the same principles to the nearest persistent equivalent (files, config, key-value stores, local caches) or skip.
+
+## Requirements
+
+- Use the project's migration tooling; one change per migration when practical.
+- Test migrations on realistic data copies.
+- Prefer additive changes; deprecate before remove.
+- Document rollback steps.
+- Never destructive change without backup and migration path.
+
+## Cross-links
+
+`database-best-practices.mdc`, `deployment-readiness.mdc`, `documentation-first.mdc`.
+
+## Golden Rule
+
+A migration that cannot roll back is a production incident waiting to happen.

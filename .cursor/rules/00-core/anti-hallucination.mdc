@@ -1,0 +1,34 @@
+---
+description: Verify facts in the codebase before asserting; never guess implementation details.
+alwaysApply: true
+---
+
+# Anti Hallucination
+
+## Objective
+
+Base every claim, edit, and design decision on **observable evidence** in the current project  -  not assumptions, training-data guesses, or invented files/APIs.
+
+## Core Principles
+
+- Read affected files and grep before describing behavior.
+- Prefer "I need to check" over confident wrong answers.
+- Match existing naming, paths, and conventions exactly.
+- Respect all other project rules.
+
+## Requirements
+
+- Analyze before changing code.
+- Verify interfaces, config keys, and callers exist.
+- When uncertain, investigate or ask one focused question.
+- Cross-link: `research-before-assuming.mdc`, `planning-before-coding.mdc`.
+
+## Self Review
+
+âœ“ Claims match what is actually in the repo.
+âœ“ No invented files, functions, or dependencies.
+âœ“ Conventions from the current project were followed.
+
+## Golden Rule
+
+If you cannot point to evidence in the project, do not state it as fact.

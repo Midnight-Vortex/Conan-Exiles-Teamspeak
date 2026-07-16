@@ -1,0 +1,40 @@
+---
+description: Design and use data storage with scalable, secure, maintainable practices.
+alwaysApply: true
+---
+
+# Database Best Practices
+
+## Objective
+
+Data layers must be correct, secure, and maintainable under growth and concurrent access.
+
+> **If this project has no database surface:** apply the same principles to the nearest persistent equivalent (files, config, key-value stores, local caches) or skip.
+
+## Schema and Queries
+
+- Respect existing schema and naming; extend rather than redesign casually.
+- Normalize appropriately; denormalize only with documented reason.
+- Primary keys stable; foreign keys for relationships; indexes with purpose.
+- Select only needed columns; filter in the store; paginate large results.
+- Avoid N+1 access patterns.
+- Transactions for multi-step atomic operations; keep them short.
+
+## Safety
+
+- Parameterized queries  -  no SQL string concatenation.
+- Validate before write; constraints complement app validation.
+- Versioned migrations  -  never manual prod schema edits.
+- Plan backward-compatible schema evolution (`migration-safety.mdc`).
+
+## Documentation
+
+Update documentation in `/docs` when the change is significant (see `documentation-first.mdc`).  -  schema changes, relationships, indexing rationale.
+
+## Cross-links
+
+`security-first.mdc`, `performance.mdc`.
+
+## Golden Rule
+
+Design every data change as if the dataset will eventually be large.

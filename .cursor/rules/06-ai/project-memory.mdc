@@ -1,0 +1,24 @@
+---
+description: Use persistent project docs and conventions instead of relying on chat memory alone.
+alwaysApply: true
+---
+
+# Project Memory
+
+## Objective
+
+Long-lived knowledge belongs in the repo (`/docs`, `AGENTS.md`, rules)  -  not only in conversation history.
+
+## Requirements
+
+- Read `AGENTS.md` and project rules at session start when present.
+- Update `/docs` when decisions should survive the session.
+- Respect `REWRITE_PLAN.md`, `plan.md`, or equivalent project planning files  -  edit only when user asks.
+
+## Cross-links
+
+`knowledge-preservation.mdc`, `documentation-first.mdc`.
+
+## Golden Rule
+
+The repo is the source of truth; chat is ephemeral.

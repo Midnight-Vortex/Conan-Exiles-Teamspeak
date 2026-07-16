@@ -1,0 +1,24 @@
+---
+description: Reuse gathered project context within a session; avoid redundant reads and searches.
+alwaysApply: true
+---
+
+# Context Caching
+
+## Objective
+
+Do not re-read the same files and re-grep the same patterns unnecessarily within a task. Reuse valid prior analysis.
+
+## Requirements
+
+- Re-read when files may have changed since last read.
+- Invalidate assumptions after edits or new user constraints.
+- Prefer targeted reads over full-repo scans when scope is known.
+
+## Cross-links
+
+`large-project-navigation.mdc`, `token-efficiency.mdc`.
+
+## Golden Rule
+
+Work smart  -  redundant investigation wastes time and tokens.

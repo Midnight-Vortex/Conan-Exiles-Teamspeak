@@ -1,0 +1,52 @@
+---
+description: Write efficient, scalable code while prioritizing readability over premature optimization.
+alwaysApply: true
+---
+
+# Performance
+
+## Objective
+
+Perform well under realistic workloads while staying clean and maintainable. Optimize intelligently  -  not prematurely.
+
+## Measure Before Optimizing
+
+Identify bottlenecks with evidence. Do not sacrifice readability for theoretical gains.
+
+## Prioritize Algorithms
+
+Better algorithms beat micro-optimizations. Reduce unnecessary work: duplicate queries, repeated parsing, redundant loops.
+
+## Database Performance
+> **If this project has no database surface:** apply the same principles to the nearest persistent equivalent (files, config, key-value stores, local caches) or skip.
+
+Prefer indexed lookups, pagination, selective columns, batching. Avoid N+1 patterns and `SELECT *` when inappropriate.
+
+## API Performance
+> **If this project has no HTTP/REST API surface:** apply the same principles to the nearest public interface (module APIs, SDK callbacks, CLI commands, RPC, message contracts) or skip.
+
+Minimize duplicate network calls; use pagination, filtering, caching where appropriate.
+
+## Memory and Collections
+
+Avoid unbounded growth, unnecessary copies, and retained references. Release resources when done.
+
+## Caching
+
+Cache expensive, stable work  -  with clear invalidation. Cross-link: `caching-strategy.mdc`.
+
+## Concurrency
+
+Parallelize independent work when safe. If the project defines a thread or concurrency contract (see project workflow rules such as `vibecoding-cost-efficient.mdc`), honor it.
+
+## Readability First
+
+Do not make code significantly harder to understand for tiny gains.
+
+## Documentation
+
+Update documentation in `/docs` when the change is significant (see `documentation-first.mdc`).
+
+## Golden Rule
+
+Optimize where it matters; keep everything else simple.

@@ -1,16 +1,18 @@
 ---
-description: Vibecoding Pro+ €60 — Golden Rule, Rewrite, Research, Subagent routing (EN/FR)
+description: Vibecoding Pro+ - Golden Rule, Rewrite, Research, Subagent routing; Conan TS workflow for this repo (EN/FR)
 alwaysApply: true
 ---
 
-## ⛔ MANDATORY — every request · EN
+> **Note:** All other rules in `.cursor/rules/` are **general** (project-agnostic). This file adds **this repository's** orchestration, thread contract, module map, and build workflow.
 
-**This file is binding.** `alwaysApply: true` — applies even without `@` mention.
+## ⛔ MANDATORY - every request · EN
+
+**This file is binding.** `alwaysApply: true` - applies even without `@` mention.
 
 **Before any tool call, edit, or subagent:**
 
 1. **Line 1 of every reply:**  
-   `Vibecoding: ACTIVE · Effort: S0–S4 · Phase: Research|Implement · Rule: vibecoding-cost-efficient.mdc`
+   `Vibecoding: ACTIVE · Effort: S0-S4 · Phase: Research|Implement · Rule: vibecoding-cost-efficient.mdc`
 2. Follow: Golden Rule → Research → Subagent routing → Rewrite (never copy).
 3. **Subagents:** every Task prompt MUST include:  
    `MANDATORY: follow .cursor/rules/vibecoding-cost-efficient.mdc (Golden Rule, rewrite, research first).`
@@ -19,14 +21,14 @@ alwaysApply: true
 
 **User check:** if line 1 is missing → reply: `Bitte Vibecoding-Regel einhalten` / `Please follow vibecoding rule`.
 
-## ⛔ OBLIGATOIRE — chaque requête · FR
+## ⛔ OBLIGATOIRE - chaque requête · FR
 
-**Ce fichier est impératif.** `alwaysApply: true` — s’applique même sans `@`.
+**Ce fichier est impératif.** `alwaysApply: true` - s’applique même sans `@`.
 
 **Avant tout outil, edit ou subagent :**
 
 1. **Ligne 1 de chaque réponse :**  
-   `Vibecoding: ACTIVE · Effort: S0–S4 · Phase: Recherche|Impl · Rule: vibecoding-cost-efficient.mdc`
+   `Vibecoding: ACTIVE · Effort: S0-S4 · Phase: Recherche|Impl · Rule: vibecoding-cost-efficient.mdc`
 2. Respecter : règle d’or → recherche → routage subagent → rewrite (jamais copier).
 3. **Subagents :** chaque prompt Task DOIT inclure la règle ci-dessus.
 4. Pas de code sans protocole de recherche (S2+).
@@ -34,7 +36,7 @@ alwaysApply: true
 
 ---
 
-# Vibecoding — Pro+ (€60/month) + Subagent routing · EN
+# Vibecoding - Pro+ (€60/month) + Subagent routing · EN
 
 **Plan:** Pro+ · ~**$70 API pool** + **Auto/Composer pool** (separate).
 
@@ -46,29 +48,29 @@ The **parent agent is the orchestrator**: assess effort → **research phase** �
 
 > **Build only the one function in scope. Nothing extra.**
 
-- One function = one work package: **describe → code → test** — then move on.
+- One function = one work package: **describe → code → test** - then move on.
 - Then clarify: how does it talk to others (data, threads, locks)?
 - If the AI did something **not requested** → discard and redo.
 - No “while we’re at it”, no preemptive helpers, no extra features.
 - **Each step ends with:** Build OK → tested in TS client (if user says build/test) → then next step.
 
-### Thread rule (foundation — check every function)
+### Thread rule (foundation - check every function)
 
 1. **Only ONE thread** calls the TS API (callback thread) → everything else: **Queue + CEDRAIN**.
-2. **Audio thread (PCM):** never TS API, never locks — lock-free snapshots only.
+2. **Audio thread (PCM):** never TS API, never locks - lock-free snapshots only.
 3. Logging: own lock, never block the API path.
 4. Deduplicate/throttle API calls (3D, unmute, audio mode).
 5. Fixed arrays: bounds checks. Every file: document thread contract at the top.
 
 ---
 
-## Rewrite — never copy
+## Rewrite - never copy
 
 - **Old Mumble plugin** (`Conan-Exiles-Mumblee`) and **old TS plugin** are **reference only**.
 - **Forbidden:** blind copy, paste from `plugin.c`, 1:1 block ports.
 - **Required:** understand behavior → **rewrite** using TS API, naming, thread model, project conventions.
 - Read reference (snippets), derive semantics, **own implementation** in target file.
-- Audio/math: formulas may match — **code structure and call paths** must fit the rewrite.
+- Audio/math: formulas may match - **code structure and call paths** must fit the rewrite.
 
 ---
 
@@ -81,14 +83,14 @@ The **parent agent is the orchestrator**: assess effort → **research phase** �
 1. **Scope:** which file(s), which **one** function, what is explicitly off-limits?
 2. **Thread contract:** who calls? which locks/queues? Golden Rule compliant?
 3. **Existing code:** `grep` + **read** affected files (don’t guess).
-4. **Reference (if porting):** Mumble/old — relevant lines only — note behavior, don’t copy.
-5. **Interfaces:** headers, callers, callees, config keys — lock down before writing.
-6. **Risks:** race, OOB, TS API from wrong thread — 2–3 bullets.
+4. **Reference (if porting):** Mumble/old - relevant lines only - note behavior, don’t copy.
+5. **Interfaces:** headers, callers, callees, config keys - lock down before writing.
+6. **Risks:** race, OOB, TS API from wrong thread - 2-3 bullets.
 
 ### Flow
 
 ```
-Research (explore readonly) → brief protocol (5–8 bullets) → scope OK? → implementation
+Research (explore readonly) → brief protocol (5-8 bullets) → scope OK? → implementation
 ```
 
 - **S3/S4:** research **always** as its own step; subagent prompt includes research output.
@@ -101,9 +103,9 @@ Research (explore readonly) → brief protocol (5–8 bullets) → scope OK? →
 
 | Tier | When | `subagent_type` | `model` | `readonly` |
 |------|------|-----------------|---------|------------|
-| **S0** | 1 grep, yes/no, no change | parent direct | — | — |
+| **S0** | 1 grep, yes/no, no change | parent direct | - | - |
 | **S1** | lookup, read 1 file | `explore` | `composer-2.5-fast` | **true** (research) |
-| **S2** | bugfix 1–3 files | `generalPurpose` | `composer-2.5-fast` | false |
+| **S2** | bugfix 1-3 files | `generalPurpose` | `composer-2.5-fast` | false |
 | **S3** | audio, threading, feature | `generalPurpose` | `claude-sonnet-5-thinking-high` | false |
 | **S4 Review** | review only, bugbot | `explore` / `bugbot` | `claude-sonnet-5-thinking-high` | **true** |
 | **S4 Architecture** | large refactor | `generalPurpose` | `claude-opus-4-8-thinking-high` | false |
@@ -112,19 +114,19 @@ Research (explore readonly) → brief protocol (5–8 bullets) → scope OK? →
 
 ## Implementation flow
 
-1. **First line:** `Effort: Sx — … · Phase: Research|Implement · Delegation: … · Model: …`
+1. **First line:** `Effort: Sx - … · Phase: Research|Implement · Delegation: … · Model: …`
 2. **Research subagent** (readonly) if scope/thread/reference unclear.
 3. **Implement subagent** with research protocol + Golden Rule + “rewrite, don’t copy”.
-4. Parent reply: max 5–8 lines.
+4. Parent reply: max 5-8 lines.
 
 ## Subagent prompt (required fields)
 
 ```
 Repo: E:\programme\Conan-Exiles-Teamspeak
 Golden Rule: only [one function], nothing extra, honor thread contract
-Rewrite: read reference only — rewrite, don’t copy
+Rewrite: read reference only - rewrite, don’t copy
 Research: [bullets: files, thread, callers, risks]
-Scope: only [file] — [function]
+Scope: only [file] - [function]
 Off-limits: [files/features]
 Build: yes/no
 Output: changed files + what must be tested
@@ -141,7 +143,7 @@ API pool >85% → `composer-2.5-fast` only.
 
 ## Project (Conan TS)
 
-- Mumble reference: `Conan-Exiles-Mumblee\plugin.c` (~3644) — **read, don’t copy**.
+- Mumble reference: `Conan-Exiles-Mumblee\plugin.c` (~3644) - **read, don’t copy**.
 - Hub keys: `ts3_server_profile.c` / `hub_parser.c`.
 - Version bump only in `ts3_entry.c` when user says “version”.
 
@@ -160,11 +162,11 @@ API pool >85% → `composer-2.5-fast` only.
 
 ### Project pitfalls (check before coding)
 
-- **Settings:** `ui_settings.c` is **not** in the build — always `showConfigInterface()` in `ui_main.c`.
-- **Config dialog:** F10 and Extras button → `config_dialog_try_open()` / `close()` — no second dialog.
-- **`hubAudioFilterIntensity`:** key exists, **not** wired to audio path — don’t assume it works.
-- **Open field vs reverb:** per `REWRITE_PLAN.md` lowpass **reverb zones only**; global Mumble filter = design decision — ask user.
-- **Client IDs:** `ts3_client_id_valid()` / `TS3_MAX_CLIENT_ID` — never without bounds.
+- **Settings:** `ui_settings.c` is **not** in the build - always `showConfigInterface()` in `ui_main.c`.
+- **Config dialog:** F10 and Extras button → `config_dialog_try_open()` / `close()` - no second dialog.
+- **`hubAudioFilterIntensity`:** key exists, **not** wired to audio path - don’t assume it works.
+- **Open field vs reverb:** per `REWRITE_PLAN.md` lowpass **reverb zones only**; global Mumble filter = design decision - ask user.
+- **Client IDs:** `ts3_client_id_valid()` / `TS3_MAX_CLIENT_ID` - never without bounds.
 - **Phase 4 pattern:** compute outside lock, publish under `g_writerLock`; reconcile dirty flags.
 
 ### Build & test
@@ -176,7 +178,7 @@ powershell -File E:\programme\Conan-Exiles-Teamspeak\build\build_msvc.ps1
 ```
 
 - After build: **restart TS client** (DLL reload).
-- `bin/`, `obj/` — **never commit**.
+- `bin/`, `obj/` - **never commit**.
 - Build only when user says build/deploy or fix must be verified.
 
 ### Definition of done (per function)
@@ -214,7 +216,7 @@ Locks in PCM callback? → bug.
 
 ---
 
-# Vibecoding — Pro+ (60 €/mois) + routage subagents · FR
+# Vibecoding - Pro+ (60 €/mois) + routage subagents · FR
 
 **Forfait :** Pro+ · ~**70 $ pool API** + **pool Auto/Composer** (séparés).
 
@@ -226,29 +228,29 @@ L’**agent parent est l’orchestrateur** : évaluer l’effort → **phase rec
 
 > **Ne construire que la seule fonction prévue. Rien en plus.**
 
-- Une fonction = un lot : **décrire → coder → tester** — puis continuer.
+- Une fonction = un lot : **décrire → coder → tester** - puis continuer.
 - Ensuite : comment communique-t-elle (données, threads, locks) ?
 - Si l’IA fait quelque chose **non demandé** → jeter et refaire.
 - Pas de « autant en profiter pour », pas d’helpers préventifs, pas de features en plus.
 - **Chaque étape se termine par :** build OK → testé dans le client TS (si l’utilisateur dit build/test) → étape suivante.
 
-### Règle threads (fondation — vérifier à chaque fonction)
+### Règle threads (fondation - vérifier à chaque fonction)
 
 1. **Un seul thread** appelle l’API TS (callback) → le reste : **Queue + CEDRAIN**.
-2. **Thread audio (PCM) :** jamais d’API TS, jamais de locks — snapshots lock-free uniquement.
+2. **Thread audio (PCM) :** jamais d’API TS, jamais de locks - snapshots lock-free uniquement.
 3. Logging : lock dédié, ne jamais bloquer le chemin API.
 4. Dédupliquer/limiter les appels API (3D, unmute, mode audio).
 5. Tableaux fixes : bornes. Chaque fichier : contrat thread en tête de fichier.
 
 ---
 
-## Rewrite — ne jamais copier
+## Rewrite - ne jamais copier
 
 - **Ancien plugin Mumble** (`Conan-Exiles-Mumblee`) et **ancien TS** = **référence uniquement**.
 - **Interdit :** copie aveugle, coller depuis `plugin.c`, port 1:1 de blocs.
 - **Obligatoire :** comprendre le comportement → **réécrire** (API TS, nommage, threads, conventions).
 - Lire la référence (extraits), en déduire la sémantique, **implémentation propre** dans le fichier cible.
-- Audio/math : formules identiques possibles — **structure et chemins d’appel** doivent coller au rewrite.
+- Audio/math : formules identiques possibles - **structure et chemins d’appel** doivent coller au rewrite.
 
 ---
 
@@ -261,14 +263,14 @@ L’**agent parent est l’orchestrateur** : évaluer l’effort → **phase rec
 1. **Périmètre :** quels fichiers, quelle **une** fonction, quoi est interdit ?
 2. **Contrat thread :** qui appelle ? quels locks/files ? conforme à la règle d’or ?
 3. **Existant :** `grep` + **lire** les fichiers (ne pas deviner).
-4. **Référence (port) :** Mumble/ancien — lignes pertinentes — noter le comportement, ne pas copier.
-5. **Interfaces :** headers, appelants, appelés, clés config — figer avant d’écrire.
-6. **Risques :** race, OOB, API TS depuis mauvais thread — 2–3 puces.
+4. **Référence (port) :** Mumble/ancien - lignes pertinentes - noter le comportement, ne pas copier.
+5. **Interfaces :** headers, appelants, appelés, clés config - figer avant d’écrire.
+6. **Risques :** race, OOB, API TS depuis mauvais thread - 2-3 puces.
 
 ### Déroulement
 
 ```
-Recherche (explore readonly) → protocole court (5–8 puces) → périmètre OK ? → implémentation
+Recherche (explore readonly) → protocole court (5-8 puces) → périmètre OK ? → implémentation
 ```
 
 - **S3/S4 :** recherche **toujours** en étape séparée ; prompt subagent inclut le résultat.
@@ -281,9 +283,9 @@ Recherche (explore readonly) → protocole court (5–8 puces) → périmètre O
 
 | Niveau | Quand | `subagent_type` | `model` | `readonly` |
 |--------|-------|-----------------|---------|------------|
-| **S0** | 1 grep, oui/non, pas de changement | parent direct | — | — |
+| **S0** | 1 grep, oui/non, pas de changement | parent direct | - | - |
 | **S1** | lookup, lire 1 fichier | `explore` | `composer-2.5-fast` | **true** (recherche) |
-| **S2** | bugfix 1–3 fichiers | `generalPurpose` | `composer-2.5-fast` | false |
+| **S2** | bugfix 1-3 fichiers | `generalPurpose` | `composer-2.5-fast` | false |
 | **S3** | audio, threads, feature | `generalPurpose` | `claude-sonnet-5-thinking-high` | false |
 | **S4 Review** | review seulement | `explore` / `bugbot` | `claude-sonnet-5-thinking-high` | **true** |
 | **S4 Architecture** | gros refactor | `generalPurpose` | `claude-opus-4-8-thinking-high` | false |
@@ -292,19 +294,19 @@ Recherche (explore readonly) → protocole court (5–8 puces) → périmètre O
 
 ## Flux implémentation
 
-1. **Première ligne :** `Effort : Sx — … · Phase : Recherche|Impl · Délégation : … · Modèle : …`
+1. **Première ligne :** `Effort : Sx - … · Phase : Recherche|Impl · Délégation : … · Modèle : …`
 2. **Subagent recherche** (readonly) si périmètre/thread/référence flous.
 3. **Subagent impl** avec protocole + règle d’or + « rewrite, ne pas copier ».
-4. Réponse parent : max 5–8 lignes.
+4. Réponse parent : max 5-8 lignes.
 
 ## Prompt subagent (champs requis)
 
 ```
 Repo: E:\programme\Conan-Exiles-Teamspeak
 Règle d'or: une seule [fonction], rien en plus, contrat thread respecté
-Rewrite: lire la référence — réécrire, ne pas copier
+Rewrite: lire la référence - réécrire, ne pas copier
 Recherche: [puces: fichiers, thread, appelants, risques]
-Périmètre: seulement [fichier] — [fonction]
+Périmètre: seulement [fichier] - [fonction]
 Interdit: [fichiers/features]
 Build: oui/non
 Résultat: fichiers modifiés + tests à faire
@@ -321,7 +323,7 @@ Pool API >85 % → `composer-2.5-fast` uniquement.
 
 ## Projet (Conan TS)
 
-- Référence Mumble : `Conan-Exiles-Mumblee\plugin.c` (~3644) — **lire, ne pas copier**.
+- Référence Mumble : `Conan-Exiles-Mumblee\plugin.c` (~3644) - **lire, ne pas copier**.
 - Clés hub : `ts3_server_profile.c` / `hub_parser.c`.
 - Version seulement dans `ts3_entry.c` si l’utilisateur dit « version ».
 
@@ -340,11 +342,11 @@ Pool API >85 % → `composer-2.5-fast` uniquement.
 
 ### Pièges projet (vérifier avant code)
 
-- **Paramètres :** `ui_settings.c` **absent** du build — toujours `showConfigInterface()` dans `ui_main.c`.
-- **Dialogue config :** F10 et bouton Extras → `config_dialog_try_open()` / `close()` — pas de second dialogue.
-- **`hubAudioFilterIntensity` :** clé existante, **non** câblée à l’audio — ne pas supposer qu’elle agit.
-- **Champ ouvert vs reverb :** selon `REWRITE_PLAN.md` lowpass **zones reverb seulement** ; filtre Mumble global = décision design — demander à l’utilisateur.
-- **IDs client :** `ts3_client_id_valid()` / `TS3_MAX_CLIENT_ID` — jamais sans bornes.
+- **Paramètres :** `ui_settings.c` **absent** du build - toujours `showConfigInterface()` dans `ui_main.c`.
+- **Dialogue config :** F10 et bouton Extras → `config_dialog_try_open()` / `close()` - pas de second dialogue.
+- **`hubAudioFilterIntensity` :** clé existante, **non** câblée à l’audio - ne pas supposer qu’elle agit.
+- **Champ ouvert vs reverb :** selon `REWRITE_PLAN.md` lowpass **zones reverb seulement** ; filtre Mumble global = décision design - demander à l’utilisateur.
+- **IDs client :** `ts3_client_id_valid()` / `TS3_MAX_CLIENT_ID` - jamais sans bornes.
 - **Pattern phase 4 :** calcul hors lock, publish sous `g_writerLock` ; réconcilier dirty flags.
 
 ### Build & test
@@ -356,7 +358,7 @@ powershell -File E:\programme\Conan-Exiles-Teamspeak\build\build_msvc.ps1
 ```
 
 - Après build : **redémarrer le client TS**.
-- `bin/`, `obj/` — **ne jamais committer**.
+- `bin/`, `obj/` - **ne jamais committer**.
 - Build seulement si l’utilisateur dit build/deploy ou si le fix doit être vérifié.
 
 ### Definition of done (par fonction)

@@ -1,0 +1,27 @@
+---
+description: Implement structured, meaningful logging for debugging and operations without harming performance or security.
+alwaysApply: true
+---
+
+# Logging
+
+## Objective
+
+Logs should answer **what happened, where, and why**  -  enough to debug production issues without noise or secret leakage.
+
+## Requirements
+
+- Use the project's logging API and levels consistently.
+- Structured context: module, operation, correlation id when the project supports it.
+- Never log passwords, tokens, or PII unless explicitly required and redacted.
+- Appropriate severity: debug for diagnosis, error for failures that need action.
+- If the project defines a thread or concurrency contract (see project workflow rules such as `vibecoding-cost-efficient.mdc`), honor it.  -  do not log from forbidden hot paths if the project defines them.
+- Remove temporary diagnostic spam after root-cause work.
+
+## Cross-links
+
+`observability.mdc`, `security-first.mdc`, `root-cause-analysis.mdc`, `performance.mdc`.
+
+## Golden Rule
+
+Good logs are signal; bad logs are noise that hides failures.

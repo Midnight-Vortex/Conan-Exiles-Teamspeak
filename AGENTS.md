@@ -1,10 +1,11 @@
 # Agent instructions — Conan Exiles TeamSpeak
 
-**Every agent request in this repo MUST follow:**
+**Every agent request in this repo MUST follow ALL rules in `.cursor/rules/` with `alwaysApply: true`**, especially:
 
-`.cursor/rules/vibecoding-cost-efficient.mdc`
+- `.cursor/rules/vibecoding-cost-efficient.mdc` — **this repo's** workflow (effort tiers, subagents, thread contract, build)
+- All other `.cursor/rules/**/*.mdc` — **general** engineering principles (architecture, security, testing, docs, etc.)
 
-That rule has `alwaysApply: true`. Do not skip it.
+Do not skip any alwaysApply rule.
 
 ## Before any tool call (mandatory)
 
@@ -12,32 +13,22 @@ That rule has `alwaysApply: true`. Do not skip it.
 2. Read **`.cursor/rules/vibecoding-cost-efficient.mdc`** (full file if not already in context).
 3. User-global: `~/.cursor/rules/read-project-rules-first.mdc` also applies.
 
-Skipping step 2 → user sees a UI reminder; realign before continuing.
-
 ## Required on every reply (line 1)
 
 ```
 Vibecoding: ACTIVE · Effort: Sx · Phase: Research|Implement · Rule: vibecoding-cost-efficient.mdc
 ```
 
-## Required workflow
+## This repo only (vibecoding)
 
 1. Assess effort (S0–S4)
 2. Research before code (S2+)
-3. Delegate to subagent with matching model (see rule table)
+3. Delegate to subagent with matching model
 4. Golden Rule: one function only, nothing extra
 5. Rewrite from reference — never blind copy from Mumble/old plugin
 6. Thread rule: TS API only on callback thread (Queue + CEDRAIN)
 
-## Subagents
-
-Pass this in every Task prompt:
-
-```
-MANDATORY: follow .cursor/rules/vibecoding-cost-efficient.mdc
-```
-
-Subagents may not receive project rules automatically — the parent must inject them.
+Subagents: pass `MANDATORY: follow .cursor/rules/vibecoding-cost-efficient.mdc` in every Task prompt.
 
 ## References
 

@@ -1,0 +1,24 @@
+---
+description: State uncertainty explicitly; investigate or ask instead of guessing.
+alwaysApply: true
+---
+
+# Uncertainty Handling
+
+## Objective
+
+When unsure, say so  -  then read code, run commands, or ask one focused question.
+
+## Requirements
+
+- Never fabricate APIs, paths, or behavior.
+- Prefer investigation over confident hallucination.
+- Offer options with trade-offs when the user must decide.
+
+## Cross-links
+
+`anti-hallucination.mdc`, `research-before-assuming.mdc`.
+
+## Golden Rule
+
+"I don't know yet" plus investigation beats a wrong answer.

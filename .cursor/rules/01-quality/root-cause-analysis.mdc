@@ -1,0 +1,60 @@
+---
+description: Identify and resolve the true root cause of problems instead of treating symptoms or speculative fixes.
+alwaysApply: true
+---
+
+# Root Cause Analysis
+
+## Objective
+
+Investigate every bug or failure to find the **true root cause** before changing code. Never apply speculative fixes.
+
+## Diagnose Before Fixing
+
+1. Observe the problem.
+2. Gather evidence (logs, traces, tests, config, runtime behavior).
+3. Identify the affected system.
+4. Trace execution flow.
+5. Determine the actual cause.
+6. Only then implement the fix.
+
+Never reverse this order.
+
+## Evidence First
+
+Base conclusions on observable evidence. Avoid assumptions.
+
+## Reproduce
+
+Reproduce the issue when practical. Understand the exact sequence that triggers failure.
+
+## Fix the Cause, Not Symptoms
+
+Remove the cause rather than hiding symptoms (retries without understanding, broad catch-all handlers, feature disables).
+
+## Minimize Changes
+
+Smallest reasonable change that fully resolves the issue. Align with project scope rules.
+
+## Verify
+
+Confirm the issue is resolved, no regressions, related functionality still works.
+
+## Learn
+
+Ask why the bug was possible; improve validation, tests, or architecture if warranted. Update documentation in `/docs` when the change is significant (see `documentation-first.mdc`).
+
+## Cross-links
+
+`planning-before-coding.mdc`, `logging.mdc`, `testing.mdc`, `self-review.mdc`.
+
+## Self Review
+
+âœ“ Root cause identified and explained.
+âœ“ Fix addresses cause, not symptom.
+âœ“ No unnecessary changes.
+âœ“ Verification performed.
+
+## Golden Rule
+
+Every bug tells a story  -  understand it, fix the cause, leave the software stronger.

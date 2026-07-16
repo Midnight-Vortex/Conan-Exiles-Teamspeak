@@ -1,0 +1,25 @@
+---
+description: Preserve institutional knowledge in docs and code so lessons are not lost between sessions or contributors.
+alwaysApply: true
+---
+
+# Knowledge Preservation
+
+## Objective
+
+Capture decisions, incident lessons, and non-obvious constraints so future work does not rediscover the same pitfalls.
+
+## Requirements
+
+- Significant bugs and RCA outcomes â†’ `/docs` when they teach something durable.
+- Architecture decisions worth remembering â†’ `/docs` or ADR-style notes.
+- Do not dump into planning files unless the user asks  -  use `/docs`.
+- Code comments for invariants that docs would miss (thread contracts, file formats).
+
+## Cross-links
+
+`documentation-first.mdc`, `explain-decisions.mdc`, `root-cause-analysis.mdc`.
+
+## Golden Rule
+
+If only chat history knows why, the knowledge is already lost.

@@ -1,0 +1,27 @@
+---
+description: Ensure changes are deployable, reversible, and operable in real environments.
+alwaysApply: true
+---
+
+# Deployment Readiness
+
+## Objective
+
+Code that works locally must also be **deployable, configurable, and recoverable** in target environments.
+
+## Requirements
+
+- Follow project build/release pipeline; document new steps in `/docs` when non-obvious.
+- Config and secrets separated from artifacts.
+- Migrations or schema changes versioned and reversible when applicable (`migration-safety.mdc`).
+- Consider rollback: can this change be undone safely?
+- Smoke-test or verify after deploy when the user requests build/deploy.
+> **If this project has no web/deployment surface:** apply the same principles to the nearest release artifact (binary, package, plugin, mobile build) or skip.
+
+## Cross-links
+
+`configuration.mdc`, `testing.mdc`, `release-management.mdc`.
+
+## Golden Rule
+
+Undeployable code is unfinished code.
