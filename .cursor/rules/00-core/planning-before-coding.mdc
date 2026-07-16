@@ -1,7 +1,7 @@
 ---
 description: Plan the approach before writing implementation code.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Planning Before Coding

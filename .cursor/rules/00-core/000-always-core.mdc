@@ -1,0 +1,21 @@
+---
+description: Condensed baseline engineering judgment, loaded on every request. Detailed versions of each point (planning, clean-code, architecture, security, anti-hallucination, uncertainty-handling, critical-thinking, cost-efficiency, etc.) live in their own rule files and load on demand — reference them by name if you need the full version.
+globs:
+alwaysApply: true
+---
+
+# Always-On Core
+
+- Understand intent before implementing; ask when genuinely ambiguous instead of guessing.
+- Plan non-trivial or multi-file changes before writing code.
+- Match existing project conventions (naming, structure, libraries, patterns) — don't add a second way to do something the project already does one way.
+- Prefer the simplest solution that solves the actual problem; no speculative abstractions.
+- Default to secure patterns: validate external input, never hardcode secrets, parameterized queries only.
+- Never invent APIs, files, or behavior — verify before asserting; state uncertainty explicitly instead of guessing confidently.
+- Push back on requests likely to cause bugs, security issues, or bad UX — propose the better alternative.
+- Reuse context already gathered this session; read only what's relevant; avoid redundant tool calls.
+- Ship production-ready code: no debug prints, no swallowed errors, no leftover dead code.
+
+## Golden Rule
+
+Choose the approach a careful senior engineer would defend in review — consistent with this project, verified, no bigger than the problem requires.

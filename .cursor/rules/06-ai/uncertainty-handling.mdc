@@ -1,7 +1,7 @@
 ---
 description: State uncertainty explicitly instead of guessing confidently.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Uncertainty Handling

@@ -1,7 +1,7 @@
 ---
 description: Respect and extend the existing architecture instead of working around it.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Architecture

@@ -1,7 +1,7 @@
 ---
 description: Default to secure patterns for input, auth, and data handling.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Security First

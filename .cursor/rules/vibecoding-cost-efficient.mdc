@@ -1,6 +1,5 @@
 ---
 description: Optimize AI token usage and cost across a working session.
-globs: 
 alwaysApply: true
 ---
 
@@ -8,36 +7,480 @@ alwaysApply: true
 
 ## Objective
 
-Keep AI-assisted development fast and cheap by avoiding redundant reads, re-analysis, and unnecessary tool calls, without sacrificing correctness.
+Complete development tasks with the minimum amount of model usage, file reads, reasoning, and tool calls while maintaining correctness.
 
-## Core Principles
+The assistant should always prefer:
 
-- Reuse context already gathered earlier in the session (see context-caching, project-memory) instead of rereading files.
-- Read only files actually relevant to the current task.
-- Avoid duplicate analysis of the same code/structure.
-- Prefer incremental, targeted changes over broad exploratory rewrites.
+- Reusing existing context
+- Incremental edits
+- Smallest capable model
+- Fewest tool calls
+- Targeted reads
+- Cached architectural knowledge
 
-## Requirements
+Escalate only when complexity actually requires it.
 
-- Check whether needed information was already established earlier in the session before re-fetching it.
-- Scope file reads to the relevant section/function when the file is large.
-- Batch related tool calls instead of many small sequential ones where the tool supports it.
-- Cache architectural knowledge (stack, structure, conventions) gathered during the session and reuse it.
+---
 
-## Anti-Patterns to Avoid
+# Status Header (every reply)
 
-- Re-reading the same file repeatedly for information already captured.
-- Reading entire large files when only a specific function/section is relevant.
-- Re-deriving already-established project facts from scratch each turn.
+```text
+Vibecoding: ACTIVE · Model: {model} · Effort: Sx · Phase: {phase} · Rules: {rules} · Task: {task}
+```
 
-## Self Review
+Definitions:
 
-Before considering work complete, verify:
+- ACTIVE / INACTIVE
+- Effort: S0-S4
+- Phase: Research | Plan | Implement | Review
+- Rules: vibecoding-cost-efficient.mdc + loaded rules
+- Task: max 8 words
 
-✓ No redundant file reads or re-analysis occurred for already-known information.
-✓ Tool usage was proportional to the actual task, not exploratory beyond need.
-✓ Correctness was preserved — efficiency never came at the cost of a wrong or incomplete answer.
+---
 
-## Golden Rule
+# Golden Principles
 
-Minimize tool usage and token spend, but never at the expense of correctness.
+Priority order:
+
+1. Correctness
+2. Minimize token usage
+3. Minimize context usage
+4. Minimize file reads
+5. Minimize tool calls
+6. Minimize reasoning depth
+7. Minimize expensive models
+
+Never sacrifice correctness to save tokens.
+
+---
+
+# Complexity Assessment
+
+Always classify the task before doing any work.
+
+| Level | Description |
+|---------|------------|
+| S0 | Pure answer, no code inspection |
+| S1 | Single function/file |
+| S2 | Multiple files or small feature |
+| S3 | Cross-module investigation |
+| S4 | Large refactor / architecture |
+
+Increase effort only when evidence requires it.
+
+Never assume S3/S4 immediately.
+
+---
+
+# Preferred Model Routing
+
+Use the smallest capable model.
+
+### S0
+
+Preferred:
+
+- Claude Haiku
+- Composer Fast
+
+Typical work:
+
+- explanation
+- markdown
+- docs
+- comments
+- formatting
+- JSON
+- YAML
+- regex
+- simple config
+
+Never use Opus.
+
+---
+
+### S1
+
+Preferred:
+
+Claude Sonnet
+
+Typical work:
+
+- bugfix
+- feature
+- API
+- SQL
+- frontend
+- backend
+
+Avoid Opus unless reasoning becomes difficult.
+
+---
+
+### S2
+
+Preferred:
+
+Claude Sonnet
+
+Escalate only if:
+
+- >5 related files
+- unclear architecture
+- repeated failed attempts
+
+---
+
+### S3
+
+Preferred:
+
+Claude Opus
+
+Use only when investigation spans multiple systems or deep reasoning is required.
+
+---
+
+### S4
+
+Preferred:
+
+Claude Opus
+
+Architecture only.
+
+Never use for trivial edits.
+
+---
+
+# Automatic Escalation
+
+Escalate model only when:
+
+✓ previous attempt failed
+
+✓ architecture unclear
+
+✓ security critical
+
+✓ migration
+
+✓ concurrency
+
+✓ distributed systems
+
+✓ performance investigation
+
+✓ complex algorithm
+
+Otherwise stay on current model.
+
+---
+
+# Automatic Downgrade
+
+Downgrade whenever possible.
+
+Examples:
+
+Docs
+
+↓
+
+Haiku
+
+Formatting
+
+↓
+
+Haiku
+
+README
+
+↓
+
+Haiku
+
+Comments
+
+↓
+
+Haiku
+
+JSON
+
+↓
+
+Haiku
+
+Config
+
+↓
+
+Haiku
+
+Tests only
+
+↓
+
+Haiku
+
+---
+
+# File Read Policy
+
+Always:
+
+Read only required files.
+
+Never:
+
+Read entire repositories.
+
+Never:
+
+Read files already analyzed this session.
+
+Large files:
+
+Jump directly to relevant function or section.
+
+---
+
+# Context Cache
+
+Maintain internal cache of:
+
+- architecture
+- directory layout
+- framework
+- coding style
+- conventions
+- dependencies
+- repeated file locations
+
+Reuse cache instead of rereading files.
+
+Invalidate only when changes require it.
+
+---
+
+# Duplicate Prevention
+
+Never:
+
+Read same file twice for identical information.
+
+Never:
+
+Re-analyze previously understood architecture.
+
+Never:
+
+Repeat expensive searches.
+
+Reuse previous findings.
+
+---
+
+# Tool Usage
+
+Batch tool calls whenever supported.
+
+Prefer:
+
+One search
+
+instead of
+
+Five searches.
+
+Prefer:
+
+One edit
+
+instead of
+
+Many tiny edits.
+
+Avoid unnecessary shell commands.
+
+Avoid unnecessary git commands.
+
+Avoid rebuilding unless required.
+
+---
+
+# Subagent Selection
+
+Default:
+
+One subagent.
+
+Use parallel agents only when workstreams are independent.
+
+| Task | Subagent | Preferred Model |
+|---------|------------|----------------|
+| Explore | explore | composer-fast |
+| Search | explore | composer-fast |
+| Build | shell | composer-fast |
+| Tests | shell | composer-fast |
+| Implementation | generalPurpose | Sonnet |
+| Deep reasoning | generalPurpose | Opus |
+| Review | bugbot | Default |
+| Security | security-review | Default |
+| CI | ci-investigator | Default |
+
+Always inject:
+
+```
+MANDATORY:
+Follow .cursor/rules/vibecoding-cost-efficient.mdc
+```
+
+---
+
+# Change Size Routing
+
+Tiny edit (<20 lines)
+
+↓
+
+Haiku
+
+Small edit (<150)
+
+↓
+
+Sonnet
+
+Medium (<500)
+
+↓
+
+Sonnet
+
+Large (>500)
+
+↓
+
+Opus
+
+---
+
+# Risk Routing
+
+Low Risk
+
+- docs
+- comments
+- markdown
+- config
+
+↓
+
+Haiku
+
+Medium Risk
+
+- API
+- backend
+- frontend
+- SQL
+
+↓
+
+Sonnet
+
+High Risk
+
+- auth
+- payments
+- security
+- migrations
+- infrastructure
+- threading
+- distributed systems
+
+↓
+
+Opus
+
+---
+
+# Architecture Rules
+
+Prefer:
+
+Incremental modifications.
+
+Avoid:
+
+Large rewrites.
+
+Modify existing code before introducing abstractions.
+
+Create new abstractions only when duplication or complexity clearly justifies them.
+
+---
+
+# Investigation Rules
+
+When debugging:
+
+Observe
+
+↓
+
+Locate
+
+↓
+
+Verify
+
+↓
+
+Fix
+
+↓
+
+Verify again
+
+Never fix based only on assumptions.
+
+---
+
+# Self Review
+
+Before completion verify:
+
+✓ No redundant reads
+
+✓ No redundant searches
+
+✓ No repeated analysis
+
+✓ Smallest capable model used
+
+✓ Minimal reasoning
+
+✓ Minimal context
+
+✓ Minimal tools
+
+✓ Correctness preserved
+
+✓ No unnecessary rewrites
+
+✓ Existing code reused
+
+---
+
+# Golden Rule
+
+Spend tokens only where they create measurable value.
+
+Cheap tasks should remain cheap.
+
+Expensive reasoning should only be used for genuinely complex engineering problems.

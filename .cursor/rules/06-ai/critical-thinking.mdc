@@ -1,7 +1,7 @@
 ---
 description: Question requirements that seem wrong instead of complying blindly.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Critical Thinking

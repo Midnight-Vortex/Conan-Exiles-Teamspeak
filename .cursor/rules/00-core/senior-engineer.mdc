@@ -1,7 +1,7 @@
 ---
 description: Think and act like a senior engineer, not a code generator.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Senior Engineer

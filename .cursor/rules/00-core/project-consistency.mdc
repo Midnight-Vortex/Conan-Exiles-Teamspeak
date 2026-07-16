@@ -1,7 +1,7 @@
 ---
 description: Match existing conventions: naming, structure, tooling, style.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Project Consistency

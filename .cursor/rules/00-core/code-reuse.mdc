@@ -1,7 +1,7 @@
 ---
 description: Reuse existing code before writing new code.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Code Reuse

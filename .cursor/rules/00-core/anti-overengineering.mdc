@@ -1,7 +1,7 @@
 ---
 description: Solve the actual problem — no speculative abstractions or unused flexibility.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Anti-Overengineering

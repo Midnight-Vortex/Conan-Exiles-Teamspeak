@@ -1,7 +1,7 @@
 ---
 description: Use the actual project context — don't answer from generic defaults.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Context Awareness
