@@ -64,14 +64,21 @@ Jede Phase endet mit: **gcc-Tests gruen + MinGW-Cross-Build OK** → Commit → 
 | **V8.3** | Thread-Kern I: PCM-Besitz (Generation-Counter statt Cross-Thread-Reset), EIN Hotkey-Poller, UI-Recompute nur noch Flag+Wakeup (nie `recompute_all` vom UI-Thread) | Cross-Build + Tests | Ja | ✅ gebaut 2026-07-23 (`doku/aenderungen/003`+`004`) — **TS-Client-Test offen** |
 | **V8.4** | Thread-Kern II: Command-Queue als Steuerkanal (typisierte Kommandos statt Flag-Labyrinth), Wakeup-Neubau ohne Off-Thread-API, CEDRAIN-Dispatcher mit Budget, `ts3d_apply` von `cepos_send_pending` entkoppeln | Cross-Build + Tests | Ja (Lasttest) |
 | **V8.5** | Ein-Besitzer-Zustand: Config-Single-Writer (F10 → `g_config`, `config_files.c` stirbt), Verbindungs-Epoche atomar, Kanal-ID-Quelle vereinheitlichen | Cross-Build + Tests | Ja |
-| **V8.6** | Schichten-Sanierung: `core/` ohne `ts/`/`ui/`-Includes (voice_modes/channel_manage/nick aufteilen: purer Kern + TS-Port), Legacy-Blob abbauen (`validation.c`, `util_base.c`, `proximity_volume.c`, `plugin_internal.h`) | Cross-Build + Tests | Kurztest |
+| **V8.6** | Schichten-Sanierung: `core/` ohne `ts/`/`ui/`-Includes (voice_modes/channel_manage/nick aufteilen: purer Kern + TS-Port), Legacy-Blob abbauen (`validation.c`, `util_base.c`, `proximity_volume.c`, `plugin_internal.h`) | Cross-Build + Tests | Kurztest | 🔶 begonnen 2026-07-23: `nick_anonymize.h` entkoppelt (`doku/aenderungen/007`); Rest offen |
 | **V8.7** | UI-Rewrite: `ui_main.c` in 5 Dateien splitten (Dialog-Shell / Controls / Draw / Presets / Steam-Pfad), Save-Pfad ueber Callback-Thread, Overlay-Teardown joinbar | Cross-Build | Ja |
 | **V8.8** | Shutdown-Haertung + Lasttest-Harness: alle Threads joinen, Reihenfolge dokumentiert, CEPOS-Flood-Simulation (200 Spieler) als Testskript | Tests + Harness | Ja (30 min) |
 | **V8.9** | Doku-Vervollstaendigung, `plugin.h`-Restabbau, Version **8.0.0** final | Alles gruen | Abnahme |
 
-**Reihenfolge ist bindend** (wie V7). Phasen V8.0–V8.3 wurden in der ersten V8-Session
-umgesetzt (Build+Tests maschinell verifiziert). **Vor V8.4 muss V8.3 im echten TS-Client
-getestet werden** — die manuellen Testschritte stehen in `doku/aenderungen/003` und `004`.
+**Reihenfolge ist bindend** (wie V7). Phasen V8.0–V8.3 wurden umgesetzt (Build+Tests
+maschinell verifiziert). **Vor V8.4 muss V8.3 im echten TS-Client getestet werden** —
+die manuellen Testschritte stehen in `doku/aenderungen/003` und `004`.
+
+Da der TS-Client-Hoertest in der Cloud-Umgebung nicht moeglich ist, wurden zusaetzlich
+die **laufzeit-unabhaengigen** Pakete vorgezogen (voll per Cross-Build + gcc-Tests
+verifizierbar, kein Audio noetig): Beginn von V8.6 (`nick_anonymize.h`-Entkopplung,
+`doku/007`), erweiterte Test-Abdeckung (158 → 241 Checks, `doku/008`) und die
+**CI-Automatisierung** des Sicherheitsnetzes (`doku/009`). Der risikoreiche
+V8.4-Queue-Umbau bleibt bewusst zurueckgestellt, bis ein Hoertest verfuegbar ist.
 
 ---
 
