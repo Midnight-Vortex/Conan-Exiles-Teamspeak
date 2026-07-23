@@ -9,9 +9,9 @@
  * config, the server profile clamps the result.
  *
  * Thread contract:
- *  - voice_mode_hotkey_poll: pos watcher tick + key-monitor thread
- *    (PLUGIN_POLL_INTERVAL_MS). Only touches atomics + Win32 key state;
- *    never the TS API.
+ *  - voice_mode_hotkey_poll: key-monitor thread ONLY (single owner of the
+ *    arming/debounce state; PLUGIN_POLL_INTERVAL_MS). Only touches atomics
+ *    + Win32 key state; never the TS API.
  *  - voice_mode_apply / voice_mode_toggle: any thread (atomic mode store,
  *    wakeup request; chat notify is deferred to the callback thread).
  *  - voice_mode_flush_notify: TS callback thread ONLY (prints to chat).
@@ -41,7 +41,8 @@ void voice_mode_apply(VoiceMode mode);
 void voice_mode_toggle(void);
 
 /* 11.3 poll hotkeys (debounced, TS-PTT-safe: re-arm only on GetKeyState
-   release). Pos watcher tick callback (PLUGIN_POLL_INTERVAL_MS). */
+   release). Single caller: key-watcher thread (keyMonitorThreadFunction) —
+   never add a second poller (unsynchronized arming state). */
 void voice_mode_hotkey_poll(void);
 
 /* Print pending mode-change notification to the TS chat tab.

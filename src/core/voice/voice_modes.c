@@ -18,7 +18,7 @@
 /* Current mode — atomic, read from cepos build path / written by hotkeys. */
 static volatile long g_currentMode = VOICE_MODE_NORMAL;
 
-/* Hotkey state — polled from the pos watcher tick and key-monitor thread.
+/* Hotkey state — polled from the key-monitor thread ONLY (single owner).
    Start armed (1) so the first key press is not missed before a release poll. */
 static char g_keyArmed[256];
 static ULONGLONG g_keySuppressUntil[256];
@@ -195,8 +195,10 @@ void voice_mode_toggle(void) {
     }
 }
 
-/* ---- 11.3 hotkeys (pos watcher + key-monitor threads) ------------------------- */
+/* ---- 11.3 hotkeys (key-monitor thread — single caller) ------------------------ */
 
+/* Single-caller contract: only keyMonitorThreadFunction (key_watcher.c) may
+   call this — the arming/debounce state has exactly one writer thread. */
 void voice_mode_hotkey_poll(void) {
     PluginConfig cfg;
     config_copy(&cfg);

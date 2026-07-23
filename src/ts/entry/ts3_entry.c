@@ -91,11 +91,6 @@ static void ts3_on_local_position_update(void) {
     ts3_audio_on_local_position_update();
 }
 
-/* Pos watcher tick (every PLUGIN_POLL_INTERVAL_MS): voice hotkeys. */
-static void ts3_on_watcher_tick(void) {
-    voice_mode_hotkey_poll();
-}
-
 #define PLUGIN_API_VERSION 26
 
 /* TS function table — stored on load, used by later phases. */
@@ -217,7 +212,8 @@ int ts3plugin_init(void) {
     plugin_ui_init();
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
-    pos_watcher_set_tick_callback(ts3_on_watcher_tick);
+    /* No tick callback: voice hotkeys are polled ONLY by the key-watcher
+       thread (single owner of the arming/debounce state — see voice_modes.h). */
     pos_watcher_start();
     overlay_schedule_start();
     if (log_is_enabled()) {
