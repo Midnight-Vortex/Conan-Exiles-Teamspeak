@@ -1,4 +1,5 @@
 #include "ts/adapter/ts3_adapter.h"
+#include "ts/adapter/ts3_cmd_ring.h"
 #include "core/util/poll_interval.h"
 #include "core/util/wakeup_policy.h"
 #include "core/util/log.h"
@@ -174,24 +175,22 @@ anyID ts3_get_local_client_id(void) {
     return (anyID)InterlockedCompareExchange(&g_localClientID, 0, 0);
 }
 
-/* ---- 3.2 command queue --------------------------------------------------- */
+/* ---- 3.2 command queue (control-plane channel B — see ts3_adapter.h) ----- */
 
-#define TS3_CMD_QUEUE_SIZE 256
-
-/* Ring buffer with its own private lock. The lock only guards the memcpy of
-   one command in push/pop — commands are executed OUTSIDE the lock, so the
-   TS API is never called while this lock is held. */
+/* The pure ring (index math + element copy) lives in ts3_cmd_ring.h so it can
+   be host-unit-tested without Win32. THIS file owns the single lock that makes
+   it safe from any producer thread: the lock only guards one push/pop copy —
+   commands EXECUTE outside the lock (see ts3_cmd_queue_drain), so the TS API is
+   never called while the lock is held. */
 static CRITICAL_SECTION g_cmdLock;
 static INIT_ONCE g_cmdLockOnce = INIT_ONCE_STATIC_INIT;
-static Ts3Command g_cmdQueue[TS3_CMD_QUEUE_SIZE];
-static int g_cmdHead = 0; /* next pop  */
-static int g_cmdTail = 0; /* next push */
-static int g_cmdCount = 0;
-static volatile long g_cmdDropped = 0;
+static Ts3CmdRing g_cmdRing;
+static long g_cmdDroppedLogged = 0; /* last dropped count we logged at */
 
 static BOOL CALLBACK ts3_cmd_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
     (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_cmdLock);
+    ts3_cmd_ring_init(&g_cmdRing);
     return TRUE;
 }
 
@@ -205,21 +204,16 @@ int ts3_cmd_queue_push(const Ts3Command* cmd) {
     }
     ts3_cmd_lock_ensure();
 
-    int pushed = 0;
+    int pushed;
+    long dropped;
     EnterCriticalSection(&g_cmdLock);
-    if (g_cmdCount < TS3_CMD_QUEUE_SIZE) {
-        g_cmdQueue[g_cmdTail] = *cmd;
-        g_cmdTail = (g_cmdTail + 1) % TS3_CMD_QUEUE_SIZE;
-        g_cmdCount++;
-        pushed = 1;
-    }
+    pushed = ts3_cmd_ring_push(&g_cmdRing, cmd);
+    dropped = g_cmdRing.dropped;
     LeaveCriticalSection(&g_cmdLock);
 
-    if (!pushed) {
-        long dropped = InterlockedIncrement(&g_cmdDropped);
-        if ((dropped % 100) == 1) {
-            log_write("TS-CMD: queue full, dropped=%ld", dropped);
-        }
+    if (!pushed && dropped != g_cmdDroppedLogged) {
+        g_cmdDroppedLogged = dropped;
+        log_write("TS-CMD: queue full, dropped=%ld", dropped);
     }
     return pushed;
 }
@@ -227,14 +221,9 @@ int ts3_cmd_queue_push(const Ts3Command* cmd) {
 static int ts3_cmd_queue_pop(Ts3Command* out) {
     ts3_cmd_lock_ensure();
 
-    int popped = 0;
+    int popped;
     EnterCriticalSection(&g_cmdLock);
-    if (g_cmdCount > 0) {
-        *out = g_cmdQueue[g_cmdHead];
-        g_cmdHead = (g_cmdHead + 1) % TS3_CMD_QUEUE_SIZE;
-        g_cmdCount--;
-        popped = 1;
-    }
+    popped = ts3_cmd_ring_pop(&g_cmdRing, out);
     LeaveCriticalSection(&g_cmdLock);
     return popped;
 }
@@ -329,7 +318,10 @@ void ts3_cmd_queue_drain(void) {
 
     Ts3Command cmd;
     int executed = 0;
-    while (executed < TS3_CMD_QUEUE_SIZE && ts3_cmd_queue_pop(&cmd)) {
+    /* Bounded by capacity so a producer that keeps pushing during the drain
+       cannot pin the callback thread here forever — leftovers ride the next
+       CEDRAIN (the dispatcher re-wakes via ts3_pending_work_any). */
+    while (executed < TS3_CMD_RING_CAPACITY && ts3_cmd_queue_pop(&cmd)) {
         ts3_cmd_execute(&cmd);
         executed++;
     }
@@ -339,7 +331,7 @@ int ts3_cmd_queue_nonempty(void) {
     ts3_cmd_lock_ensure();
     int nonempty = 0;
     EnterCriticalSection(&g_cmdLock);
-    nonempty = g_cmdCount > 0;
+    nonempty = ts3_cmd_ring_count(&g_cmdRing) > 0;
     LeaveCriticalSection(&g_cmdLock);
     return nonempty;
 }
@@ -781,11 +773,11 @@ void ts3_adapter_shutdown(void) {
     InterlockedExchange(&g_localClientID, 0);
     conn_id_store(0);
 
-    /* Drop anything still queued. */
+    /* Drop anything still queued (preserve the lifetime drop counter). */
     ts3_cmd_lock_ensure();
     EnterCriticalSection(&g_cmdLock);
-    g_cmdHead = 0;
-    g_cmdTail = 0;
-    g_cmdCount = 0;
+    g_cmdRing.head = 0;
+    g_cmdRing.tail = 0;
+    g_cmdRing.count = 0;
     LeaveCriticalSection(&g_cmdLock);
 }
