@@ -61,8 +61,6 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
 BOOL shouldApplyDistanceLimits(void);
 BOOL shouldValidateValue(float value, float minimum, float maximum, const char* modeName);
 float validateDistanceValue(float value, float minimum, float maximum, const char* modeName);
-BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2, float x3, float z3, float x4, float z4);
-BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor);
 int getPlayerZone(float playerX, float playerY, float playerZ);
 
 /* voice_modes.c */

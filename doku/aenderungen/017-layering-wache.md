@@ -62,6 +62,35 @@ Begruendung auf der Allowlist statt unter "Legacy-Blob".
 `channel_manage.c` und `voice_modes.c` stehen bewusst **nicht** mehr auf der
 Liste — sie wurden in 6a/6b bereinigt.
 
+### Update: aktueller Stand der Allowlist (nach V8.5b / V8.6)
+
+Die Allowlist ist seit diesem Eintrag zweimal geschrumpft und enthaelt heute nur
+noch **zwei** Dateien:
+
+| Datei                                  | Grund |
+|----------------------------------------|-------|
+| `src/core/config/config_files.c`       | Legacy F10-Save-Bruecke, Umzug fuer V8.6/V8.7 vorgesehen |
+| `src/core/util/util_base.c`            | Legacy geteilte Shims, Umzug fuer V8.6/V8.7 vorgesehen |
+
+Weggefallen sind:
+
+- `proximity_volume.c` — Datei geloescht (V8.5b, `doku/019`).
+- `validation.c` — von `ts/`/`ui/` entkoppelt (V8.5b, `doku/019`); die
+  Rest-Funktionen (Zonen-Geometrie + Hub-Heuristik-Validierer) bleiben, sind
+  aber pur genug, dass kein `ts/`/`ui/`-Include mehr noetig ist (`doku/022`).
+- `nick_anonymize.c` — nach `ts/nick/` verschoben (V8.6, `doku/021`), wie
+  `channel_manage` in `015`.
+
+Nachweis:
+
+```
+$ bash tests/check_layering.sh
+  known (allowed): src/core/config/config_files.c
+  known (allowed): src/core/util/util_base.c
+  summary: 2 known-allowed, 0 new
+LAYERING: OK
+```
+
 ## Wie funktioniert das Skript?
 
 1. Sucht alle core/-Dateien mit einem `ts/`- oder `ui/`-Include.

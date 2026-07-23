@@ -114,8 +114,8 @@ float validateDistanceValue(float value, float minimum, float maximum, const cha
     return value;
 }
 
-// Helper: 2D point-in-polygon (ray casting, even-odd rule)
-BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2, float x3, float z3, float x4, float z4) {
+// Helper: 2D point-in-polygon (ray casting, even-odd rule). Internal only.
+static BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2, float x3, float z3, float x4, float z4) {
     /* Ray-casting (even-odd rule): robust for convex quads regardless of winding. */
     const float vx[4] = { x1, x2, x3, x4 };
     const float vz[4] = { z1, z2, z3, z4 };
@@ -142,8 +142,9 @@ BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2
 /* One 3D zone box: horizontal quadrilateral + GroundY..TopY height.
    xzFloor=1: X-Z floor, Y height (original Mumble plugin layout).
    xzFloor=0: X-Y floor, Z height (Conan / UE; Z1..Z4 in config are world Y).
-   If GroundY and TopY are both 0, vertical bounds are not enforced. */
-BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor) {
+   If GroundY and TopY are both 0, vertical bounds are not enforced.
+   Internal only. */
+static BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor) {
     const float hEps = 1.0f;
     float hMin = z->groundY < z->topY ? z->groundY : z->topY;
     float hMax = z->groundY > z->topY ? z->groundY : z->topY;
