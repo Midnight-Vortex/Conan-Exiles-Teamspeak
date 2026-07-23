@@ -65,39 +65,16 @@ BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2
 BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor);
 int getPlayerZone(float playerX, float playerY, float playerZ);
 
-/* channel_manage.c */
-int ts3_plugin_should_send_position(void);
-
-/* proximity_adaptive.c */
-void setUserAdaptiveVolume(mumble_userid_t userID, float targetVolume);
-void setUserAdaptiveVolumeWithSpatial(mumble_userid_t userID, float baseVolume, float leftVol, float rightVol);
-void cleanupAudioVolumeStates(void);
-void cleanupAdaptivePlayerStates(void);
-AdaptivePlayerData* findOrCreateAdaptivePlayerState(mumble_userid_t userID, const char* playerName);
-
 /* voice_modes.c */
 float getVoiceDistanceForMode(uint8_t voiceMode);
 float plugin_clamp_remote_voice_distance(float voiceDistanceMeters);
-void getLocalPlayerName(void);
-void broadcastPlayerCoordinates(void);
-void cycleVoiceMode(void);
-void updateVoiceMode(void);
 void voice_mode_notify_hotkey(int vkCode);
 void voice_mode_reset_key_tracking(void);
-void calculateLocalPositionalData(CompletePositionalData* localData);
-void sendCompletePositionalData(void);
-void ts3_plugin_invalidate_cepos_send_cache(void);
-void applyHubSettingsAfterDescriptionRead(void);
-void calculateLocalPositionalAudio(const CompletePositionalData* remoteData, mumble_userid_t userID);
-void ts3_plugin_clear_deferred(void);
-void ts3_plugin_process_deferred(void);
-void ts3_plugin_process_deferred_ex(int allowChannelMove);
 
 /* overlay */
 void createVoiceOverlay(void);
 void destroyVoiceOverlay(void);
 void plugin_destroy_voice_overlay_safely(void);
-void plugin_destroy_ui_window_safely(HWND* phwnd);
 unsigned __stdcall overlayMonitorThreadEx(void* arg);
 void refreshOverlayForFullscreen(void);
 void repositionVoiceOverlay(void);
@@ -144,23 +121,6 @@ void startKeyMonitorThread(void);
 void stopKeyMonitorThread(void);
 /* Close the F10 dialog (WM_CLOSE) and join its thread — shutdown only. */
 void settings_dialog_shutdown(void);
-
-/* mod_watcher.c */
-BOOL checkModFileActive(void);
-BOOL readModFileRaw(char* buffer, size_t bufferSize, size_t* outBytes);
-BOOL readModFileData(struct ModFileData* data);
-void checkCurrentZone(void);
-void modFileWatcherThread(void* arg);
-void mod_file_on_server_connected(void);
-void mod_file_drain_pending_updates(void);
-
-/* system_threads.c */
-void voiceSystemThread(void* arg);
-void ts3_proximity_heartbeat_thread(void* arg);
-void forceCompleteInitialization(void);
-
-/* cleanup.c */
-void cleanupPlayerMuteStates(void);
 
 #ifdef CONAN_EXILES_TS_EXPORTS
 extern volatile long ts3HubDescriptionChanged;
