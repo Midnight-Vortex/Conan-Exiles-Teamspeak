@@ -198,6 +198,7 @@ double hubMinimumShout = 15.0;
 double hubMaximumShout = 50.0;
 BOOL hubForceDistanceBasedMuting = TRUE;
 BOOL hubForceAutomaticChannelSwitching = TRUE;
+BOOL hubNicknameRandomizer = TRUE;
 
 BOOL isConnectedToServer = FALSE;
 BOOL hubDescriptionAvailable = FALSE;
@@ -301,6 +302,7 @@ void plugin_ui_sync_live_state(void) {
         hubLimitsActive = hub.forceDistanceMuting ? TRUE : FALSE;
         hubForceDistanceBasedMuting = hub.forceDistanceMuting ? TRUE : FALSE;
         hubForceAutomaticChannelSwitching = hub.forceAutoChannelSwitch ? TRUE : FALSE;
+        hubNicknameRandomizer = hub.nicknameRandomizer ? TRUE : FALSE;
         hubForcePositionalAudio = hub.forceDistanceMuting ? TRUE : FALSE;
         hubMinimumWhisper = hub.minWhisper;
         hubMaximumWhisper = hub.maxWhisper;

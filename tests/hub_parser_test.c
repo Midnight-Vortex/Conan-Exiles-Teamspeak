@@ -202,6 +202,7 @@ static void test_global_defaults_and_clamping(void) {
     CHECK(s.audioMinDistance == 1.0f, "default audioMinDistance 1.0");
     CHECK(s.filterIntensity == 100.0f, "default filterIntensity 100");
     CHECK(s.realisticAudio == 0, "realisticAudio off by default");
+    CHECK(s.nicknameRandomizer == 1, "nicknameRandomizer on by default");
 
     CHECK(hub_parse_settings(
         "[GLOBAL]\n"
@@ -231,6 +232,14 @@ static void test_global_defaults_and_clamping(void) {
     CHECK(hub_parse_settings("[GLOBAL]\nAudioMaxVolume=3.1\n", &s) == 1,
         "AudioMaxVolume=3.1 parses");
     CHECK(s.audioMaxVolume == 0.031f, "3.1 uses percent semantics (3.1/100)");
+
+    CHECK(hub_parse_settings("[GLOBAL]\nNicknameRandomizer=False\n", &s) == 1,
+        "NicknameRandomizer=False parses");
+    CHECK(s.nicknameRandomizer == 0, "NicknameRandomizer disabled");
+
+    CHECK(hub_parse_settings("[GLOBAL]\nNicknameRandomizer=True\n", &s) == 1,
+        "NicknameRandomizer=True parses");
+    CHECK(s.nicknameRandomizer == 1, "NicknameRandomizer enabled");
 }
 
 static void test_defaults_and_race_inheritance(void) {

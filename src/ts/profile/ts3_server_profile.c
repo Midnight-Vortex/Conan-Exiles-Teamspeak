@@ -268,13 +268,14 @@ void server_profile_apply(const HubSettings* settings) {
     }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
-        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d realistic=%d filter=%.0f "
+        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f "
         "pw=%s zones=%d races=%d localRace=%d defaults=%d",
         settings->audioMaxVolume,
         settings->minWhisper, settings->maxWhisper,
         settings->minNormal, settings->maxNormal,
         settings->minShout, settings->maxShout,
         settings->forceDistanceMuting, settings->forceAutoChannelSwitch,
+        settings->nicknameRandomizer,
         settings->realisticAudio, settings->filterIntensity,
         settings->ingameChannelPassword[0] ? "yes" : "no",
         settings->zoneCount, settings->raceCount, raceIndex,
@@ -332,6 +333,14 @@ int server_profile_force_auto_channel(void) {
         return 0;
     }
     return settings.forceAutoChannelSwitch;
+}
+
+int server_profile_get_nickname_randomizer(void) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
+        return 1;
+    }
+    return settings.nicknameRandomizer;
 }
 
 const char* server_profile_get_ingame_password(void) {

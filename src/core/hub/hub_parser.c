@@ -78,6 +78,7 @@ static void hub_defaults(HubSettings* out) {
     out->audioMaxVolume = 1.0f;
     out->audioMinDistance = 1.0f;
     out->filterIntensity = 100.0f;
+    out->nicknameRandomizer = 1; /* absent key = enabled (legacy servers) */
 }
 
 /* ---- [GLOBAL] section ---------------------------------------------------- */
@@ -126,6 +127,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
     else if ((v = hub_value_for(line, "ForceAutomaticChanelSwitching")) != NULL) {
         out->forceAutoChannelSwitch = hub_parse_bool(v);
+    }
+    else if ((v = hub_value_for(line, "NicknameRandomizer")) != NULL) {
+        out->nicknameRandomizer = hub_parse_bool(v);
     }
     else if ((v = hub_value_for(line, "RealisticAudio")) != NULL) {
         out->realisticAudio = hub_parse_bool(v);

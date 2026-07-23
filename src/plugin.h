@@ -338,6 +338,7 @@ extern double hubMinimumShout;
 extern double hubMaximumShout;
 extern BOOL hubForceDistanceBasedMuting;
 extern BOOL hubForceAutomaticChannelSwitching;
+extern BOOL hubNicknameRandomizer;
 
 // Voice system variables
 extern CompletePositionalData localVoiceData;

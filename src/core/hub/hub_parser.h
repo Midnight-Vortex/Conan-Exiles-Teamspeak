@@ -16,6 +16,7 @@
  *   ForceAutomaticChanelSwitching=True
  *   RealisticAudio=True
  *   FilterIntensity=100
+ *   NicknameRandomizer=True
  *   IngameChannelPassword=secret
  *   [ZONES]
  *   [ZoneName=Cave1]            (also "Zone=" / "ZoneName=" without brackets)
@@ -80,6 +81,7 @@ typedef struct HubSettings {
 
     int forceDistanceMuting;     /* server forces proximity muting on */
     int forceAutoChannelSwitch;  /* server forces hub<->ingame auto-move */
+    int nicknameRandomizer;      /* 1 = assign random digit nick ingame (default) */
     int realisticAudio;          /* 1 = Mumble-style spatial filter in open world */
     float filterIntensity;       /* 0..100 scales filter when realisticAudio=1 */
     char ingameChannelPassword[HUB_PASSWORD_LEN];
