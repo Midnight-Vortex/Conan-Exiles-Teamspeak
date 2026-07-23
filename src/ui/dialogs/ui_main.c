@@ -2622,8 +2622,6 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             465, 550, 60, 28, hwnd, NULL, NULL, NULL);
         ApplyFontToControl(hDistanceShoutEdit, hFont);
 
-        createPresetsCategory();
-
         hDistanceWhisperMessage = CreateWindowW(L"STATIC", L"",
             WS_CHILD | SS_LEFT,
             60, 585, 480, 20, hwnd, (HMENU)520, NULL, NULL);
