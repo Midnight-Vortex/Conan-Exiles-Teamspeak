@@ -414,18 +414,31 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
     // Construire le chemin COMPLET (avec \ConanSandbox\Saved)
     wchar_t savedPathFull[MAX_PATH];
 
-    // Si displayedPathText contient le chemin, ajouter \ConanSandbox\Saved
-    if (wcslen(displayedPathText) > 0) {
-        // displayedPathText = C:\...\Conan Exiles (SANS \ConanSandbox\Saved)
-        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", displayedPathText);
-    }
-    // Sinon, construire depuis gameFolder (fallback)
-    else if (gameFolder && wcslen(gameFolder) > 0) {
+    /* Caller-supplied gameFolder wins over stale F10 label text (preset load,
+       background autodetect). displayedPathText is only a UI mirror. */
+    if (gameFolder && wcslen(gameFolder) > 0) {
         swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
     }
+    else if (wcslen(displayedPathText) > 0) {
+        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", displayedPathText);
+    }
     else {
-        // Valeur par défaut si rien n'est disponible
-        wcscpy_s(savedPathFull, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+        PluginConfig cfg;
+        const wchar_t* savedBase = NULL;
+
+        config_copy(&cfg);
+        if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+            savedBase = cfg.automaticSavedPath;
+        }
+        else if (cfg.savedPath[0]) {
+            savedBase = cfg.savedPath;
+        }
+        if (savedBase) {
+            wcsncpy_s(savedPathFull, MAX_PATH, savedBase, _TRUNCATE);
+        }
+        else {
+            wcscpy_s(savedPathFull, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+        }
     }
 
     // Save current voice mode before modifying distances | Sauvegarder le mode de voix actuel AVANT de modifier les distances

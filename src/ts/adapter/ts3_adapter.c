@@ -391,12 +391,6 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
             SetEvent(g_wakeupEvent);
             continue;
         }
-        const uint64 conn = conn_id_load();
-        if (conn == 0) {
-            Sleep(PLUGIN_POLL_INTERVAL_MS);
-            SetEvent(g_wakeupEvent);
-            continue; /* disconnect raced us — retry while pending stays set */
-        }
 
         const long urgent = InterlockedCompareExchange(&g_wakeupUrgent, 0, 0);
         const LONG64 now = (LONG64)GetTickCount64();
@@ -415,12 +409,26 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
             continue; /* rate limited: pending stays set, retry after window */
         }
 
-        InterlockedExchange(&g_wakeupPending, 0);
-        InterlockedExchange(&g_wakeupUrgent, 0);
-        InterlockedExchange64(&s_lastWakeMs, now);
+        /* Load connection id only after any rate-limit sleep — tab switches
+           during the wait must not leave a stale handler id on the send. */
+        if (!ts3_is_connected()) {
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
+            continue;
+        }
+        const uint64 conn = conn_id_load();
+        if (conn == 0) {
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
+            continue;
+        }
 
+        InterlockedExchange64(&s_lastWakeMs, now);
         g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
             PluginCommandTarget_SERVER, NULL, NULL);
+
+        InterlockedExchange(&g_wakeupPending, 0);
+        InterlockedExchange(&g_wakeupUrgent, 0);
     }
     return 0;
 }

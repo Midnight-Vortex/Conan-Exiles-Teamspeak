@@ -1230,13 +1230,16 @@ void ts3_audio_reset(void) {
         InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);
+    while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
+        YieldProcessor();
+    }
     InterlockedExchange(&g_unmuteRingWrite, 0);
     InterlockedExchange(&g_unmuteRingRead, 0);
     InterlockedExchange(&g_unmuteRingOverflow, 0);
+    memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
     InterlockedExchange(&g_unmuteRingPushLock, 0);
     InterlockedExchange(&g_recomputeDirtyCount, 0);
     InterlockedExchange(&g_recomputeAllPending, 0);
-    memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
     InterlockedExchange(&g_lastLocalSeq, -1);
     InterlockedExchange64(&g_lastRecomputeAllMs, 0);
     /* Ramp/pan/LPF state lives on the audio thread. Bump every client's
