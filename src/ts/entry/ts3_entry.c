@@ -189,7 +189,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.3";
+    return "8.0.4";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -286,6 +286,7 @@ void ts3plugin_onHotkeyEvent(const char* keyword) {
 int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
+    log_write("BOOT: hub GLOBAL NicknameRandomizer + PROFILE nickRand log");
     config_load();
     voice_mode_wire_hooks();
     {

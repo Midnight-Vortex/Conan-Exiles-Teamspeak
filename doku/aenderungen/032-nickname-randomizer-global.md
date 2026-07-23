@@ -1,6 +1,6 @@
 # 032 — NicknameRandomizer in [GLOBAL]
 
-**Phase:** V8.13 · **Version:** 8.0.3
+**Phase:** V8.13 · **Version:** 8.0.4
 
 ## Ziel
 
@@ -30,6 +30,8 @@ NicknameRandomizer=True
 - `nick_anonymize_before_ingame()` bricht sofort ab, wenn deaktiviert
 - Legacy-Spiegel `hubNicknameRandomizer` in `plugin_ui_compat.c`
 - PROFILE-Log: `nickRand=1` (an) / `nickRand=0` (aus)
+- BOOT-Log ab 8.0.4: `hub GLOBAL NicknameRandomizer + PROFILE nickRand log`
+- `build.ps1` prüft nach Rebuild, dass `nickRand` in der DLL steckt
 
 ## Tests
 

@@ -136,7 +136,7 @@ Open Visual Studio Installer -> Modify -> Desktopentwicklung mit C++
         Log ""
 
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        & $MsBuild $Vcxproj /p:Configuration=Release /p:Platform=x64 /m:1 /v:minimal /nologo
+        & $MsBuild $Vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64 /m:1 /v:minimal /nologo
         $msBuildExit = $LASTEXITCODE
         Log ""
         Log "MSBuild done in $([math]::Round($sw.Elapsed.TotalSeconds, 1))s (exit $msBuildExit)"
@@ -149,6 +149,12 @@ Open Visual Studio Installer -> Modify -> Desktopentwicklung mit C++
         if (-not (Test-Path $OutDll)) {
             throw "Output missing: $OutDll"
         }
+
+        $dllText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($OutDll))
+        if ($dllText -notmatch 'nickRand') {
+            throw "Built DLL is missing the nickRand PROFILE marker — source/out of sync or stale tree"
+        }
+        Log "Verify: nickRand marker present in DLL"
 
         New-Item -ItemType Directory -Force -Path (Split-Path $BinDll) | Out-Null
         Copy-Item -Force $OutDll $BinDll
