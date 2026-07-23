@@ -5,11 +5,13 @@
  * EN: Module index and cross-module function declarations (see comments in each .c file).
  * FR: Index des modules et déclarations inter-modules (voir commentaires dans chaque .c).
  *
- * Source layout mirrors the original Mumble plugin (Dino_Rex) module order:
-   1  util_base.c          Base utilities
-   2  config_files.c       Configuration and files
-   3  validation.c         Validation, limits, zones (3D polygons)
-   4  hub_parser.c         Root channel description parsing
+ * V8.10+ layout:
+ *   core/  hub, proximity, config.c, zone_resolve (pure — no ts/ui includes)
+ *   ts/    adapter, proximity audio, channel, nick, chat queue
+ *   ui/    F10 dialog, presets, overlay, hub validation, display/key utils
+ *
+ * Historical Mumble module numbers (reference only):
+ *   4  hub_parser.c
    5  channel_manage.c     Hub / ingame channel moves
    8  proximity_adaptive.c Per-player volume state
   12  voice_modes.c        Voice modes and positional send
@@ -35,19 +37,22 @@ int getLocalPlayerZoneIndex(void);
 int getRemotePlayerZoneIndex(float rx, float ry, float rz);
 int resolvePlayerZoneIndex(float px, float py, float pz);
 
-/* util_base.c */
+/* ui/util/ui_key_util.c */
 const char* getKeyName(int vkCode);
+int countSignificantDigits(float value);
+
+/* ui/util/ui_display_util.c */
 void displayInChat(const char* message);
 void displayHubParametersConfirmation(BOOL globalSuccess, BOOL racesSuccess, BOOL playerInRace, BOOL zonesSuccess);
 int isPatchAlreadySaved(void);
-int countSignificantDigits(float value);
-BOOL getServerHashForTracking(mumble_connection_t connection, char* outHash, size_t hashSize);
+
+/* ui/util/ui_ts_chat_queue.c */
 void ts3_queue_chat_message(const char* message);
 int ts3_plugin_has_pending_chat(void);
 void ts3_plugin_clear_pending_chat(void);
 void ts3_plugin_flush_pending_chat(void);
 
-/* config_files.c */
+/* ui/config/ui_voice_presets.c (was config_files.c) */
 void saveVoiceSettings(void);
 void initializeVoicePresets(void);
 void saveVoicePreset(int presetIndex, const char* presetName);
@@ -57,11 +62,10 @@ void savePresetsToConfigFile(void);
 void loadPresetsFromConfigFile(void);
 void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhisper, const wchar_t* distNormal, const wchar_t* distShout);
 
-/* validation.c */
+/* ui/validation/ui_hub_validation.c (hub distance limits for F10) */
 BOOL shouldApplyDistanceLimits(void);
 BOOL shouldValidateValue(float value, float minimum, float maximum, const char* modeName);
 float validateDistanceValue(float value, float minimum, float maximum, const char* modeName);
-int getPlayerZone(float playerX, float playerY, float playerZ);
 
 /* voice_modes.c */
 float getVoiceDistanceForMode(uint8_t voiceMode);

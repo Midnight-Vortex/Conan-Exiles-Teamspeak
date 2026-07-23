@@ -77,6 +77,7 @@ SOURCES=(
     src/ts/nick/nick_anonymize.c
     src/ui/overlay/voice_overlay.c
     src/ui/dialogs/ui_main.c
+    src/ui/dialogs/ui_config_command.c
     src/ui/dialogs/ui_config_dialog.c
     src/ui/dialogs/ui_config_controls.c
     src/ui/dialogs/ui_config_draw.c
@@ -86,9 +87,11 @@ SOURCES=(
     src/ui/dialogs/ui_messages.c
     src/ui/input/key_watcher.c
     src/ui/plugin_ui_compat.c
-    src/core/config/config_files.c
-    src/core/validation/validation.c
-    src/core/util/util_base.c
+    src/ui/config/ui_voice_presets.c
+    src/ui/util/ui_key_util.c
+    src/ui/util/ui_display_util.c
+    src/ui/validation/ui_hub_validation.c
+    src/ui/util/ui_ts_chat_queue.c
 )
 
 echo "== MinGW cross build ($($CC -dumpversion)) =="

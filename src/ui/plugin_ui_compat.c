@@ -541,25 +541,15 @@ int getRemotePlayerZoneIndex(float rx, float ry, float rz) {
 }
 
 int resolvePlayerZoneIndex(float px, float py, float pz) {
-    int idx = getPlayerZone(px, py, pz);
-    if (idx >= 0) {
-        return idx;
+    HubSettings hub;
+    if (!server_profile_get(&hub) || !hub.valid) {
+        return -1;
     }
-    idx = getPlayerZone(px * 100.0f, py * 100.0f, pz * 100.0f);
-    if (idx >= 0) {
-        return idx;
-    }
-    return getPlayerZone(px * POS_TXT_TO_WORLD_SCALE, py * POS_TXT_TO_WORLD_SCALE,
-        pz * POS_TXT_TO_WORLD_SCALE);
+    return zone_resolve(&hub, px, py, pz);
 }
 
 int ts3_plugin_resolve_remote_zone(float rx, float ry, float rz) {
-    int idx = getRemotePlayerZoneIndex(rx, ry, rz);
-    if (idx >= 0) {
-        return idx;
-    }
-    idx = getPlayerZone(rx * 100.0f, ry * 100.0f, rz * 100.0f);
-    return idx >= 0 ? idx : -1;
+    return getRemotePlayerZoneIndex(rx, ry, rz);
 }
 
 int ts3_plugin_resolve_local_zone(void) {

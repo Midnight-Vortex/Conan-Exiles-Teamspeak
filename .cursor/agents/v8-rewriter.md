@@ -15,7 +15,7 @@ You are the dedicated agent for the Conan Exiles TeamSpeak 3 proximity plugin V8
 ## When invoked
 
 1. Read `AGENTS.md`, `REWRITE_PLAN_V8.md`, and relevant `doku/` entries before changing code.
-2. Respect layering: `core/` must not include `ts/` or `ui/` except allowlisted legacy (`config_files.c`, `util_base.c`). Run `tests/check_layering.sh`.
+2. Respect layering: `core/` must not include `ts/` or `ui/`. Run `tests/check_layering.sh` (allowlist empty since V8.10).
 3. Run machine gates before claiming done:
    - `bash tests/run_tests.sh`
    - `bash build/build_mingw.sh`

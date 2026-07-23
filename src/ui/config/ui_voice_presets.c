@@ -19,7 +19,7 @@
 #include <process.h>
 #include <ole2.h>
 
-// MODULE 2: CONFIGURATION AND FILES
+// MODULE: VOICE PRESETS + F10 SAVE ENTRY POINTS (ui/config/ui_voice_presets.c)
 // EN: plugin.cfg is written ONLY by config_save() (core/config/config.c). This
 //     module keeps the voice-preset file (voice_presets.cfg) and the F10 save
 //     entry points, all of which route persistence through

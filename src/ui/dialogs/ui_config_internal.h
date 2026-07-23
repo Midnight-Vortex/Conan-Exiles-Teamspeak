@@ -44,7 +44,7 @@ LRESULT ui_config_on_erasebkgnd(HWND hwnd, WPARAM wParam, LPARAM lParam);     /*
 LRESULT ui_config_on_ctlcolorstatic(HWND hwnd, WPARAM wParam, LPARAM lParam); /* ui_config_draw.c */
 LRESULT ui_config_on_ctlcolorlistbox(HWND hwnd, WPARAM wParam, LPARAM lParam);/* ui_config_draw.c */
 LRESULT ui_config_on_ctlcoloredit(HWND hwnd, WPARAM wParam, LPARAM lParam);   /* ui_config_draw.c */
-LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam);        /* ui_main.c */
+LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam);        /* ui_config_command.c */
 LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam);       /* ui_config_draw.c */
 
 #endif /* UI_CONFIG_INTERNAL_H */
