@@ -11,9 +11,13 @@
  *
  * Thread contract: everything here runs on the TS callback thread ONLY
  * (all functions call the TS API via the adapter). No locks needed.
+ *
+ * Layering (V8.6): this is a core/ header, so it must NOT pull the ts/ layer.
+ * It needs only the SDK integer type uint64; the TS adapter is included by
+ * nick_anonymize.c directly (implementation detail, not part of this contract).
  */
 
-#include "ts/adapter/ts3_adapter.h"
+#include "teamspeak/public_definitions.h"
 
 /* 12.1 fill out with digitCount random digits (first digit 1-9). Pure,
    any thread. digitCount is clamped to 8..10. */
