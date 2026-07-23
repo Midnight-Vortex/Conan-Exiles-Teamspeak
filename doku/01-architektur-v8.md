@@ -95,24 +95,78 @@ Pos.txt ──(Watcher-Thread, 30ms)──▶ lokale Position (atomar)
                  ("Client X braucht Unmute").
 ```
 
-## Die Command-Queue (V8-Kernstueck)
+## Die Steuerplane: zwei Kanaele (V8-Kernstueck)
 
 **V7-Problem:** Es gab eine typisierte Queue, aber real lief fast alles ueber ein Dutzend
 einzelner Pending-Flags, die ein Mega-Handler (CEDRAIN) in einem Rutsch abarbeitete. Die
 Early-Out-Pruefung vergass Flags, der Wakeup selbst brach den Thread-Vertrag.
 
-**V8-Loesung:**
+**Was der urspruengliche Plan falsch dachte:** Das Leitziel klang nach „**alles** wird ein
+Kommando“. Genau das waere aber ein Fehler. Der wichtigste Verkehr im Plugin ist
+**hochfrequent und von Natur aus koaleszierend**: „Lautstaerken neu berechnen“, „CEPOS
+senden“, „Client X entmuten“, „Positions-Update“. Wenn 200 Spieler im Sekundentakt CEPOS
+schicken, heisst „es muss neu gerechnet werden“ **einmal** neu rechnen — nicht 200 Kommandos
+in eine Queue legen. Ein Flag, das man nur setzt (schon gesetzt = No-Op), fasst diese Flut
+kostenlos zusammen. Eine Queue wuerde stattdessen genau die Callback-Flut erzeugen, die V8
+verhindern will. **Koaleszenz ist hier ein Feature, kein Bug.**
 
-- Jede Arbeit ist ein **typisiertes Kommando** (enum + kleine Payload) in EINEM Ringpuffer.
-- Producer (jeder Thread) legt ab, Dispatcher (nur Callback-Thread) arbeitet ab.
-- **Budget:** pro Durchlauf maximal N Kommandos / Zeitscheibe — kein Callback-Spike mehr,
-  Rest laeuft im naechsten Durchlauf weiter.
-- Duplikate werden beim Einreihen zusammengefasst (z. B. "recompute client 5" nur 1× pending).
-- Der Wakeup sagt nur noch "es liegt Arbeit da" — **ohne** selbst die TS-API zu benutzen.
+**V8-Loesung — zwei Kanaele, ein Dispatcher.** Fremd-Threads treiben Callback-Arbeit ueber
+genau zwei Wege; beide werden vom **einen** CEDRAIN-Dispatcher in fester Reihenfolge mit
+Budget abgearbeitet. Die Natur der Arbeit entscheidet den Kanal:
+
+- **(A) Koaleszierende Pending-Flags** — fuer hochfrequente Zustaende, bei denen aus „N
+  Anforderungen“ „eine Sache zu tun“ wird. Producer setzt ein Interlocked-Flag (oder ein
+  Dirty-Bit pro Client) und fordert einen Wakeup an. Der Dispatcher fragt **eine** zentrale
+  Checkliste `ts3_pending_work_any()` und fuehrt den jeweiligen Schritt **einmal** ueber den
+  aktuellen Zustand aus. Das bleiben Flags: Audio-Recompute-all / Dirty-Client-Recompute,
+  CEPOS-Send, Unmute, Channel-Positions-Update, Voice-Mode-Notify, Chat.
+- **(B) Die typisierte Command-Queue** (`Ts3Command` / `Ts3CmdType`, ein Ringpuffer) — nur
+  fuer **diskrete Einmal-Aktionen**, die nicht koaleszieren und **nicht** in Paketfrequenz
+  auftreten koennen: z. B. das einmalige „Kanalliste ins Log“ (Self-Test) oder eine
+  UI-ausgeloeste Einzel-Anforderung. Producer fuellt ein `Ts3Command` und
+  `ts3_cmd_queue_push()` (aus jedem Thread sicher; volle Queue verwirft + loggt), dann
+  Wakeup. Der Dispatcher leert die Queue **zuerst** in jedem Durchlauf.
+
+**Faustregel:** Wuerde dieselbe Anforderung 200×/Tick weiterhin „nur einmal tun“ bedeuten,
+gehoert sie zu **(A)** (Flag). Ist jede Anforderung eine eigene Aktion, die einzeln passieren
+muss, **und** kann sie nie in Paketfrequenz feuern, gehoert sie zu **(B)** (Kommando). Im
+Zweifel: Flag — Fluten ist der teure Fehler.
+
+**Gemeinsame Eigenschaften beider Kanaele:**
+
+- Producer (jeder Thread) legt ab / setzt ein Flag, Dispatcher (nur Callback-Thread) arbeitet ab.
+- **Budget:** pro Durchlauf ein harter Deckel (z. B. 64 Dirty-Recomputes, Queue auf Ringgroesse
+  begrenzt) — kein Callback-Spike, Rest laeuft im naechsten Durchlauf (`doku/011`).
+- Duplikate koaleszieren beim Einreihen (Kanal A: „recompute client 5“ nur 1× pending).
+- Der Wakeup sagt nur „es liegt Arbeit da“ — **ohne** selbst die TS-API zu benutzen.
   Umgesetzt in V8.4 (`doku/aenderungen/010`): `ts3_request_wakeup*` setzen nur ein
   Flag + `SetEvent`; ein einziger dedizierter **Wakeup-Thread** sendet den
   `CEDRAIN`-Befehl (gedrosselt auf 1×/30 ms, urgent umgeht die Drossel) und wird
   beim Shutdown vor dem Zustands-Teardown gejoint.
+
+**Diskoverbarkeit im Code:** Neue Pending-Quellen traegt man an genau einem Marker ein
+(`>>> ADD NEW PENDING SOURCES HERE <<<` in `ts3_entry.c`), neue Kommandotypen am
+parallelen Marker (`>>> ADD NEW COMMAND TYPES HERE <<<` in `ts3_adapter.h`). Der reine
+Ring (`ts3_cmd_ring.h`) ist ohne Win32 host-unit-getestet (`tests/cmd_queue_test.c`), der
+Lock lebt in `ts3_adapter.c`. Details: `doku/aenderungen/020`.
+
+```
+Producer (irgendein Thread)
+   │  koaleszierend?
+   ├── ja ──►  Flag/Dirty-Bit setzen ────────────┐   Kanal A
+   └── nein ─► Ts3Command push (typisierte Queue) ┤   Kanal B
+                                                   ▼
+                                     ts3_request_wakeup[_urgent]()  (Flag + SetEvent)
+                                                   ▼
+                            Wakeup-Thread ──► sendPluginCommand("CEDRAIN:1")
+                                                   ▼
+                       CEDRAIN-Dispatcher (Callback-Thread, EINZIGE Stelle):
+                         ts3_pending_work_any()? ── nein ─► return
+                         feste Reihenfolge + Budget:
+                           Queue → Voice → Chat → CEPOS → Recompute →
+                           3D → Profil/Channel → Unmutes
+                         Rest offen? ── ja ─► erneuter Wakeup (naechster Durchlauf)
+```
 
 ## Besitzer-Prinzip (Ownership)
 

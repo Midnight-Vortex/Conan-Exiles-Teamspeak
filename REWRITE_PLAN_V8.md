@@ -62,7 +62,7 @@ Jede Phase endet mit: **gcc-Tests gruen + MinGW-Cross-Build OK** → Commit → 
 | **V8.1** | Pure-Core absichern: Unit-Tests fuer `hub_parser`, `zone_resolve`, `proximity_math`, `player_table` (portabel machen) | gcc-Tests | Nein | ✅ 2026-07-23 (4 Suiten, 144 Checks) |
 | **V8.2** | Sofort-Stabilisierung (kleine risikoarme Fixes): Unmute-Batch-Caps angleichen, `chan_has_pending_work` vervollstaendigen, doppeltes `createPresetsCategory()` raus, 4 tote 512er-Arrays + Stub-Funktionen entfernen | Cross-Build + Review | Kurztest | ✅ 2026-07-23 (`doku/aenderungen/002`) |
 | **V8.3** | Thread-Kern I: PCM-Besitz (Generation-Counter statt Cross-Thread-Reset), EIN Hotkey-Poller, UI-Recompute nur noch Flag+Wakeup (nie `recompute_all` vom UI-Thread) | Cross-Build + Tests | Ja | ✅ gebaut 2026-07-23 (`doku/aenderungen/003`+`004`) — **TS-Client-Test offen** |
-| **V8.4** | Thread-Kern II: Command-Queue als Steuerkanal (typisierte Kommandos statt Flag-Labyrinth), Wakeup-Neubau ohne Off-Thread-API, CEDRAIN-Dispatcher mit Budget, `ts3d_apply` von `cepos_send_pending` entkoppeln | Cross-Build + Tests | Ja (Lasttest) |
+| **V8.4** | Thread-Kern II: Zwei-Kanal-Steuerplane (koaleszierende Flags via `ts3_pending_work_any` + typisierte Command-Queue fuer diskrete Aktionen), Wakeup-Neubau ohne Off-Thread-API, CEDRAIN-Dispatcher mit Budget, `ts3d_apply` von `cepos_send_pending` entkoppelt, Ring in `ts3_cmd_ring.h` host-getestet | Cross-Build + Tests | Ja (Lasttest) | ✅ 2026-07-23 (`doku/aenderungen/010`+`011`+`012`+`020`) — **TS-Client-Lasttest offen** |
 | **V8.5** | Ein-Besitzer-Zustand: Config-Single-Writer (F10 → `g_config`, `config_files.c` stirbt), Verbindungs-Epoche atomar, Kanal-ID-Quelle vereinheitlichen | Cross-Build + Tests | Ja |
 | **V8.6** | Schichten-Sanierung: `core/` ohne `ts/`/`ui/`-Includes (voice_modes/channel_manage/nick aufteilen: purer Kern + TS-Port), Legacy-Blob abbauen (`validation.c`, `util_base.c`, `proximity_volume.c`, `plugin_internal.h`) | Cross-Build + Tests | Kurztest | 🔶 begonnen 2026-07-23: `nick_anonymize.h` entkoppelt (`doku/aenderungen/007`); Rest offen |
 | **V8.7** | UI-Rewrite: `ui_main.c` in 5 Dateien splitten (Dialog-Shell / Controls / Draw / Presets / Steam-Pfad), Save-Pfad ueber Callback-Thread, Overlay-Teardown joinbar | Cross-Build | Ja |
@@ -77,8 +77,12 @@ Da der TS-Client-Hoertest in der Cloud-Umgebung nicht moeglich ist, wurden zusae
 die **laufzeit-unabhaengigen** Pakete vorgezogen (voll per Cross-Build + gcc-Tests
 verifizierbar, kein Audio noetig): Beginn von V8.6 (`nick_anonymize.h`-Entkopplung,
 `doku/007`), erweiterte Test-Abdeckung (158 → 241 Checks, `doku/008`) und die
-**CI-Automatisierung** des Sicherheitsnetzes (`doku/009`). Der risikoreiche
-V8.4-Queue-Umbau bleibt bewusst zurueckgestellt, bis ein Hoertest verfuegbar ist.
+**CI-Automatisierung** des Sicherheitsnetzes (`doku/009`). Der V8.4-Steuerkanal
+ist inzwischen umgesetzt und maschinell verifiziert (`doku/010`–`012`, `020`):
+Wakeup-Single-Owner, ein Pending-Aggregator mit Budget, die 3D-Entkopplung und
+zuletzt die **Formalisierung** der Zwei-Kanal-Steuerplane (koaleszierende Flags
++ typisierte Command-Queue) samt host-getestetem Ring. Offen bleibt allein der
+**TS-Client-Lasttest** (200 Spieler), der eine Laufzeitumgebung braucht.
 
 ---
 
