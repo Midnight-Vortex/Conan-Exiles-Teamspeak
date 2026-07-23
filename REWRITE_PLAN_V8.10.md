@@ -63,3 +63,17 @@ bash build/build_mingw.sh
 ```
 
 Manuell (weiterhin offen): TS-Client F10, Presets, Zonen-Overlay.
+
+---
+
+## V8.12 — F10 → g_config (✅ 8.0.2)
+
+| Paket | Aktion |
+|-------|--------|
+| 8.12.1 | `ui_config_state.h/c` — Working copy, commit, path helpers |
+| 8.12.2 | F10 UI auf `ui_cfg()` umstellen |
+| 8.12.3 | Overlay/Key-Watcher auf `g_config` |
+| 8.12.4 | Legacy-Spiegel nur via `ui_cfg_publish_legacy_mirrors()` |
+
+Doku: `doku/aenderungen/031-v8-12-g-config-f10.md`
+

@@ -25,6 +25,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #endif
 #include "ui_config_internal.h"
+#include "ui/config/ui_config_state.h"
 
 /*
  * ui_config_controls.c: WM_CREATE control layout + HUD combo helpers.
@@ -67,27 +68,27 @@ static void ui_populate_hud_position_combo(HWND combo) {
     SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Bottom Right");  /* 4 */
 }
 
-// Selects the combo item that matches the loaded voiceHudTheme value.
-// Sélectionne l'entrée correspondant à la valeur voiceHudTheme chargée.
+// Selects the combo item that matches the loaded ui_cfg()->hudTheme value.
+// Sélectionne l'entrée correspondant à la valeur ui_cfg()->hudTheme chargée.
 void ui_sync_hud_theme_combo(void) {
     if (!hHudThemeCombo || !IsWindow(hHudThemeCombo)) {
         return;
     }
-    if (voiceHudTheme < 0 || voiceHudTheme >= VOICE_HUD_THEME_COUNT) {
-        voiceHudTheme = VOICE_HUD_THEME_GRAY;
+    if (ui_cfg()->hudTheme < 0 || ui_cfg()->hudTheme >= VOICE_HUD_THEME_COUNT) {
+        ui_cfg()->hudTheme = VOICE_HUD_THEME_GRAY;
     }
-    SendMessage(hHudThemeCombo, CB_SETCURSEL, (WPARAM)voiceHudTheme, 0);
+    SendMessage(hHudThemeCombo, CB_SETCURSEL, (WPARAM)ui_cfg()->hudTheme, 0);
 }
 
-// Reads the user's combo selection into voiceHudTheme (not persisted until Save).
-// Lit la sélection utilisateur dans voiceHudTheme (non sauvegardé avant Enregistrer).
+// Reads the user's combo selection into ui_cfg()->hudTheme (not persisted until Save).
+// Lit la sélection utilisateur dans ui_cfg()->hudTheme (non sauvegardé avant Enregistrer).
 void ui_read_hud_theme_from_combo(void) {
     if (!hHudThemeCombo || !IsWindow(hHudThemeCombo)) {
         return;
     }
     int sel = (int)SendMessage(hHudThemeCombo, CB_GETCURSEL, 0, 0);
     if (sel >= 0 && sel < VOICE_HUD_THEME_COUNT) {
-        voiceHudTheme = sel;
+        ui_cfg()->hudTheme = sel;
     }
 }
 
@@ -95,10 +96,10 @@ static void ui_sync_hud_position_combo(void) {
     if (!hHudPositionCombo || !IsWindow(hHudPositionCombo)) {
         return;
     }
-    if (voiceHudPosition < 0 || voiceHudPosition >= VOICE_HUD_POSITION_COUNT) {
-        voiceHudPosition = VOICE_HUD_POSITION_BOTTOM_RIGHT;
+    if (ui_cfg()->hudPosition < 0 || ui_cfg()->hudPosition >= VOICE_HUD_POSITION_COUNT) {
+        ui_cfg()->hudPosition = VOICE_HUD_POSITION_BOTTOM_RIGHT;
     }
-    SendMessage(hHudPositionCombo, CB_SETCURSEL, (WPARAM)voiceHudPosition, 0);
+    SendMessage(hHudPositionCombo, CB_SETCURSEL, (WPARAM)ui_cfg()->hudPosition, 0);
 }
 
 void ui_read_hud_position_from_combo(void) {
@@ -107,7 +108,7 @@ void ui_read_hud_position_from_combo(void) {
     }
     int sel = (int)SendMessage(hHudPositionCombo, CB_GETCURSEL, 0, 0);
     if (sel >= 0 && sel < VOICE_HUD_POSITION_COUNT) {
-        voiceHudPosition = sel;
+        ui_cfg()->hudPosition = sel;
     }
 }
 
@@ -126,10 +127,10 @@ static void ui_sync_hud_size_combo(void) {
     if (!hHudSizeCombo || !IsWindow(hHudSizeCombo)) {
         return;
     }
-    if (voiceHudSize < 0 || voiceHudSize >= VOICE_HUD_SIZE_COUNT) {
-        voiceHudSize = VOICE_HUD_SIZE_BIG;
+    if (ui_cfg()->hudSize < 0 || ui_cfg()->hudSize >= VOICE_HUD_SIZE_COUNT) {
+        ui_cfg()->hudSize = VOICE_HUD_SIZE_BIG;
     }
-    SendMessage(hHudSizeCombo, CB_SETCURSEL, (WPARAM)voiceHudSize, 0);
+    SendMessage(hHudSizeCombo, CB_SETCURSEL, (WPARAM)ui_cfg()->hudSize, 0);
 }
 
 void ui_read_hud_size_from_combo(void) {
@@ -138,7 +139,7 @@ void ui_read_hud_size_from_combo(void) {
     }
     int sel = (int)SendMessage(hHudSizeCombo, CB_GETCURSEL, 0, 0);
     if (sel >= 0 && sel < VOICE_HUD_SIZE_COUNT) {
-        voiceHudSize = sel;
+        ui_cfg()->hudSize = sel;
     }
 }
 
@@ -407,7 +408,7 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         // Set checkbox state from config | Définir l'état de la checkbox depuis la config
         // Default to TRUE if not yet configured | Par défaut TRUE si non configuré
-        CheckDlgButton(hwnd, 200, enableAutomaticPatchFind ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hwnd, 200, ui_cfg()->automaticPatchFind ? BST_CHECKED : BST_UNCHECKED);
         ShowWindow(hAutomaticPatchFindCheck, SW_SHOW);
 
         hSavedPathButton = CreateWindowW(L"BUTTON", L"Browse",
@@ -679,8 +680,7 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             40, 740, 520, 25, hwnd, (HMENU)600, NULL, NULL);
         ApplyFontToControl(hStatusMessage, hFont);
 
-        // ✅ 8) CHARGER LES VALEURS (une seule fois) — depuis g_config (single reader)
-        plugin_ui_sync_from_config();
+        // ✅ 8) CHARGER LES VALEURS (une seule fois) — ui_cfg() working copy (V8.12)
 
         ShowCategoryControls(1);
 
@@ -696,21 +696,21 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         HWND hAutomaticPatchFindLabelText = GetDlgItem(hwnd, 2000);
         if (hAutomaticPatchFindLabelText) SetWindowTextW(hAutomaticPatchFindLabelText, L"Automatic Patch Find");
 
-        SetWindowTextA(hWhisperKeyEdit, getKeyName(whisperKey));
-        SetWindowTextA(hNormalKeyEdit, getKeyName(normalKey));
-        SetWindowTextA(hShoutKeyEdit, getKeyName(shoutKey));
-        SetWindowTextA(hConfigKeyEdit, getKeyName(configUIKey));
-        SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(voiceToggleKey));
-        CheckDlgButton(hwnd, 201, enableDistanceMuting ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hwnd, 203, enableAutomaticChannelChange ? BST_CHECKED : BST_UNCHECKED);
-        CheckDlgButton(hwnd, 204, enableVoiceToggle ? BST_CHECKED : BST_UNCHECKED);
+        SetWindowTextA(hWhisperKeyEdit, getKeyName(ui_cfg()->whisperKey));
+        SetWindowTextA(hNormalKeyEdit, getKeyName(ui_cfg()->normalKey));
+        SetWindowTextA(hShoutKeyEdit, getKeyName(ui_cfg()->shoutKey));
+        SetWindowTextA(hConfigKeyEdit, getKeyName(ui_cfg()->configUIKey));
+        SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(ui_cfg()->voiceToggleKey));
+        CheckDlgButton(hwnd, 201, ui_cfg()->enableDistanceMuting ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hwnd, 203, ui_cfg()->enableAutomaticChannelChange ? BST_CHECKED : BST_UNCHECKED);
+        CheckDlgButton(hwnd, 204, ui_cfg()->enableVoiceToggle ? BST_CHECKED : BST_UNCHECKED);
 
         // CORRECTION: Utiliser les valeurs CHARGÉES depuis le fichier de configuration
         // au lieu des valeurs par défaut
         wchar_t whisperText[32], normalText[32], shoutText[32];
-        swprintf(whisperText, 32, L"%.1f", distanceWhisper);
-        swprintf(normalText, 32, L"%.1f", distanceNormal);
-        swprintf(shoutText, 32, L"%.1f", distanceShout);
+        swprintf(whisperText, 32, L"%.1f", ui_cfg()->distanceWhisper);
+        swprintf(normalText, 32, L"%.1f", ui_cfg()->distanceNormal);
+        swprintf(shoutText, 32, L"%.1f", ui_cfg()->distanceShout);
 
         SetWindowTextW(hDistanceWhisperEdit, whisperText);
         SetWindowTextW(hDistanceNormalEdit, normalText);
@@ -720,7 +720,7 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             char debugMsg[256];
             snprintf(debugMsg, sizeof(debugMsg),
                 "WM_CREATE: Distances set in fields - Whisper: %.1f, Normal: %.1f, Shout: %.1f",
-                distanceWhisper, distanceNormal, distanceShout);
+                ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout);
             mumbleAPI.log(ownID, debugMsg);
         }
 

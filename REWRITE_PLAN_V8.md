@@ -72,7 +72,7 @@ Jede Phase endet mit: **gcc-Tests gruen + MinGW-Cross-Build OK** → Commit → 
 **V8 Code-Rewrite: ABGESCHLOSSEN** (9 Host-Test-Suiten + CI + MinGW-Cross-Build gruen).
 **V8.10/V8.11 Legacy-Abbau: ABGESCHLOSSEN** (`029`, `030`) — `core/` ohne Allowlist.
 Offen: **manueller TS-Client-Hoertest** und **30-min-Lasttest** auf echtem Server.
-**V8.12 (geplant):** `plugin.h`-Globals → vollstaendige `g_config`-F10-Migration.
+**V8.12 (✅ 8.0.2):** F10 liest/schreibt `g_config` via `ui_cfg()` — Legacy-Globals nur noch Spiegel (`031`).
 
 ---
 

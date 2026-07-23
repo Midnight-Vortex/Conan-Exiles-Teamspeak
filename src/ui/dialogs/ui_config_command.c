@@ -15,6 +15,7 @@
 #include <commctrl.h>
 #include <uxtheme.h>
 #include "ui_config_internal.h"
+#include "ui/config/ui_config_state.h"
 
 /*
  * ui_config_command.c: WM_COMMAND handler for the F10 settings dialog.
@@ -32,7 +33,7 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         case 303: ShowCategoryControls(3); break;
 
         case 105:
-            if (enableAutomaticPatchFind) {
+            if (ui_cfg()->automaticPatchFind) {
                 // Automatic patch find is enabled | Automatic patch find est activé
                 MessageBoxW(hwnd,
                     L"Automatic Patch Find is currently enabled.\n\n"
@@ -83,13 +84,13 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                 if (hubForceDistanceBasedMuting) {
                     // Serveur force -> garder coché
                     CheckDlgButton(hwnd, 201, BST_CHECKED);
-                    enableDistanceMuting = TRUE;
+                    ui_cfg()->enableDistanceMuting = 1;
                     showStatusMessage(L"Cannot disable: enforced by server", TRUE);
                     MessageBeep(MB_ICONWARNING);
                 }
                 else {
                     // Toggle normal géré par Windows
-                    enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+                    ui_cfg()->enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
                     updateDynamicInterface();
                 }
             }
@@ -100,13 +101,13 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                 if (hubForceAutomaticChannelSwitching) {
                     // Serveur force -> garder coché
                     CheckDlgButton(hwnd, 203, BST_CHECKED);
-                    enableAutomaticChannelChange = TRUE;
+                    ui_cfg()->enableAutomaticChannelChange = 1;
                     showStatusMessage(L"Cannot disable: enforced by server", TRUE);
                     MessageBeep(MB_ICONWARNING);
                 }
                 else {
                     // Toggle normal géré par Windows
-                    enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+                    ui_cfg()->enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
                     updateDynamicInterface();
                 }
             }
@@ -136,15 +137,15 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         case 204: // Voice Toggle checkbox
             if (HIWORD(wParam) == BN_CLICKED) {
                 // Pas de verrou serveur - toggle normal
-                enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
+                ui_cfg()->enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
             }
             break;
 
         case 200: // Automatic Patch Find checkbox
             if (HIWORD(wParam) == BN_CLICKED) {
-                enableAutomaticPatchFind = (IsDlgButtonChecked(hwnd, 200) == BST_CHECKED);
+                ui_cfg()->automaticPatchFind = (IsDlgButtonChecked(hwnd, 200) == BST_CHECKED);
 
-                if (enableAutomaticPatchFind) {
+                if (ui_cfg()->automaticPatchFind) {
                     // ✅ REDEMANDER le chemin Steam pour être SÛR
                     wchar_t autoPathFull[MAX_PATH] = L"";
                     if (findConanExilesAutomatic(autoPathFull, MAX_PATH)) {
@@ -182,35 +183,14 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                     }
                 }
                 else {
-                    // MODE MANUEL : Charger le chemin MANUEL depuis la config
-                    const wchar_t* configFolder = config_get_folder_path();
-                    if (configFolder) {
-                        wchar_t configFile[MAX_PATH];
-                        swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-                        FILE* fRead = _wfopen(configFile, L"r");
-                        if (fRead) {
-                            wchar_t line[512];
-                            while (fgetws(line, 512, fRead)) {
-                                if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                                    wchar_t* pathStart = line + 10;
-                                    wchar_t* nl = wcschr(pathStart, L'\n');
-                                    if (nl) *nl = L'\0';
-                                    wchar_t* cr = wcschr(pathStart, L'\r');
-                                    if (cr) *cr = L'\0';
-
-                                    wcscpy_s(displayedPathText, MAX_PATH, pathStart);
-                                    wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
-                                    if (conanSandbox) {
-                                        *conanSandbox = L'\0';
-                                    }
-                                    break;
-                                }
-                            }
-                            fclose(fRead);
+                    if (ui_cfg()->savedPath[0]) {
+                        wcsncpy_s(displayedPathText, MAX_PATH, ui_cfg()->savedPath, _TRUNCATE);
+                        wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
+                        if (conanSandbox) {
+                            *conanSandbox = L'\0';
                         }
                     }
-
-                    if (wcslen(displayedPathText) == 0) {
+                    else if (wcslen(displayedPathText) == 0) {
                         wcscpy_s(displayedPathText, MAX_PATH, L"No path configured");
                     }
 
@@ -230,7 +210,7 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                 // ✅ CORRECTION : Construire le chemin COMPLET incluant ConanSandbox\Saved
                 wchar_t pathToSave[MAX_PATH] = L"";
 
-                if (enableAutomaticPatchFind) {
+                if (ui_cfg()->automaticPatchFind) {
                     // ✅ REDEMANDER le chemin Steam RÉEL pour être 100% SÛR
                     wchar_t realSteamPath[MAX_PATH] = L"";
                     if (!findConanExilesAutomatic(realSteamPath, MAX_PATH)) {
@@ -295,9 +275,9 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
     // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
     wchar_t distWhisper[32], distNormal[32], distShout[32];
-    swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
-    swprintf(distNormal, 32, L"%.1f", distanceNormal);
-    swprintf(distShout, 32, L"%.1f", distanceShout);
+    swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
+    swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
+    swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
 
     // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
     wchar_t gameFolder[MAX_PATH];
@@ -312,7 +292,7 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
     writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
     // ✅ MISE À JOUR IMMÉDIATE DE L'AFFICHAGE APRÈS SAUVEGARDE
-    if (enableAutomaticPatchFind) {
+    if (ui_cfg()->automaticPatchFind) {
         // Afficher le chemin Steam dans l'interface
         wcscpy_s(displayedPathText, MAX_PATH, gameFolder);
         if (hSavedPathBg && IsWindow(hSavedPathBg)) {
@@ -342,66 +322,48 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 }
            else if (currentCategory == 2) {
                // === CATÉGORIE 2 : ADVANCED OPTIONS (reste inchangé) ===
-               enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
-               enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
-               enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
+               ui_cfg()->enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+               ui_cfg()->enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+               ui_cfg()->enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
 
                wchar_t distWhisper[32], distNormal[32], distShout[32];
                GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
                GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
                GetWindowTextW(hDistanceShoutEdit, distShout, 32);
 
-               distanceWhisper = (float)_wtof(distWhisper);
-               distanceNormal = (float)_wtof(distNormal);
-               distanceShout = (float)_wtof(distShout);
+               ui_cfg()->distanceWhisper = (float)_wtof(distWhisper);
+               ui_cfg()->distanceNormal = (float)_wtof(distNormal);
+               ui_cfg()->distanceShout = (float)_wtof(distShout);
                ui_read_hud_theme_from_combo();
                ui_read_hud_position_from_combo();
                ui_read_hud_size_from_combo();
 
                wchar_t gameFolder[MAX_PATH] = L"";
-
-               const wchar_t* configFolder = config_get_folder_path();
-               if (configFolder) {
-                   wchar_t configFile[MAX_PATH];
-                   swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-                   FILE* f = _wfopen(configFile, L"r");
-                   if (f) {
-                       wchar_t line[512];
-                       while (fgetws(line, 512, f)) {
-                           if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                               wchar_t* pathStart = line + 10;
-                               wchar_t* nl = wcschr(pathStart, L'\n');
-                               if (nl) *nl = L'\0';
-                               wchar_t* cr = wcschr(pathStart, L'\r');
-                               if (cr) *cr = L'\0';
-
-                               wcscpy_s(gameFolder, MAX_PATH, pathStart);
-                               wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-                               if (conanSandbox) {
-                                   *conanSandbox = L'\0';
-                               }
-                               break;
-                           }
-                       }
-                       fclose(f);
+               wchar_t activeSaved[MAX_PATH] = L"";
+               ui_cfg_get_active_saved_path(activeSaved, MAX_PATH);
+               if (activeSaved[0]) {
+                   wcsncpy_s(gameFolder, MAX_PATH, activeSaved, _TRUNCATE);
+                   wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+                   if (conanSandbox) {
+                       *conanSandbox = L'\0';
                    }
                }
 
                writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
                float currentVoiceDistance = localVoiceData.voiceDistance;
-               if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
-                   fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
-                   localVoiceData.voiceDistance = distanceWhisper;
+               if (fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal) &&
+                   fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceShout)) {
+                   localVoiceData.voiceDistance = ui_cfg()->distanceWhisper;
                }
-               else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
-                   localVoiceData.voiceDistance = distanceShout;
+               else if (fabsf(currentVoiceDistance - ui_cfg()->distanceShout) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal)) {
+                   localVoiceData.voiceDistance = ui_cfg()->distanceShout;
                }
                else {
-                   localVoiceData.voiceDistance = distanceNormal;
+                   localVoiceData.voiceDistance = ui_cfg()->distanceNormal;
                }
 
-               if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
+               if (ui_cfg()->enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
                showConfigSavedNotice(hwnd, L"Advanced options saved successfully!");
 
@@ -409,11 +371,11 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                    char logMsg[512];
                    snprintf(logMsg, sizeof(logMsg),
                        "✅ ADVANCED OPTIONS SAVED: WhisperKey=%d NormalKey=%d ShoutKey=%d ConfigKey=%d VoiceToggleKey=%d Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
-                       whisperKey, normalKey, shoutKey, configUIKey, voiceToggleKey,
-                       distanceWhisper, distanceNormal, distanceShout,
-                       enableDistanceMuting ? "true" : "false",
-                       enableAutomaticChannelChange ? "true" : "false",
-                       enableVoiceToggle ? "true" : "false");
+                       ui_cfg()->whisperKey, ui_cfg()->normalKey, ui_cfg()->shoutKey, ui_cfg()->configUIKey, ui_cfg()->voiceToggleKey,
+                       ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout,
+                       ui_cfg()->enableDistanceMuting ? "true" : "false",
+                       ui_cfg()->enableAutomaticChannelChange ? "true" : "false",
+                       ui_cfg()->enableVoiceToggle ? "true" : "false");
                    mumbleAPI.log(ownID, logMsg);
                }
            }
@@ -430,9 +392,9 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             float currentVoiceDistance = localVoiceData.voiceDistance;
 
             // Get values from interface | Récupérer les valeurs de l'interface
-            enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
-            enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
-            enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
+            ui_cfg()->enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
+            ui_cfg()->enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
+            ui_cfg()->enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
             ui_read_hud_theme_from_combo();
             ui_read_hud_position_from_combo();
             ui_read_hud_size_from_combo();
@@ -448,9 +410,9 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             float shoutValue = (float)_wtof(distShout);
 
             // Update global distances | Mettre à jour les distances globales
-            distanceWhisper = whisperValue;
-            distanceNormal = normalValue;
-            distanceShout = shoutValue;
+            ui_cfg()->distanceWhisper = whisperValue;
+            ui_cfg()->distanceNormal = normalValue;
+            ui_cfg()->distanceShout = shoutValue;
 
             // Save everything using saveVoiceSettings() | Tout sauvegarder avec saveVoiceSettings()
             saveVoiceSettings();
@@ -458,19 +420,19 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             voice_overlay_refresh_size();
 
             // Restore voice mode | Restaurer le mode vocal
-            if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
-                fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
-                localVoiceData.voiceDistance = distanceWhisper;
+            if (fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal) &&
+                fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceShout)) {
+                localVoiceData.voiceDistance = ui_cfg()->distanceWhisper;
             }
-            else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
-                localVoiceData.voiceDistance = distanceShout;
+            else if (fabsf(currentVoiceDistance - ui_cfg()->distanceShout) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal)) {
+                localVoiceData.voiceDistance = ui_cfg()->distanceShout;
             }
             else {
-                localVoiceData.voiceDistance = distanceNormal;
+                localVoiceData.voiceDistance = ui_cfg()->distanceNormal;
             }
 
             // Apply changes | Appliquer les changements
-            if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
+            if (ui_cfg()->enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
             showConfigSavedNotice(hwnd, L"Advanced options saved successfully!");
 
@@ -478,10 +440,10 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                 char logMsg[256];
                 snprintf(logMsg, sizeof(logMsg),
                     "Advanced options saved: Whisper=%.1f Normal=%.1f Shout=%.1f Muting=%s AutoChannel=%s VoiceToggle=%s",
-                    distanceWhisper, distanceNormal, distanceShout,
-                    enableDistanceMuting ? "true" : "false",
-                    enableAutomaticChannelChange ? "true" : "false",
-                    enableVoiceToggle ? "true" : "false");
+                    ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout,
+                    ui_cfg()->enableDistanceMuting ? "true" : "false",
+                    ui_cfg()->enableAutomaticChannelChange ? "true" : "false",
+                    ui_cfg()->enableVoiceToggle ? "true" : "false");
                 mumbleAPI.log(ownID, logMsg);
             }
             break;

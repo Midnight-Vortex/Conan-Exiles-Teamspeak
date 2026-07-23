@@ -115,6 +115,7 @@
     <ClCompile Include="..\src\ui\input\key_watcher.c" />
     <ClCompile Include="..\src\ui\plugin_ui_compat.c" />
     <ClCompile Include="..\src\ui\config\ui_voice_presets.c" />
+    <ClCompile Include="..\src\ui\config\ui_config_state.c" />
     <ClCompile Include="..\src\ui\util\ui_key_util.c" />
     <ClCompile Include="..\src\ui\util\ui_display_util.c" />
     <ClCompile Include="..\src\ui\validation\ui_hub_validation.c" />

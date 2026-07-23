@@ -1,4 +1,5 @@
 #include "plugin_internal.h"
+#include "ui/config/ui_config_state.h"
 #include "ui/plugin_ui_compat.h"
 #include "resource.h"
 #ifdef CONAN_EXILES_TS_EXPORTS
@@ -69,13 +70,13 @@ void saveVoicePreset(int presetIndex, const char* presetName) {
     }
 
     // Save current distances and keyboard shortcuts | Sauvegarder les distances actuelles et les touches clavier
-    voicePresets[presetIndex].whisperDistance = distanceWhisper;
-    voicePresets[presetIndex].normalDistance = distanceNormal;
-    voicePresets[presetIndex].shoutDistance = distanceShout;
-    voicePresets[presetIndex].whisperKey = whisperKey;
-    voicePresets[presetIndex].normalKey = normalKey;
-    voicePresets[presetIndex].shoutKey = shoutKey;
-    voicePresets[presetIndex].voiceToggleKey = voiceToggleKey;
+    voicePresets[presetIndex].whisperDistance = ui_cfg()->distanceWhisper;
+    voicePresets[presetIndex].normalDistance = ui_cfg()->distanceNormal;
+    voicePresets[presetIndex].shoutDistance = ui_cfg()->distanceShout;
+    voicePresets[presetIndex].whisperKey = ui_cfg()->whisperKey;
+    voicePresets[presetIndex].normalKey = ui_cfg()->normalKey;
+    voicePresets[presetIndex].shoutKey = ui_cfg()->shoutKey;
+    voicePresets[presetIndex].voiceToggleKey = ui_cfg()->voiceToggleKey;
     voicePresets[presetIndex].isUsed = TRUE;
 
     // Update name if provided | Mettre à jour le nom si fourni
@@ -98,7 +99,7 @@ void saveVoicePreset(int presetIndex, const char* presetName) {
         snprintf(logMsg, sizeof(logMsg),
             "Voice preset saved: [%d] '%s' - Whisper:%.1f Normal:%.1f Shout:%.1f",
             presetIndex, voicePresets[presetIndex].name,
-            distanceWhisper, distanceNormal, distanceShout);
+            ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout);
         mumbleAPI.log(ownID, logMsg);
     }
 
@@ -131,13 +132,13 @@ void loadVoicePreset(int presetIndex) {
     }
 
     // Load distances and keyboard shortcuts from preset | Charger les distances et les touches clavier depuis le preset
-    distanceWhisper = voicePresets[presetIndex].whisperDistance;
-    distanceNormal = voicePresets[presetIndex].normalDistance;
-    distanceShout = voicePresets[presetIndex].shoutDistance;
-    whisperKey = voicePresets[presetIndex].whisperKey;
-    normalKey = voicePresets[presetIndex].normalKey;
-    shoutKey = voicePresets[presetIndex].shoutKey;
-    voiceToggleKey = voicePresets[presetIndex].voiceToggleKey;
+    ui_cfg()->distanceWhisper = voicePresets[presetIndex].whisperDistance;
+    ui_cfg()->distanceNormal = voicePresets[presetIndex].normalDistance;
+    ui_cfg()->distanceShout = voicePresets[presetIndex].shoutDistance;
+    ui_cfg()->whisperKey = voicePresets[presetIndex].whisperKey;
+    ui_cfg()->normalKey = voicePresets[presetIndex].normalKey;
+    ui_cfg()->shoutKey = voicePresets[presetIndex].shoutKey;
+    ui_cfg()->voiceToggleKey = voicePresets[presetIndex].voiceToggleKey;
 
 #ifdef CONAN_EXILES_TS_EXPORTS
     voice_mode_reset_key_tracking();
@@ -150,19 +151,19 @@ void loadVoicePreset(int presetIndex) {
         isUpdatingInterface = TRUE;
 
         wchar_t whisperText[32], normalText[32], shoutText[32];
-        swprintf(whisperText, 32, L"%.1f", distanceWhisper);
-        swprintf(normalText, 32, L"%.1f", distanceNormal);
-        swprintf(shoutText, 32, L"%.1f", distanceShout);
+        swprintf(whisperText, 32, L"%.1f", ui_cfg()->distanceWhisper);
+        swprintf(normalText, 32, L"%.1f", ui_cfg()->distanceNormal);
+        swprintf(shoutText, 32, L"%.1f", ui_cfg()->distanceShout);
 
         if (hDistanceWhisperEdit) SetWindowTextW(hDistanceWhisperEdit, whisperText);
         if (hDistanceNormalEdit) SetWindowTextW(hDistanceNormalEdit, normalText);
         if (hDistanceShoutEdit) SetWindowTextW(hDistanceShoutEdit, shoutText);
 
         // Update keyboard shortcut displays in interface | Mettre à jour l'affichage des touches clavier dans l'interface
-        if (hWhisperKeyEdit) SetWindowTextA(hWhisperKeyEdit, getKeyName(whisperKey));
-        if (hNormalKeyEdit) SetWindowTextA(hNormalKeyEdit, getKeyName(normalKey));
-        if (hShoutKeyEdit) SetWindowTextA(hShoutKeyEdit, getKeyName(shoutKey));
-        if (hVoiceToggleKeyEdit) SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(voiceToggleKey));
+        if (hWhisperKeyEdit) SetWindowTextA(hWhisperKeyEdit, getKeyName(ui_cfg()->whisperKey));
+        if (hNormalKeyEdit) SetWindowTextA(hNormalKeyEdit, getKeyName(ui_cfg()->normalKey));
+        if (hShoutKeyEdit) SetWindowTextA(hShoutKeyEdit, getKeyName(ui_cfg()->shoutKey));
+        if (hVoiceToggleKeyEdit) SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(ui_cfg()->voiceToggleKey));
 
         isUpdatingInterface = FALSE;
 
@@ -173,43 +174,31 @@ void loadVoicePreset(int presetIndex) {
     localVoiceData.voiceDistance = getVoiceDistanceForMode(currentVoiceMode);
 
     wchar_t gameFolder[MAX_PATH] = L"";
-    {
-        PluginConfig cfg;
-        const wchar_t* savedBase = NULL;
-
-        config_copy(&cfg);
-        if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
-            savedBase = cfg.automaticSavedPath;
-        }
-        else if (cfg.savedPath[0]) {
-            savedBase = cfg.savedPath;
-        }
-        if (savedBase) {
-            wcsncpy_s(gameFolder, MAX_PATH, savedBase, _TRUNCATE);
-            wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-            if (conanSandbox) {
-                *conanSandbox = L'\0';
-            }
+    ui_cfg_get_active_saved_path(gameFolder, MAX_PATH);
+    if (gameFolder[0]) {
+        wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+        if (conanSandbox) {
+            *conanSandbox = L'\0';
         }
     }
 
     wchar_t distWhisper[32], distNormal[32], distShout[32];
-    swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
-    swprintf(distNormal, 32, L"%.1f", distanceNormal);
-    swprintf(distShout, 32, L"%.1f", distanceShout);
+    swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
+    swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
+    swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
 
     writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
     // Apply changes | Appliquer les changements
-    if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
+    if (ui_cfg()->enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
     if (enableLogConfig) {
         char logMsg[256];
         snprintf(logMsg, sizeof(logMsg),
             "Voice preset loaded and saved: [%d] '%s' - Whisper:%.1f Normal:%.1f Shout:%.1f Keys: W=%d N=%d S=%d T=%d",
             presetIndex, voicePresets[presetIndex].name,
-            distanceWhisper, distanceNormal, distanceShout,
-            whisperKey, normalKey, shoutKey, voiceToggleKey);
+            ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout,
+            ui_cfg()->whisperKey, ui_cfg()->normalKey, ui_cfg()->shoutKey, ui_cfg()->voiceToggleKey);
         mumbleAPI.log(ownID, logMsg);
     }
 
@@ -445,9 +434,9 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
     float currentVoiceDistance = localVoiceData.voiceDistance;
 
     // Update user distances WITHOUT clamping | Mettre à jour les distances SANS limites
-    distanceWhisper = (float)_wtof(distWhisper);
-    distanceNormal = (float)_wtof(distNormal);
-    distanceShout = (float)_wtof(distShout);
+    ui_cfg()->distanceWhisper = (float)_wtof(distWhisper);
+    ui_cfg()->distanceNormal = (float)_wtof(distNormal);
+    ui_cfg()->distanceShout = (float)_wtof(distShout);
 
     // Update mod file path | Mettre à jour le chemin du fichier mod
     size_t converted = 0;
@@ -457,18 +446,18 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
 
     /* Active-path global: the compat bridge routes it into the matching cfg
        field (AutomaticSavedPath when auto mode, SavedPath otherwise). */
-    wcscpy_s(savedPath, MAX_PATH, savedPathFull);
+    ui_cfg_set_active_saved_path_full(savedPathFull);
 
     // Restore current voice mode instead of forcing Normal | Restaurer le mode de voix actuel au lieu de forcer Normal
-    if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
-        fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceShout)) {
-        localVoiceData.voiceDistance = distanceWhisper;
+    if (fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal) &&
+        fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceShout)) {
+        localVoiceData.voiceDistance = ui_cfg()->distanceWhisper;
     }
-    else if (fabsf(currentVoiceDistance - distanceShout) < fabsf(currentVoiceDistance - distanceNormal)) {
-        localVoiceData.voiceDistance = distanceShout;
+    else if (fabsf(currentVoiceDistance - ui_cfg()->distanceShout) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal)) {
+        localVoiceData.voiceDistance = ui_cfg()->distanceShout;
     }
     else {
-        localVoiceData.voiceDistance = distanceNormal;
+        localVoiceData.voiceDistance = ui_cfg()->distanceNormal;
     }
 
     /* Single writer: push globals into g_config and rewrite plugin.cfg

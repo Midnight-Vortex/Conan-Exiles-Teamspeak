@@ -1,4 +1,5 @@
 #include "plugin_internal.h"
+#include "ui/config/ui_config_state.h"
 #include "ui/plugin_ui_compat.h"
 #include "resource.h"
 #ifdef CONAN_EXILES_TS_EXPORTS
@@ -24,6 +25,16 @@
 // ============================================================================
 
 // Handle distance edit changes with smart filtering | Gérer les changements d'édition de distance avec filtrage intelligent
+static float* ui_cfg_distance_ptr(int editId) {
+    PluginConfig* cfg = ui_cfg();
+    switch (editId) {
+    case 1: return &cfg->distanceWhisper;
+    case 2: return &cfg->distanceNormal;
+    case 3: return &cfg->distanceShout;
+    default: return NULL;
+    }
+}
+
 void handleDistanceEditChange(int editId) {
     if (isUpdatingInterface) return;
 
@@ -32,24 +43,22 @@ void handleDistanceEditChange(int editId) {
     const char* modeName = "";
 
     switch (editId) {
-    case 1: // Whisper
+    case 1:
         hEdit = hDistanceWhisperEdit;
-        targetDistance = &distanceWhisper;
         modeName = "Whisper";
         break;
-    case 2: // Normal
+    case 2:
         hEdit = hDistanceNormalEdit;
-        targetDistance = &distanceNormal;
         modeName = "Normal";
         break;
-    case 3: // Shout
+    case 3:
         hEdit = hDistanceShoutEdit;
-        targetDistance = &distanceShout;
         modeName = "Shout";
         break;
     default:
         return;
     }
+    targetDistance = ui_cfg_distance_ptr(editId);
 
     if (!hEdit || !targetDistance) return;
 
@@ -167,8 +176,8 @@ void updateDynamicInterface() {
     isUpdatingInterface = TRUE;
 
     // Force distance-based muting if required | Forcer le muting basé sur la distance si nécessaire
-    if (hubForceDistanceBasedMuting && !enableDistanceMuting) {
-        enableDistanceMuting = TRUE;
+    if (hubForceDistanceBasedMuting && !ui_cfg()->enableDistanceMuting) {
+        ui_cfg()->enableDistanceMuting = 1;
         if (hEnableDistanceMutingCheck) {
             CheckDlgButton(hConfigDialog, 201, BST_CHECKED);
         }
@@ -191,8 +200,8 @@ void updateDynamicInterface() {
     }
 
     // Force automatic channel change if required | Forcer le changement automatique de canal si nécessaire
-    if (hubForceAutomaticChannelSwitching && !enableAutomaticChannelChange) {
-        enableAutomaticChannelChange = TRUE;
+    if (hubForceAutomaticChannelSwitching && !ui_cfg()->enableAutomaticChannelChange) {
+        ui_cfg()->enableAutomaticChannelChange = 1;
         if (hEnableAutomaticChannelChangeCheck) {
             CheckDlgButton(hConfigDialog, 203, BST_CHECKED);
         }
@@ -233,9 +242,9 @@ void updateDynamicInterface() {
     updateChannelSwitchingMessage();
     updatePositionalAudioMessage();
 
-    float newWhisper = distanceWhisper;
-    float newNormal = distanceNormal;
-    float newShout = distanceShout;
+    float newWhisper = ui_cfg()->distanceWhisper;
+    float newNormal = ui_cfg()->distanceNormal;
+    float newShout = ui_cfg()->distanceShout;
 
     // Apply server or zone limits | Appliquer les limites serveur ou zone
     if (currentZoneIndex != -1) {
@@ -244,9 +253,9 @@ void updateDynamicInterface() {
         newShout = zones[currentZoneIndex].shoutDist;
     }
     else if (shouldApplyDistanceLimits()) {
-        newWhisper = validateDistanceValue(distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper, "Whisper");
-        newNormal = validateDistanceValue(distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal, "Normal");
-        newShout = validateDistanceValue(distanceShout, (float)hubMinimumShout, (float)hubMaximumShout, "Shout");
+        newWhisper = validateDistanceValue(ui_cfg()->distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper, "Whisper");
+        newNormal = validateDistanceValue(ui_cfg()->distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal, "Normal");
+        newShout = validateDistanceValue(ui_cfg()->distanceShout, (float)hubMinimumShout, (float)hubMaximumShout, "Shout");
     }
 
     BOOL distanceChanged = FALSE;
@@ -258,21 +267,21 @@ void updateDynamicInterface() {
 
     // Only update global variables and save if NOT in a zone | Uniquement si HORS d'une zone
     if (currentZoneIndex == -1) {
-        if (newWhisper != distanceWhisper) { distanceWhisper = newWhisper; distanceChanged = TRUE; }
-        if (newNormal != distanceNormal) { distanceNormal = newNormal; distanceChanged = TRUE; }
-        if (newShout != distanceShout) { distanceShout = newShout; distanceChanged = TRUE; }
+        if (newWhisper != ui_cfg()->distanceWhisper) { ui_cfg()->distanceWhisper = newWhisper; distanceChanged = TRUE; }
+        if (newNormal != ui_cfg()->distanceNormal) { ui_cfg()->distanceNormal = newNormal; distanceChanged = TRUE; }
+        if (newShout != ui_cfg()->distanceShout) { ui_cfg()->distanceShout = newShout; distanceChanged = TRUE; }
     }
 
     // Always save distance changes | Toujours sauvegarder les changements de distance
     if (distanceChanged) {
         saveVoiceSettings();
-        if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
+        if (ui_cfg()->enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
         if (enableLogGeneral) {
             char saveMsg[256];
             snprintf(saveMsg, sizeof(saveMsg),
                 "Distances saved to config: Whisper=%.1f, Normal=%.1f, Shout=%.1f (ForceDistanceBasedMuting=%s)",
-                distanceWhisper, distanceNormal, distanceShout,
+                ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout,
                 hubForceDistanceBasedMuting ? "TRUE" : "FALSE");
             mumbleAPI.log(ownID, saveMsg);
         }

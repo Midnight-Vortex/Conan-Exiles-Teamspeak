@@ -88,6 +88,7 @@ SOURCES=(
     src/ui/input/key_watcher.c
     src/ui/plugin_ui_compat.c
     src/ui/config/ui_voice_presets.c
+    src/ui/config/ui_config_state.c
     src/ui/util/ui_key_util.c
     src/ui/util/ui_display_util.c
     src/ui/validation/ui_hub_validation.c

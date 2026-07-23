@@ -25,6 +25,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #endif
 #include "ui_config_internal.h"
+#include "ui/config/ui_config_state.h"
 
 /*
  * ui_main.c: default-settings load/save, key capture.
@@ -42,11 +43,11 @@ void processKeyCapture() {
         if (GetAsyncKeyState(vk) & 0x8000) {
             // Touche détectée | Key detected
             switch (captureKeyTarget) {
-            case 1: whisperKey = vk; if (hWhisperKeyEdit) SetWindowTextA(hWhisperKeyEdit, getKeyName(vk)); break;
-            case 2: normalKey = vk; if (hNormalKeyEdit) SetWindowTextA(hNormalKeyEdit, getKeyName(vk)); break;
-            case 3: shoutKey = vk; if (hShoutKeyEdit) SetWindowTextA(hShoutKeyEdit, getKeyName(vk)); break;
-            case 4: configUIKey = vk; if (hConfigKeyEdit) SetWindowTextA(hConfigKeyEdit, getKeyName(vk)); break;
-            case 5: voiceToggleKey = vk; if (hVoiceToggleKeyEdit) SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(vk)); break;
+            case 1: ui_cfg()->whisperKey = vk; if (hWhisperKeyEdit) SetWindowTextA(hWhisperKeyEdit, getKeyName(vk)); break;
+            case 2: ui_cfg()->normalKey = vk; if (hNormalKeyEdit) SetWindowTextA(hNormalKeyEdit, getKeyName(vk)); break;
+            case 3: ui_cfg()->shoutKey = vk; if (hShoutKeyEdit) SetWindowTextA(hShoutKeyEdit, getKeyName(vk)); break;
+            case 4: ui_cfg()->configUIKey = vk; if (hConfigKeyEdit) SetWindowTextA(hConfigKeyEdit, getKeyName(vk)); break;
+            case 5: ui_cfg()->voiceToggleKey = vk; if (hVoiceToggleKeyEdit) SetWindowTextA(hVoiceToggleKeyEdit, getKeyName(vk)); break;
             }
 
             isCapturingKey = FALSE;

@@ -1,4 +1,5 @@
 #include "ui/plugin_ui_compat.h"
+#include "ui/config/ui_config_state.h"
 #include "core/util/log.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
@@ -261,84 +262,11 @@ mumble_channelid_t ts3LocalChannelID = -1;
 #endif
 
 void plugin_ui_sync_from_config(void) {
-    PluginConfig cfg;
-    config_copy(&cfg);
-    distanceWhisper = cfg.distanceWhisper;
-    distanceNormal = cfg.distanceNormal;
-    distanceShout = cfg.distanceShout;
-    whisperKey = cfg.whisperKey;
-    normalKey = cfg.normalKey;
-    shoutKey = cfg.shoutKey;
-    voiceToggleKey = cfg.voiceToggleKey;
-    configUIKey = cfg.configUIKey;
-    enableDistanceMuting = cfg.enableDistanceMuting ? TRUE : FALSE;
-    enableAutomaticChannelChange = cfg.enableAutomaticChannelChange ? TRUE : FALSE;
-    enableVoiceToggle = cfg.enableVoiceToggle ? TRUE : FALSE;
-    enableVoiceOverlay = cfg.enableVoiceOverlay ? TRUE : FALSE;
-    enableAutomaticPatchFind = cfg.automaticPatchFind ? TRUE : FALSE;
-    enableLogGeneral = cfg.debugMode ? TRUE : FALSE;
-    voiceHudTheme = cfg.hudTheme;
-    voiceHudPosition = cfg.hudPosition;
-    voiceHudSize = cfg.hudSize;
-    /* Legacy savedPath global = ACTIVE Pos.txt base path (same selection as
-       pos_resolve_file_path): automatic path when enabled and set, else manual. */
-    if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
-        wcsncpy_s(savedPath, MAX_PATH, cfg.automaticSavedPath, _TRUNCATE);
-    }
-    else {
-        wcsncpy_s(savedPath, MAX_PATH, cfg.savedPath, _TRUNCATE);
-    }
-    currentVoiceMode = (uint8_t)voice_mode_get_current();
-    localVoiceData.voiceDistance = voice_mode_get_current_distance();
+    ui_cfg_publish_legacy_mirrors();
 }
 
 void plugin_ui_sync_to_config(void) {
-    PluginConfig cfg;
-    config_copy(&cfg);
-    cfg.distanceWhisper = distanceWhisper;
-    cfg.distanceNormal = distanceNormal;
-    cfg.distanceShout = distanceShout;
-    cfg.whisperKey = whisperKey;
-    cfg.normalKey = normalKey;
-    cfg.shoutKey = shoutKey;
-    cfg.voiceToggleKey = voiceToggleKey;
-    cfg.configUIKey = configUIKey;
-    cfg.enableDistanceMuting = enableDistanceMuting ? 1 : 0;
-    cfg.enableAutomaticChannelChange = enableAutomaticChannelChange ? 1 : 0;
-    cfg.enableVoiceToggle = enableVoiceToggle ? 1 : 0;
-    cfg.enableVoiceOverlay = enableVoiceOverlay ? 1 : 0;
-    cfg.automaticPatchFind = enableAutomaticPatchFind ? 1 : 0;
-    cfg.debugMode = enableLogGeneral ? 1 : 0;
-    cfg.hudTheme = voiceHudTheme;
-    cfg.hudPosition = voiceHudPosition;
-    cfg.hudSize = voiceHudSize;
-    /* The legacy savedPath global holds the ACTIVE path: auto-detected in
-       automatic mode, user-chosen in manual mode. Route it into the matching
-       config field so pos_file resolves Pos.txt correctly. Never persist UI
-       placeholders like "(Not configured)". */
-    if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
-        if (enableAutomaticPatchFind) {
-            wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-        }
-        else {
-            wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-        }
-    }
-    config_clamp(&cfg);
-    config_apply(&cfg);
-    /* config_save() is the ONE writer of plugin.cfg (V8.5b single-writer). */
-    config_save();
-    log_set_enabled(cfg.debugMode);
-    /* Only a REAL mode change goes through voice_mode_apply (chat notify);
-       plain saves just refresh distances silently. */
-    if ((VoiceMode)currentVoiceMode != voice_mode_get_current()) {
-        voice_mode_apply((VoiceMode)currentVoiceMode);
-    }
-    cepos_invalidate_send_cache();
-    cepos_signal_send_pending();
-    /* Settings/UI thread — never run the heavy recompute here; CEDRAIN picks
-       up the pending flag on the callback thread milliseconds later. */
-    ts3_audio_request_recompute_all();
+    ui_cfg_commit();
 }
 
 void plugin_ui_sync_live_state(void) {
@@ -488,15 +416,15 @@ float getVoiceDistanceForMode(uint8_t voiceMode) {
     }
     if (currentZoneIndex >= 0 && (size_t)currentZoneIndex < zoneCount) {
         switch (voiceMode) {
-        case 0: return zones[currentZoneIndex].whisperDist > 0.0f ? zones[currentZoneIndex].whisperDist : distanceWhisper;
-        case 2: return zones[currentZoneIndex].shoutDist > 0.0f ? zones[currentZoneIndex].shoutDist : distanceShout;
-        default: return zones[currentZoneIndex].normalDist > 0.0f ? zones[currentZoneIndex].normalDist : distanceNormal;
+        case 0: return zones[currentZoneIndex].whisperDist > 0.0f ? zones[currentZoneIndex].whisperDist : g_config.distanceWhisper;
+        case 2: return zones[currentZoneIndex].shoutDist > 0.0f ? zones[currentZoneIndex].shoutDist : g_config.distanceShout;
+        default: return zones[currentZoneIndex].normalDist > 0.0f ? zones[currentZoneIndex].normalDist : g_config.distanceNormal;
         }
     }
     switch (voiceMode) {
-    case 0: return distanceWhisper;
-    case 2: return distanceShout;
-    default: return distanceNormal;
+    case 0: return g_config.distanceWhisper;
+    case 2: return g_config.distanceShout;
+    default: return g_config.distanceNormal;
     }
 }
 
@@ -592,7 +520,7 @@ int ts3_plugin_is_soundproof_muted_at(float rx, float ry, float rz) {
 }
 
 int ts3_plugin_client_soundproof_muted(unsigned int clientID) {
-    if (pluginShuttingDown || !enableDistanceMuting || clientID == 0) {
+    if (pluginShuttingDown || !g_config.enableDistanceMuting || clientID == 0) {
         return 0;
     }
     return ts3_proximity_audio_soundproof_muted(clientID);
@@ -754,7 +682,7 @@ void ts3_adapter_request_chat_wakeup(void) {
 }
 
 int ts3_plugin_is_proximity_active(void) {
-    return ts3_is_connected() && enableDistanceMuting;
+    return ts3_is_connected() && g_config.enableDistanceMuting;
 }
 
 void ts3_plugin_apply_proximity_volumes_force(void) {
@@ -769,14 +697,7 @@ void ts3_plugin_apply_proximity_volumes_force(void) {
 }
 
 void plugin_ui_on_settings_saved(void) {
-    /* Single writer for plugin.cfg (V8.5b): push the legacy F10 globals into
-       g_config and persist them through config_save() — the ONE function that
-       writes plugin.cfg. sync_to_config also handles the canonical rewrite of
-       keys the old legacy writers used to drop (DefaultsAppliedServer,
-       DebugMode, EnableVoiceOverlay), voice-mode apply and the deferred
-       recompute request. */
-    plugin_ui_sync_to_config();
-    /* The F10 dialog additionally refreshes the live overlay after a save. */
+    ui_cfg_commit();
     voice_overlay_refresh_theme();
     voice_overlay_refresh_position();
     voice_overlay_refresh_size();

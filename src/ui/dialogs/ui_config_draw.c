@@ -25,6 +25,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #endif
 #include "ui_config_internal.h"
+#include "ui/config/ui_config_state.h"
 
 /*
  * ui_config_draw.c: WM_DRAWITEM/WM_ERASEBKGND/WM_CTLCOLOR* + bitmap helpers.
@@ -884,7 +885,7 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             // Convertir modFilePath de char* en wchar_t* pour affichage
             wchar_t displayPath[MAX_PATH] = L"";
 
-            if (enableAutomaticPatchFind) {
+            if (ui_cfg()->automaticPatchFind) {
                 // Mode automatique : afficher le chemin automatique détecté
                 wchar_t autoPath[MAX_PATH] = L"";
                 if (findConanExilesAutomatic(autoPath, MAX_PATH)) {

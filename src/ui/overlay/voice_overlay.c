@@ -6,6 +6,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #endif
 #include "core/proximity/proximity_math.h"
+#include "core/config/config.h"
 #include "core/voice/voice_modes.h"
 #include <math.h>
 #include <stdio.h>
@@ -44,8 +45,8 @@ typedef struct {
     BYTE alpha;
 } VoiceHudThemePalette;
 
-// Color palettes for the bottom-right voice HUD. Index = voiceHudTheme from plugin.cfg.
-// Palettes de couleurs du HUD vocal en bas à droite. Index = voiceHudTheme dans plugin.cfg.
+// Color palettes for the bottom-right voice HUD. Index = g_config.hudTheme from plugin.cfg.
+// Palettes de couleurs du HUD vocal en bas à droite. Index = g_config.hudTheme dans plugin.cfg.
 static const VoiceHudThemePalette g_voiceHudThemes[VOICE_HUD_THEME_COUNT] = {
     /* Gray (original) */
     { RGB(0, 0, 0), RGB(200, 200, 200), RGB(255, 255, 255), RGB(140, 140, 140), RGB(0, 0, 0), RGB(170, 190, 230), 100 },
@@ -74,7 +75,7 @@ static const VoiceHudThemePalette g_voiceHudThemes[VOICE_HUD_THEME_COUNT] = {
 };
 
 static const VoiceHudThemePalette* voice_overlay_get_palette(void) {
-    int idx = voiceHudTheme;
+    int idx = g_config.hudTheme;
     if (idx < 0 || idx >= VOICE_HUD_THEME_COUNT) {
         idx = VOICE_HUD_THEME_GRAY;
     }
@@ -132,7 +133,7 @@ static void voice_overlay_compute_screen_position(int screenWidth, int screenHei
         marginY = 15;
     }
 
-    int pos = voiceHudPosition;
+    int pos = g_config.hudPosition;
     if (pos < 0 || pos >= VOICE_HUD_POSITION_COUNT) {
         pos = VOICE_HUD_POSITION_BOTTOM_RIGHT;
     }
@@ -173,7 +174,7 @@ void voice_overlay_refresh_position(void) {
 }
 
 void voice_overlay_get_dimensions(int* outWidth, int* outHeight) {
-    int size = voiceHudSize;
+    int size = g_config.hudSize;
     if (size < 0 || size >= VOICE_HUD_SIZE_COUNT) {
         size = VOICE_HUD_SIZE_BIG;
     }
@@ -196,7 +197,7 @@ void voice_overlay_get_dimensions(int* outWidth, int* outHeight) {
 }
 
 static void voice_overlay_get_font_sizes(int* outModePt, int* outSubPt) {
-    int size = voiceHudSize;
+    int size = g_config.hudSize;
     if (size < 0 || size >= VOICE_HUD_SIZE_COUNT) {
         size = VOICE_HUD_SIZE_BIG;
     }
@@ -239,12 +240,12 @@ static void overlay_release_fonts(void) {
 }
 
 static void overlay_ensure_fonts(void) {
-    if (g_hudFontSizeKey == voiceHudSize && g_hudModeFont && g_hudSubFont) {
+    if (g_hudFontSizeKey == g_config.hudSize && g_hudModeFont && g_hudSubFont) {
         return;
     }
 
     overlay_release_fonts();
-    g_hudFontSizeKey = voiceHudSize;
+    g_hudFontSizeKey = g_config.hudSize;
 
     int modePt = 20;
     int subPt = 15;
@@ -276,7 +277,7 @@ static int plugin_is_ingame_channel_for_hud(void) {
 }
 
 int plugin_should_show_voice_overlay(void) {
-    if (!enableVoiceOverlay) {
+    if (!g_config.enableVoiceOverlay) {
         return 0;
     }
     if (enableLogGeneral) {
@@ -524,7 +525,7 @@ LRESULT CALLBACK VoiceOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         }
 
         SetBkMode(memDC, TRANSPARENT);
-        int lineGap = (voiceHudSize == VOICE_HUD_SIZE_SMALL) ? 2 : 3;
+        int lineGap = (g_config.hudSize == VOICE_HUD_SIZE_SMALL) ? 2 : 3;
         overlay_ensure_fonts();
 
         SIZE modeSize = { 0 }, zoneSize = { 0 }, raceSize = { 0 };
@@ -607,7 +608,7 @@ LRESULT CALLBACK VoiceOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 // Create voice overlay | Créer l'overlay vocal
 void createVoiceOverlay() {
     if (hVoiceOverlay != NULL) return;
-    if (!enableVoiceOverlay) return;
+    if (!g_config.enableVoiceOverlay) return;
 
     // Register window class | Enregistrer la classe de fenêtre
     const wchar_t OVERLAY_CLASS_NAME[] = L"VoiceOverlayClass";
@@ -692,7 +693,7 @@ void refreshOverlayForFullscreen() {
     if (pluginShuttingDown) {
         return;
     }
-    if (!hVoiceOverlay || !enableVoiceOverlay || !IsWindow(hVoiceOverlay)) {
+    if (!hVoiceOverlay || !g_config.enableVoiceOverlay || !IsWindow(hVoiceOverlay)) {
         return;
     }
     if (!plugin_should_show_voice_overlay()) {
@@ -735,7 +736,7 @@ void updateVoiceOverlay() {
     if (pluginShuttingDown) {
         return;
     }
-    if (!hVoiceOverlay || !enableVoiceOverlay || !IsWindow(hVoiceOverlay)) {
+    if (!hVoiceOverlay || !g_config.enableVoiceOverlay || !IsWindow(hVoiceOverlay)) {
         return;
     }
 

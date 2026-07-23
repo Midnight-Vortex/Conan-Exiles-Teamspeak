@@ -1,4 +1,5 @@
 #include "plugin_internal.h"
+#include "ui/config/ui_config_state.h"
 #include "ui/plugin_ui_compat.h"
 #include "resource.h"
 #ifdef CONAN_EXILES_TS_EXPORTS
@@ -56,7 +57,7 @@ void updateDistanceMutingMessage() {
     wchar_t message[256] = L"";
 
     if (!shouldApplyDistanceLimits()) {
-        if (enableDistanceMuting) {
+        if (ui_cfg()->enableDistanceMuting) {
             swprintf(message, 256, L"INFO: Distance-based muting: Enabled (No server restrictions)");
         }
         else {
@@ -64,7 +65,7 @@ void updateDistanceMutingMessage() {
         }
     }
     else if (hubForceDistanceBasedMuting) {
-        if (enableDistanceMuting) {
+        if (ui_cfg()->enableDistanceMuting) {
             swprintf(message, 256, L"LOCKED: Distance-based muting: FORCED by server (cannot disable)");
         }
         else {
@@ -72,7 +73,7 @@ void updateDistanceMutingMessage() {
         }
     }
     else {
-        if (enableDistanceMuting) {
+        if (ui_cfg()->enableDistanceMuting) {
             swprintf(message, 256, L"OK: Distance-based muting: Enabled (user choice)");
         }
         else {
@@ -136,7 +137,7 @@ void updateChannelSwitchingMessage() {
     wchar_t message[256] = L"";
 
     if (!shouldApplyDistanceLimits()) {
-        if (enableAutomaticChannelChange) {
+        if (ui_cfg()->enableAutomaticChannelChange) {
             swprintf(message, 256, L"INFO: Automatic channel switching: Enabled (No server restrictions)");
         }
         else {
@@ -144,7 +145,7 @@ void updateChannelSwitchingMessage() {
         }
     }
     else if (hubForceAutomaticChannelSwitching) {
-        if (enableAutomaticChannelChange) {
+        if (ui_cfg()->enableAutomaticChannelChange) {
             swprintf(message, 256, L"LOCKED: Automatic channel switching: FORCED by server (cannot disable)");
         }
         else {
@@ -152,7 +153,7 @@ void updateChannelSwitchingMessage() {
         }
     }
     else {
-        if (enableAutomaticChannelChange) {
+        if (ui_cfg()->enableAutomaticChannelChange) {
             swprintf(message, 256, L"OK: Automatic channel switching: Enabled (user choice)");
         }
         else {
@@ -183,23 +184,23 @@ void updateConsolidatedDistanceMessages() {
 
         if (currentZoneIndex != -1) {
             swprintf(whisperMsg, 300, L"Whisper: %.1f meters (ZONE: %S - Range: %.1f-%.1f)",
-                distanceWhisper, zones[currentZoneIndex].name, zones[currentZoneIndex].whisperDist, zones[currentZoneIndex].whisperDist);
+                ui_cfg()->distanceWhisper, zones[currentZoneIndex].name, zones[currentZoneIndex].whisperDist, zones[currentZoneIndex].whisperDist);
         }
         else if (!limitsActive) {
-            swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Free range - no server limits)", distanceWhisper);
+            swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Free range - no server limits)", ui_cfg()->distanceWhisper);
         }
         else {
-            if (distanceWhisper < hubMinimumWhisper) {
+            if (ui_cfg()->distanceWhisper < hubMinimumWhisper) {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
-                    distanceWhisper, (float)hubMinimumWhisper, (float)hubMinimumWhisper);
+                    ui_cfg()->distanceWhisper, (float)hubMinimumWhisper, (float)hubMinimumWhisper);
             }
-            else if (distanceWhisper > hubMaximumWhisper) {
+            else if (ui_cfg()->distanceWhisper > hubMaximumWhisper) {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
-                    distanceWhisper, (float)hubMaximumWhisper, (float)hubMaximumWhisper);
+                    ui_cfg()->distanceWhisper, (float)hubMaximumWhisper, (float)hubMaximumWhisper);
             }
             else {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Valid range: %.1f-%.1f)",
-                    distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper);
+                    ui_cfg()->distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper);
             }
         }
 
@@ -217,23 +218,23 @@ void updateConsolidatedDistanceMessages() {
 
         if (currentZoneIndex != -1) {
             swprintf(normalMsg, 300, L"Normal: %.1f meters (ZONE: %S - Range: %.1f-%.1f)",
-                distanceNormal, zones[currentZoneIndex].name, zones[currentZoneIndex].normalDist, zones[currentZoneIndex].normalDist);
+                ui_cfg()->distanceNormal, zones[currentZoneIndex].name, zones[currentZoneIndex].normalDist, zones[currentZoneIndex].normalDist);
         }
         else if (!limitsActive) {
-            swprintf(normalMsg, 300, L" Normal: %.1f meters (Free range - no server limits)", distanceNormal);
+            swprintf(normalMsg, 300, L" Normal: %.1f meters (Free range - no server limits)", ui_cfg()->distanceNormal);
         }
         else {
-            if (distanceNormal < hubMinimumNormal) {
+            if (ui_cfg()->distanceNormal < hubMinimumNormal) {
                 swprintf(normalMsg, 300, L"Normal: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
-                    distanceNormal, (float)hubMinimumNormal, (float)hubMinimumNormal);
+                    ui_cfg()->distanceNormal, (float)hubMinimumNormal, (float)hubMinimumNormal);
             }
-            else if (distanceNormal > hubMaximumNormal) {
+            else if (ui_cfg()->distanceNormal > hubMaximumNormal) {
                 swprintf(normalMsg, 300, L"Normal: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
-                    distanceNormal, (float)hubMaximumNormal, (float)hubMaximumNormal);
+                    ui_cfg()->distanceNormal, (float)hubMaximumNormal, (float)hubMaximumNormal);
             }
             else {
                 swprintf(normalMsg, 300, L"Normal: %.1f meters (Valid range: %.1f-%.1f)",
-                    distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal);
+                    ui_cfg()->distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal);
             }
         }
 
@@ -251,23 +252,23 @@ void updateConsolidatedDistanceMessages() {
 
         if (currentZoneIndex != -1) {
             swprintf(shoutMsg, 300, L"Shout: %.1f meters (ZONE: %S - Range: %.1f-%.1f)",
-                distanceShout, zones[currentZoneIndex].name, zones[currentZoneIndex].shoutDist, zones[currentZoneIndex].shoutDist);
+                ui_cfg()->distanceShout, zones[currentZoneIndex].name, zones[currentZoneIndex].shoutDist, zones[currentZoneIndex].shoutDist);
         }
         else if (!limitsActive) {
-            swprintf(shoutMsg, 300, L" Shout: %.1f meters (Free range - no server limits)", distanceShout);
+            swprintf(shoutMsg, 300, L" Shout: %.1f meters (Free range - no server limits)", ui_cfg()->distanceShout);
         }
         else {
-            if (distanceShout < hubMinimumShout) {
+            if (ui_cfg()->distanceShout < hubMinimumShout) {
                 swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
-                    distanceShout, (float)hubMinimumShout, (float)hubMinimumShout);
+                    ui_cfg()->distanceShout, (float)hubMinimumShout, (float)hubMinimumShout);
             }
-            else if (distanceShout > hubMaximumShout) {
+            else if (ui_cfg()->distanceShout > hubMaximumShout) {
                 swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
-                    distanceShout, (float)hubMaximumShout, (float)hubMaximumShout);
+                    ui_cfg()->distanceShout, (float)hubMaximumShout, (float)hubMaximumShout);
             }
             else {
                 swprintf(shoutMsg, 300, L"Shout: %.1f meters (Valid range: %.1f-%.1f)",
-                    distanceShout, (float)hubMinimumShout, (float)hubMaximumShout);
+                    ui_cfg()->distanceShout, (float)hubMinimumShout, (float)hubMaximumShout);
             }
         }
 
@@ -344,9 +345,9 @@ void showDynamicDistanceLimitMessage() {
         "Note: Distances are automatically limited by server settings. "
         "Each server may have different maximum distances.",
         serverMaximumAudioDistance,
-        distanceWhisper, (distanceWhisper == serverMaximumAudioDistance) ? "(LIMITED)" : "",
-        distanceNormal, (distanceNormal == serverMaximumAudioDistance) ? "(LIMITED)" : "",
-        distanceShout, (distanceShout == serverMaximumAudioDistance) ? "(LIMITED)" : "");
+        ui_cfg()->distanceWhisper, (ui_cfg()->distanceWhisper == serverMaximumAudioDistance) ? "(LIMITED)" : "",
+        ui_cfg()->distanceNormal, (ui_cfg()->distanceNormal == serverMaximumAudioDistance) ? "(LIMITED)" : "",
+        ui_cfg()->distanceShout, (ui_cfg()->distanceShout == serverMaximumAudioDistance) ? "(LIMITED)" : "");
 
     if (enableLogGeneral) {
         mumbleAPI.log(ownID, dynamicMsg);

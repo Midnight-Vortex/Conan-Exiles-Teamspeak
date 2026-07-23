@@ -16,11 +16,9 @@ including all changes and additions you made.
 All other terms and conditions of the Mozilla Public License 2.0 remain unchanged.
 */
 
-// Legacy Mumble-era global state bag — still used by the F10 settings dialog and
-// overlay HUD. New code should use g_config (config.c), channel_manage (ts/),
-// and voice_modes hooks instead of adding new globals here. V8.9 trimmed dead
-// symbols; further reduction tracked for V8.12 (full g_config F10 cutover).
-// V8.10 moved presets/util out of core/.
+// V8.12: F10 persisted settings live in g_config (ui_cfg() working copy while dialog
+// open). Legacy globals below are mirrors for overlay/HWND state only — do not write
+// them for config fields; use ui_cfg() / g_config instead.
 
 #ifndef PLUGIN_H
 #define PLUGIN_H
