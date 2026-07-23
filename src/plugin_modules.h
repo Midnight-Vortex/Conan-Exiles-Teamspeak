@@ -74,19 +74,7 @@ BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2
 BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor);
 int getPlayerZone(float playerX, float playerY, float playerZ);
 
-/* hub_parser.c */
-void applyDefaultSettingsIfNeeded(const char* description, mumble_connection_t connection);
-void parseHubDescription(const char* description);
-void readHubDescription(void);
-BOOL hubDescriptionHasContent(const char* description);
-void ts3_show_pending_hub_confirm(void);
-int ts3_is_root_channel_id(uint64_t channelID);
-void hubDescriptionMonitorThread(void* arg);
-
 /* channel_manage.c */
-void initializeChannelIDs(void);
-void manageChannelBasedOnCoordinates(void);
-void channelManagementThread(void* arg);
 int ts3_plugin_should_send_position(void);
 
 /* proximity_volume.c */

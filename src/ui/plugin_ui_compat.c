@@ -228,8 +228,6 @@ const wchar_t* infoText2 = L"";
 const wchar_t* infoText3 = L"";
 
 CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
-CompletePositionalData remotePlayersData[512];
-size_t remotePlayerCount = 0;
 ULONGLONG lastVoiceDataSent = 0;
 ULONGLONG lastKeyCheck = 0;
 
@@ -247,8 +245,6 @@ int voiceHudSize = VOICE_HUD_SIZE_BIG;
 HFONT hOverlayFont = NULL;
 BOOL overlayThreadRunning = FALSE;
 
-PlayerMuteState playerMuteStates[512];
-size_t playerMuteStateCount = 0;
 ULONGLONG lastDistanceCheck = 0;
 BOOL forceGlobalMuteRefresh = FALSE;
 ULONGLONG lastGlobalRefresh = 0;
@@ -265,11 +261,7 @@ Zone zones[MAX_ZONES];
 size_t zoneCount = 0;
 int currentZoneIndex = -1;
 
-AdaptivePlayerData adaptivePlayerStates[512];
-size_t adaptivePlayerCount = 0;
 Vector3 localPlayerPosition = { 0.0f, 0.0f, 0.0f };
-AudioVolumeState audioVolumeStates[512];
-size_t audioVolumeCount = 0;
 
 #ifdef CONAN_EXILES_TS_EXPORTS
 mumble_channelid_t ts3LocalChannelID = -1;
@@ -631,19 +623,6 @@ BOOL hubDescriptionHasContent(const char* description) {
     }
     return FALSE;
 }
-
-void readHubDescription(void) { }
-void parseHubDescription(const char* description) { (void)description; }
-void applyDefaultSettingsIfNeeded(const char* description, mumble_connection_t connection) {
-    (void)description;
-    (void)connection;
-}
-void initializeChannelIDs(void) { }
-void manageChannelBasedOnCoordinates(void) { }
-void ts3_show_pending_hub_confirm(void) { }
-int ts3_is_root_channel_id(uint64_t channelID) { (void)channelID; return 0; }
-void hubDescriptionMonitorThread(void* arg) { (void)arg; }
-void channelManagementThread(void* arg) { (void)arg; }
 
 void plugin_ui_init(void) {
     mumbleAPI.log = compat_mumble_log;

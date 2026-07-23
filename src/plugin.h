@@ -337,8 +337,6 @@ extern BOOL hubForceAutomaticChannelSwitching;
 
 // Voice system variables
 extern CompletePositionalData localVoiceData;
-extern CompletePositionalData remotePlayersData[512];
-extern size_t remotePlayerCount;
 extern ULONGLONG lastVoiceDataSent;
 extern ULONGLONG lastKeyCheck;
 
@@ -351,8 +349,6 @@ extern float distanceShout;
 extern BOOL enableDistanceMuting;
 
 // Mute system variables
-extern PlayerMuteState playerMuteStates[512];
-extern size_t playerMuteStateCount;
 extern ULONGLONG lastDistanceCheck;
 
 // Refresh variables
@@ -441,12 +437,6 @@ int ts3_plugin_compute_audio_mode(void);
 #endif
 
 // Adaptive system variables
-extern AdaptivePlayerData adaptivePlayerStates[512];
-extern size_t adaptivePlayerCount;
 extern Vector3 localPlayerPosition;
-
-// Audio volume states
-extern AudioVolumeState audioVolumeStates[512];
-extern size_t audioVolumeCount;
 
 #endif // PLUGIN_H
