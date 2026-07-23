@@ -1,6 +1,8 @@
 /* Standalone test for hub_parse_settings — compiles hub_parser.c directly.
-   Build:  cl /W4 /I ..\src hub_parser_test.c ..\src\core\hub\hub_parser.c
-   Run:    hub_parser_test.exe   (exit code 0 = all checks passed) */
+   Build/run on Linux: bash tests/run_tests.sh (plain gcc, no TS SDK needed).
+   Exit code 0 = all checks passed. */
+
+#include "core/util/compat_crt.h"
 
 #include "core/hub/hub_parser.h"
 #include "core/proximity/zone_resolve.h"
