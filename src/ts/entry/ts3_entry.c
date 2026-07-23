@@ -123,6 +123,62 @@ static void ts3_on_local_position_update(void) {
     ts3_audio_on_local_position_update();
 }
 
+/* ---- voice_modes layering hooks (V8.6b) -----------------------------------
+   voice_modes.c is pure core and no longer includes ts/ or ui/ headers. This
+   is where the ts/ui layer "plugs in the socket": the real chat/CEPOS/overlay
+   functions and the server-profile read used by the distance clamp. Wired once
+   in ts3plugin_init (callback thread). */
+static void voice_hooks_notify_chat(const char* message) {
+    if (ts3_is_connected()) {
+        displayInChat(message);
+    }
+}
+
+static void voice_hooks_invalidate_cepos_cache(void) {
+    cepos_invalidate_send_cache();
+}
+
+static void voice_hooks_signal_send_pending(void) {
+    cepos_signal_send_pending();
+}
+
+static void voice_hooks_overlay_sync(void) {
+    updateVoiceOverlay();
+}
+
+static int voice_hooks_get_profile(VoiceModeProfile* out) {
+    if (!out) {
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+    out->active = server_profile_get(&out->hub);
+    if (out->active) {
+        out->hasRace = server_profile_get_local_race(&out->race);
+    }
+    return out->active;
+}
+
+static int voice_hooks_has_pending_chat(void) {
+    return ts3_plugin_has_pending_chat();
+}
+
+static void voice_hooks_flush_pending_chat(void) {
+    ts3_plugin_flush_pending_chat();
+}
+
+static void voice_mode_wire_hooks(void) {
+    static const VoiceModeHooks hooks = {
+        voice_hooks_notify_chat,
+        voice_hooks_invalidate_cepos_cache,
+        voice_hooks_signal_send_pending,
+        voice_hooks_overlay_sync,
+        voice_hooks_get_profile,
+        voice_hooks_has_pending_chat,
+        voice_hooks_flush_pending_chat,
+    };
+    voice_mode_set_hooks(&hooks);
+}
+
 #define PLUGIN_API_VERSION 26
 
 /* TS function table — stored on load, used by later phases. */
@@ -231,6 +287,7 @@ int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
     config_load();
+    voice_mode_wire_hooks();
     {
         const wchar_t* logPath = log_get_path();
         if (logPath) {

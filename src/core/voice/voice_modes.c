@@ -3,17 +3,39 @@
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
 #include "core/util/log.h"
-#include "plugin_modules.h"
-#include "ui/overlay/voice_overlay.h"
-#include "ts/adapter/ts3_adapter.h"
-#include "ts/profile/ts3_server_profile.h"
-#include "ts/proximity/ts3_cepos.h"
 
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
 
 #define VOICE_POLL_SUPPRESS_MS 300
+
+/* Init-time wired ts/ui hooks — all-NULL by default (host tests / pre-init):
+   every action becomes a safe no-op and get_profile reports "no profile". */
+static VoiceModeHooks g_hooks;
+
+void voice_mode_set_hooks(const VoiceModeHooks* hooks) {
+    if (hooks) {
+        g_hooks = *hooks;
+    }
+    else {
+        memset(&g_hooks, 0, sizeof(g_hooks));
+    }
+}
+
+static void voice_hook_notify_chat(const char* message) {
+    if (g_hooks.notify_chat) {
+        g_hooks.notify_chat(message);
+    }
+}
+
+static int voice_hook_get_profile(VoiceModeProfile* out) {
+    if (g_hooks.get_profile) {
+        return g_hooks.get_profile(out);
+    }
+    memset(out, 0, sizeof(*out));
+    return 0;
+}
 
 /* Current mode — atomic, read from cepos build path / written by hotkeys. */
 static volatile long g_currentMode = VOICE_MODE_NORMAL;
@@ -76,13 +98,7 @@ static void voice_mode_notify_mode(VoiceMode mode) {
         voice_mode_get_distance(mode));
     log_write("VOICE: mode=%s distance=%.1f",
         modeNames[mode >= 0 && mode <= 2 ? mode : 1], voice_mode_get_distance(mode));
-#ifdef CONAN_EXILES_TS_EXPORTS
-    if (ts3_is_connected()) {
-        displayInChat(message);
-    }
-#else
-    displayInChat(message);
-#endif
+    voice_hook_notify_chat(message);
 }
 
 /* ---- 11.1 distance ---------------------------------------------------------- */
@@ -99,17 +115,18 @@ static float voice_mode_global_distance(VoiceMode mode) {
 float voice_mode_get_distance(VoiceMode mode) {
     float distance = voice_mode_global_distance(mode);
 
-    HubSettings hub;
-    const int hubActive = server_profile_get(&hub);
+    VoiceModeProfile prof;
+    const int hubActive = voice_hook_get_profile(&prof);
+    const HubSettings* const hub = &prof.hub;
 
     /* Zone override beats global config. */
-    if (hubActive && hub.zoneCount > 0) {
+    if (hubActive && hub->zoneCount > 0) {
         PosSample local;
         if (pos_get_current(&local)) {
-            const int zone = zone_resolve(&hub,
+            const int zone = zone_resolve(hub,
                 local.x / 100.0f, local.y / 100.0f, local.z / 100.0f);
             if (zone >= 0) {
-                const HubZone* z = &hub.zones[zone];
+                const HubZone* z = &hub->zones[zone];
                 float zoneDist = 0.0f;
                 switch (mode) {
                 case VOICE_MODE_WHISPER: zoneDist = z->whisperDist; break;
@@ -130,21 +147,21 @@ float voice_mode_get_distance(VoiceMode mode) {
     if (hubActive) {
         float minV = 0.0f, maxV = 0.0f;
 
-        HubRace race;
-        if (server_profile_get_local_race(&race)) {
+        if (prof.hasRace) {
+            const HubRace* const race = &prof.race;
             switch (mode) {
-            case VOICE_MODE_WHISPER: minV = race.minWhisper; maxV = race.maxWhisper; break;
-            case VOICE_MODE_SHOUT:   minV = race.minShout;   maxV = race.maxShout;   break;
+            case VOICE_MODE_WHISPER: minV = race->minWhisper; maxV = race->maxWhisper; break;
+            case VOICE_MODE_SHOUT:   minV = race->minShout;   maxV = race->maxShout;   break;
             case VOICE_MODE_NORMAL:
-            default:                 minV = race.minNormal;  maxV = race.maxNormal;  break;
+            default:                 minV = race->minNormal;  maxV = race->maxNormal;  break;
             }
         }
         else {
             switch (mode) {
-            case VOICE_MODE_WHISPER: minV = hub.minWhisper; maxV = hub.maxWhisper; break;
-            case VOICE_MODE_SHOUT:   minV = hub.minShout;   maxV = hub.maxShout;   break;
+            case VOICE_MODE_WHISPER: minV = hub->minWhisper; maxV = hub->maxWhisper; break;
+            case VOICE_MODE_SHOUT:   minV = hub->minShout;   maxV = hub->maxShout;   break;
             case VOICE_MODE_NORMAL:
-            default:                 minV = hub.minNormal;  maxV = hub.maxNormal;  break;
+            default:                 minV = hub->minNormal;  maxV = hub->maxNormal;  break;
             }
         }
         if (minV > 0.0f && distance < minV) {
@@ -180,10 +197,15 @@ void voice_mode_apply(VoiceMode mode) {
     voice_mode_notify_mode(mode);
 
     /* New distance must reach the other clients right away. */
-    cepos_invalidate_send_cache();
-    cepos_signal_send_pending();
-
-    updateVoiceOverlay();
+    if (g_hooks.invalidate_cepos_cache) {
+        g_hooks.invalidate_cepos_cache();
+    }
+    if (g_hooks.signal_send_pending) {
+        g_hooks.signal_send_pending();
+    }
+    if (g_hooks.overlay_sync) {
+        g_hooks.overlay_sync();
+    }
 }
 
 void voice_mode_toggle(void) {
@@ -235,14 +257,12 @@ void voice_mode_notify_hotkey(int vkCode) {
 /* ---- chat notify (callback thread) ----------------------------------------------- */
 
 void voice_mode_flush_notify(void) {
-    if (!ts3_thread_is_callback()) {
-        return;
-    }
-    if (ts3_plugin_has_pending_chat()) {
-        ts3_plugin_flush_pending_chat();
+    /* flush_pending_chat itself is a callback-thread-only no-op off-thread. */
+    if (g_hooks.flush_pending_chat && voice_mode_has_pending_notify()) {
+        g_hooks.flush_pending_chat();
     }
 }
 
 int voice_mode_has_pending_notify(void) {
-    return ts3_plugin_has_pending_chat();
+    return g_hooks.has_pending_chat ? g_hooks.has_pending_chat() : 0;
 }
