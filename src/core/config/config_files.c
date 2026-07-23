@@ -5,6 +5,7 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #endif
+#include "core/config/config.h"
 #include "core/proximity/proximity_math.h"
 #include <math.h>
 #include <stdio.h>
@@ -172,30 +173,23 @@ void loadVoicePreset(int presetIndex) {
     localVoiceData.voiceDistance = getVoiceDistanceForMode(currentVoiceMode);
 
     wchar_t gameFolder[MAX_PATH] = L"";
-    const wchar_t* configFolder = config_get_folder_path();
-    if (configFolder) {
-        wchar_t configFile[MAX_PATH];
-        swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-        FILE* f = _wfopen(configFile, L"r");
-        if (f) {
-            wchar_t line[512];
-            while (fgetws(line, 512, f)) {
-                if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                    wchar_t* pathStart = line + 10;
-                    wchar_t* nl = wcschr(pathStart, L'\n');
-                    if (nl) *nl = L'\0';
-                    wchar_t* cr = wcschr(pathStart, L'\r');
-                    if (cr) *cr = L'\0';
+    {
+        PluginConfig cfg;
+        const wchar_t* savedBase = NULL;
 
-                    wcscpy_s(gameFolder, MAX_PATH, pathStart);
-                    wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-                    if (conanSandbox) {
-                        *conanSandbox = L'\0';
-                    }
-                    break;
-                }
+        config_copy(&cfg);
+        if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+            savedBase = cfg.automaticSavedPath;
+        }
+        else if (cfg.savedPath[0]) {
+            savedBase = cfg.savedPath;
+        }
+        if (savedBase) {
+            wcsncpy_s(gameFolder, MAX_PATH, savedBase, _TRUNCATE);
+            wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+            if (conanSandbox) {
+                *conanSandbox = L'\0';
             }
-            fclose(f);
         }
     }
 

@@ -112,14 +112,22 @@ static volatile long g_recomputeAllPending = 0;
 
 /* Phase 4.5 — diagnostics (throttled log in flush paths). */
 static volatile long g_unmuteRingOverflow = 0;
+static volatile long g_unmuteRingPushLock = 0;
 
 static void unmute_ring_push(anyID clientID) {
-    const long w = InterlockedIncrement(&g_unmuteRingWrite) - 1;
+    /* Serialize producers: publish write index only after the slot store is
+       complete so ts3_audio_flush_unmutes never observes a new index early. */
+    while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
+        YieldProcessor();
+    }
+    const long w = InterlockedCompareExchange(&g_unmuteRingWrite, 0, 0);
     const long r = InterlockedCompareExchange(&g_unmuteRingRead, 0, 0);
     if (w - r >= TS3_UNMUTE_RING_SIZE) {
         InterlockedIncrement(&g_unmuteRingOverflow);
     }
     g_unmuteRing[w % TS3_UNMUTE_RING_SIZE] = clientID;
+    InterlockedExchange(&g_unmuteRingWrite, w + 1);
+    InterlockedExchange(&g_unmuteRingPushLock, 0);
 }
 
 static void audio_signal_unmute_flag_only(anyID clientID);
@@ -1225,6 +1233,7 @@ void ts3_audio_reset(void) {
     InterlockedExchange(&g_unmuteRingWrite, 0);
     InterlockedExchange(&g_unmuteRingRead, 0);
     InterlockedExchange(&g_unmuteRingOverflow, 0);
+    InterlockedExchange(&g_unmuteRingPushLock, 0);
     InterlockedExchange(&g_recomputeDirtyCount, 0);
     InterlockedExchange(&g_recomputeAllPending, 0);
     memset(g_unmuteRing, 0, sizeof(g_unmuteRing));

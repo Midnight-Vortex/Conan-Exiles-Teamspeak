@@ -374,30 +374,49 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
         if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
             break;
         }
-        /* Coalesce: many SetEvents collapse into the single pending flag. */
-        if (InterlockedExchange(&g_wakeupPending, 0) == 0) {
+        /* Coalesce: many SetEvents collapse into the single pending flag.
+           Do NOT clear pending until CEDRAIN actually sends — otherwise a
+           rate-limit or transient disconnect drops the drain forever. */
+        if (InterlockedCompareExchange(&g_wakeupPending, 0, 0) == 0) {
             continue; /* spurious/shutdown wake with nothing queued */
         }
-        const long urgent = InterlockedExchange(&g_wakeupUrgent, 0);
 
-        /* Drop while unconnected — reconnect/next tick re-requests (as V7).
+        /* Drop while unconnected — keep pending and retry (reconnect / next tick).
            Identity contract: gate on g_connected FIRST, then load the id with
            a barrier; a concurrent disconnect clears g_connected before the id,
            so a stale-but-valid id is the worst case and id 0 is skipped. */
         if (!g_ts3FunctionsSet || !ts3_is_connected()
             || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
             continue;
         }
         const uint64 conn = conn_id_load();
         if (conn == 0) {
-            continue; /* disconnect raced us — nothing to wake */
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
+            continue; /* disconnect raced us — retry while pending stays set */
         }
 
+        const long urgent = InterlockedCompareExchange(&g_wakeupUrgent, 0, 0);
         const LONG64 now = (LONG64)GetTickCount64();
         const LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
         if (!wakeup_should_send(now, last, urgent != 0, PLUGIN_POLL_INTERVAL_MS)) {
-            continue; /* rate limited: drop, a later request retries */
+            const LONG64 elapsed = now - last;
+            DWORD waitMs = (DWORD)(PLUGIN_POLL_INTERVAL_MS - elapsed);
+            if (waitMs == 0 || waitMs > (DWORD)PLUGIN_POLL_INTERVAL_MS) {
+                waitMs = 1;
+            }
+            if (urgent) {
+                InterlockedExchange(&g_wakeupUrgent, 1);
+            }
+            Sleep(waitMs);
+            SetEvent(g_wakeupEvent);
+            continue; /* rate limited: pending stays set, retry after window */
         }
+
+        InterlockedExchange(&g_wakeupPending, 0);
+        InterlockedExchange(&g_wakeupUrgent, 0);
         InterlockedExchange64(&s_lastWakeMs, now);
 
         g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
