@@ -16,6 +16,12 @@ including all changes and additions you made.
 All other terms and conditions of the Mozilla Public License 2.0 remain unchanged.
 */
 
+// Legacy Mumble-era global state bag — still used by the F10 settings dialog and
+// overlay HUD. New code should use g_config (config.c), channel_manage (ts/),
+// and voice_modes hooks instead of adding new globals here. V8.9 trimmed dead
+// symbols; further reduction is tracked for post-8.0 UI migration (V8.7 split
+// is done; full g_config cutover remains in config_files.c / util_base.c).
+
 #ifndef PLUGIN_H
 #define PLUGIN_H
 
@@ -130,10 +136,8 @@ extern HWND hCategoryPresets;
 
 // Plugin control variables
 extern BOOL enableGetPlayerCoordinates;
-extern BOOL TEMP;
 extern BOOL enableAutomaticPatchFind;
 extern HWND hAutomaticPatchFindCheck;
-extern BOOL f9CoordinateBroadcastActive;
 extern ULONGLONG lastCoordinateBroadcast;
 
 // Log control variables
@@ -288,10 +292,7 @@ extern wchar_t displayedPathText[MAX_PATH];
 extern BOOL isUpdatingInterface;
 extern ULONGLONG lastInterfaceUpdate;
 
-// Interface text constants
-extern const wchar_t* infoText1;
-extern const wchar_t* infoText2;
-extern const wchar_t* infoText3;
+// Interface text constants (removed unused infoText1/2/3 in V8.9)
 
 // Voice toggle variables
 extern int voiceToggleKey;
@@ -329,7 +330,6 @@ extern double hubAudioBloom;
 extern double hubAudioFilterIntensity;
 extern BOOL hubForcePositionalAudio;
 extern ULONGLONG lastHubDescriptionCheck;
-extern char* lastHubDescriptionCache;
 
 // Hub distance limits
 extern double hubMinimumWhisper;

@@ -86,6 +86,14 @@ run_suite voice_modes_test \
     src/core/voice/voice_modes.c \
     src/core/proximity/zone_resolve.c
 
+# V8.8 — CEPOS/player-table load simulation (200-player baseline + 600 eviction).
+run_suite cepos_load_test \
+    -Itests/support/win32_shim \
+    tests/cepos_load_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/player_table.c \
+    src/core/proximity/proximity_math.c
+
 # V8.6c — layering guard (no ts/ or ui/ include under src/core/).
 echo "=== layering_guard ==="
 if bash tests/check_layering.sh; then

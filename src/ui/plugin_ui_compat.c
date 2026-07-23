@@ -33,12 +33,9 @@ BOOL backgroundDrawn = FALSE;
 
 // Plugin control variables | Variables de contrôle du plugin
 BOOL enableGetPlayerCoordinates = TRUE;
-BOOL TEMP = FALSE;
 BOOL enableAutomaticPatchFind = FALSE;
 HWND hAutomaticPatchFindCheck = NULL;
 
-// F9 coordinate broadcast variables | Variables pour la diffusion des coordonnées en F9
-BOOL f9CoordinateBroadcastActive = FALSE;
 ULONGLONG lastCoordinateBroadcast = 0;
 
 // Log control variables | Variables pour contrôler l'activation des logs
@@ -222,10 +219,6 @@ double hubAudioBloom = 0.0;
 double hubAudioFilterIntensity = 0.0;
 BOOL hubForcePositionalAudio = FALSE;
 ULONGLONG lastHubDescriptionCheck = 0;
-char* lastHubDescriptionCache = NULL;
-const wchar_t* infoText1 = L"";
-const wchar_t* infoText2 = L"";
-const wchar_t* infoText3 = L"";
 
 CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
 ULONGLONG lastVoiceDataSent = 0;

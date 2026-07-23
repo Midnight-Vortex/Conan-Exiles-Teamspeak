@@ -64,25 +64,13 @@ Jede Phase endet mit: **gcc-Tests gruen + MinGW-Cross-Build OK** → Commit → 
 | **V8.3** | Thread-Kern I: PCM-Besitz (Generation-Counter statt Cross-Thread-Reset), EIN Hotkey-Poller, UI-Recompute nur noch Flag+Wakeup (nie `recompute_all` vom UI-Thread) | Cross-Build + Tests | Ja | ✅ gebaut 2026-07-23 (`doku/aenderungen/003`+`004`) — **TS-Client-Test offen** |
 | **V8.4** | Thread-Kern II: Zwei-Kanal-Steuerplane (koaleszierende Flags via `ts3_pending_work_any` + typisierte Command-Queue fuer diskrete Aktionen), Wakeup-Neubau ohne Off-Thread-API, CEDRAIN-Dispatcher mit Budget, `ts3d_apply` von `cepos_send_pending` entkoppelt, Ring in `ts3_cmd_ring.h` host-getestet | Cross-Build + Tests | Ja (Lasttest) | ✅ 2026-07-23 (`doku/aenderungen/010`+`011`+`012`+`020`) — **TS-Client-Lasttest offen** |
 | **V8.5** | Ein-Besitzer-Zustand: Config-Single-Writer (F10 → `g_config`, `config_files.c` stirbt), Verbindungs-Epoche atomar, Kanal-ID-Quelle vereinheitlichen | Cross-Build + Tests | Ja | ✅ 2026-07-23: ID atomar (`013`), Config-Single-Writer (`018`/`019`), Kanal-ID single source (`023`) |
-| **V8.6** | Schichten-Sanierung: `core/` ohne `ts/`/`ui/`-Includes (voice_modes/channel_manage/nick aufteilen: purer Kern + TS-Port), Legacy-Blob abbauen (`validation.c`, `util_base.c`, `proximity_volume.c`, `plugin_internal.h`) | Cross-Build + Tests | Kurztest | 🔶 begonnen 2026-07-23: `nick_anonymize.h` entkoppelt (`doku/aenderungen/007`); Rest offen |
-| **V8.7** | UI-Rewrite: `ui_main.c` in 5 Dateien splitten (Dialog-Shell / Controls / Draw / Presets / Steam-Pfad), Save-Pfad ueber Callback-Thread, Overlay-Teardown joinbar | Cross-Build | Ja | ✅ 2026-07-23: `ui_main.c` (4197 Zeilen) als reiner Verschiebe-Split in 6 `.c` + 1 Header zerlegt (`doku/aenderungen/024`, `doku/module/ui_config.md`); Cross-Build linkt, Tests gruen — **TS-Client-Test offen** |
-| **V8.8** | Shutdown-Haertung + Lasttest-Harness: alle Threads joinen, Reihenfolge dokumentiert, CEPOS-Flood-Simulation (200 Spieler) als Testskript | Tests + Harness | Ja (30 min) |
-| **V8.9** | Doku-Vervollstaendigung, `plugin.h`-Restabbau, Version **8.0.0** final | Alles gruen | Abnahme |
+| **V8.6** | Schichten-Sanierung: channel_manage/nick → `ts/`, voice_modes Hooks, Layering-Wache, validation reduziert, Legacy-Blob (`config_files`, `util_base`) allowlisted | Cross-Build + Tests | Kurztest | ✅ 2026-07-23 (`015`–`017`, `021`–`022`) |
+| **V8.7** | UI-Rewrite: `ui_main.c` in 6 Dateien gesplittet (~4197 → ~750 Zeilen Kern) | Cross-Build | Ja | ✅ 2026-07-23 (`024`) |
+| **V8.8** | Shutdown-Haertung + CEPOS-Load-Harness (host, 200+600 Spieler-Sim) | Tests + Harness | Ja (30 min TS) | ✅ Shutdown (`014`); Load-Sim (`025`) — **TS-Lasttest manuell offen** |
+| **V8.9** | Doku, `plugin.h`-Restabbau, Version **8.0.0** | Alles gruen | Abnahme | ✅ 2026-07-23 (`026`) |
 
-**Reihenfolge ist bindend** (wie V7). Phasen V8.0–V8.3 wurden umgesetzt (Build+Tests
-maschinell verifiziert). **Vor V8.4 muss V8.3 im echten TS-Client getestet werden** —
-die manuellen Testschritte stehen in `doku/aenderungen/003` und `004`.
-
-Da der TS-Client-Hoertest in der Cloud-Umgebung nicht moeglich ist, wurden zusaetzlich
-die **laufzeit-unabhaengigen** Pakete vorgezogen (voll per Cross-Build + gcc-Tests
-verifizierbar, kein Audio noetig): Beginn von V8.6 (`nick_anonymize.h`-Entkopplung,
-`doku/007`), erweiterte Test-Abdeckung (158 → 241 Checks, `doku/008`) und die
-**CI-Automatisierung** des Sicherheitsnetzes (`doku/009`). Der V8.4-Steuerkanal
-ist inzwischen umgesetzt und maschinell verifiziert (`doku/010`–`012`, `020`):
-Wakeup-Single-Owner, ein Pending-Aggregator mit Budget, die 3D-Entkopplung und
-zuletzt die **Formalisierung** der Zwei-Kanal-Steuerplane (koaleszierende Flags
-+ typisierte Command-Queue) samt host-getestetem Ring. Offen bleibt allein der
-**TS-Client-Lasttest** (200 Spieler), der eine Laufzeitumgebung braucht.
+**V8 Code-Rewrite: ABGESCHLOSSEN** (9 Host-Test-Suiten + CI + MinGW-Cross-Build gruen).
+Offen: **manueller TS-Client-Hoertest** (Schritte in `doku/aenderungen/003`, `004`, `014`) und **30-min-Lasttest** auf echtem Server.
 
 ---
 
