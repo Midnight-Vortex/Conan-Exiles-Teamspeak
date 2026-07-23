@@ -1,3 +1,28 @@
+/*
+ * ts3_proximity_audio.c — proximity PCM path (gain/pan ramp, LPF, cave reverb)
+ * plus the seqlock snapshots and TS unmute batching that feed it.
+ *
+ * THREAD CONTRACT (V8.3 — PCM owns its render state exclusively)
+ * ------------------------------------------------------------------
+ *  - The audio thread (onEditPlaybackVoiceDataEvent -> ts3_audio_process_playback)
+ *    is the ONLY writer of the render arrays g_renderGain/g_renderPanL/
+ *    g_renderPanR and the per-client lowpass state g_lpf. It never calls the TS
+ *    API and never takes a lock; it reads target values from lock-free seqlock
+ *    snapshots only.
+ *  - The callback thread (invalidate/reset from disconnect, eviction, channel
+ *    move, tab switch) does NOT write those render arrays anymore. To invalidate
+ *    a client it publishes a neutral snapshot (as before) AND bumps that client's
+ *    generation counter g_snapGeneration[id] (InterlockedIncrement). That is the
+ *    only cross-thread signal about render state.
+ *  - The audio thread keeps its own last-seen copy g_renderGeneration[id]
+ *    (single-writer = itself, no atomics needed). At buffer start it compares the
+ *    two; if the callback bumped the generation, the audio thread reinitializes
+ *    the ramp/LPF for that client itself — replicating the exact state the
+ *    callback used to write (gain 1.0, pan 0.7071/0.7071, LPF uninitialized).
+ *
+ *  Result: exactly one writer per array => no torn floats, no cross-thread race
+ *  on client-ID reuse. See doku/aenderungen/004-pcm-besitz-generation-counter.md.
+ */
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
 #include "ts/adapter/ts3_adapter.h"
@@ -52,6 +77,13 @@ static INIT_ONCE g_writerLockOnce = INIT_ONCE_STATIC_INIT;
 static float g_renderGain[TS3_MAX_CLIENT_ID];
 static float g_renderPanL[TS3_MAX_CLIENT_ID];
 static float g_renderPanR[TS3_MAX_CLIENT_ID];
+
+/* V8.3 ownership signal. The callback thread bumps g_snapGeneration[id]
+   (InterlockedIncrement) instead of writing the render arrays; the audio thread
+   compares it against its own g_renderGeneration[id] and reinitializes its
+   ramp/LPF for that client when it changed. See the file-header thread contract. */
+static volatile LONG g_snapGeneration[TS3_MAX_CLIENT_ID];  /* callback thread writes */
+static LONG g_renderGeneration[TS3_MAX_CLIENT_ID];         /* audio thread only */
 
 /* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
 static volatile long g_pendingUnmute[TS3_MAX_CLIENT_ID];
@@ -821,6 +853,21 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         return;
     }
 
+    /* V8.3 PCM-owns-its-state: if the callback thread signaled invalidation
+       (client left / evicted / moved away / reset) since our last buffer, we
+       reinitialize the ramp + LPF ourselves — the exact state the callback used
+       to write (gain 1.0, neutral pan, LPF uninitialized). Reading the volatile
+       LONG generation is a single aligned read (InterlockedCompareExchange with
+       a no-op compare); the last-seen copy is audio-thread-private. */
+    const LONG curGen = InterlockedCompareExchange(&g_snapGeneration[clientID], 0, 0);
+    if (render_state_needs_reinit(g_renderGeneration[clientID], curGen)) {
+        g_renderGain[clientID] = 1.0f;
+        g_renderPanL[clientID] = 0.7071f;
+        g_renderPanR[clientID] = 0.7071f;
+        g_lpf[clientID].initialized = 0;
+        g_renderGeneration[clientID] = curGen;
+    }
+
     const long mode = InterlockedCompareExchange(&g_audioMode, 0, 0);
     if (mode == TS3_AUDIO_PASSTHROUGH) {
         g_renderGain[clientID] = 1.0f;
@@ -1095,9 +1142,10 @@ void ts3_audio_invalidate_client(anyID clientID) {
     }
     g_clientUnlocked[clientID] = 0;
     g_lastUnmuteMs[clientID] = 0;
-    g_renderGain[clientID] = 1.0f;
-    g_renderPanL[clientID] = 0.7071f;
-    g_renderPanR[clientID] = 0.7071f;
+    /* Render ramp + LPF are audio-thread-owned. Signal invalidation via the
+       generation counter; the audio thread resets the ramp/LPF itself on its
+       next buffer for this ID (same values this used to write directly). */
+    InterlockedIncrement(&g_snapGeneration[clientID]);
     audio_clear_client_dirty(clientID);
     ts3d_invalidate_client(clientID);
 }
@@ -1162,11 +1210,17 @@ void ts3_audio_reset(void) {
     memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
     InterlockedExchange(&g_lastLocalSeq, -1);
     InterlockedExchange64(&g_lastRecomputeAllMs, 0);
-    /* Ramp/pan state lives on the audio thread; reset every ID so reused clientIDs
-       never inherit stale gain/pan after selective invalidate (5.2). No writer lock. */
+    /* Ramp/pan/LPF state lives on the audio thread. Bump every client's
+       generation counter so the next PCM buffer for any (possibly reused) ID
+       reinitializes its own ramp/LPF — even if no callback ran for it and even
+       if its snapshot was already invalid (the reused-ID leak the old full
+       plain-write sweep guarded against). This replaces that O(TS3_MAX_CLIENT_ID)
+       write loop with one atomic per ID; it never touches the render arrays, so
+       there is no race with the audio thread. The O(active) invalidate scan
+       above (Phase 5.2) is unchanged. Render state is only ever consumed by the
+       audio thread, so bumping the generation is sufficient: a NEW connection
+       reusing an ID cannot inherit stale gain/pan/LPF. */
     for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
-        g_renderGain[i] = 1.0f;
-        g_renderPanL[i] = 0.7071f;
-        g_renderPanR[i] = 0.7071f;
+        InterlockedIncrement(&g_snapGeneration[i]);
     }
 }

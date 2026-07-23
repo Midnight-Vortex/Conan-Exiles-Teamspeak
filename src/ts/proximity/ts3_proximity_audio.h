@@ -73,13 +73,28 @@ void ts3_audio_flush_unmutes(void);
 /* 1 when the audio thread flagged clients needing a TS unmute. Any thread. */
 int ts3_audio_has_pending_unmutes(void);
 
-/* Drop one client (left server). Callback thread. */
+/* PCM ownership (V8.3): render arrays (gain/pan ramps) + the per-client LPF are
+   owned exclusively by the audio thread. The callback thread NEVER writes them;
+   it only bumps a per-client generation counter to say "your render knowledge of
+   this client is stale". This pure helper is the decision the audio thread makes
+   at buffer start: reinitialize its ramp/LPF when the generation changed.
+   Kept in the header so it is host-unit-testable without the Win32/TS coupling
+   of the .c (see tests/render_state_test.c). */
+static inline int render_state_needs_reinit(long lastGen, long curGen) {
+    return lastGen != curGen;
+}
+
+/* Drop one client (left server / evicted / moved away). Callback thread.
+   Publishes a neutral (invalid) snapshot and bumps the client's generation
+   counter — it does NOT touch the audio-thread-owned render/LPF state. */
 void ts3_audio_invalidate_client(anyID clientID);
 
 /* 1 when the client's proximity snapshot is soundproof-muted. Any thread. */
 int ts3_proximity_audio_soundproof_muted(unsigned int clientID);
 
-/* Reset everything (disconnect/shutdown). Callback thread. */
+/* Reset everything (disconnect/shutdown/tab switch). Callback thread.
+   Bumps every client's generation counter so the next PCM buffer reinitializes
+   the ramp/LPF itself — no cross-thread write into the render arrays. */
 void ts3_audio_reset(void);
 
 #endif /* TS3_PROXIMITY_TS3_PROXIMITY_AUDIO_H */
