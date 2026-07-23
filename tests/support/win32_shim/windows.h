@@ -76,4 +76,27 @@ static inline long InterlockedIncrement(volatile long* value) {
     return __atomic_add_fetch(value, 1, __ATOMIC_SEQ_CST);
 }
 
+static inline long InterlockedExchange(volatile long* target, long value) {
+    return __atomic_exchange_n(target, value, __ATOMIC_SEQ_CST);
+}
+
+static inline long InterlockedCompareExchange(volatile long* dest, long exchange,
+    long comparand) {
+    __atomic_compare_exchange_n(dest, &comparand, exchange, 0,
+        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return comparand;
+}
+
+/* ---- keyboard state (voice_modes hotkey poll — unused in unit tests) ------ */
+/* voice_modes.c compiles its hotkey helpers even when the tests only exercise
+   the distance logic; these no-op stubs let it link on the host. */
+typedef short SHORT;
+
+#define VK_NEXT 0x22
+#define VK_END  0x23
+#define VK_DOWN 0x28
+
+static inline SHORT GetAsyncKeyState(int vKey) { (void)vKey; return 0; }
+static inline SHORT GetKeyState(int nVirtKey)  { (void)nVirtKey; return 0; }
+
 #endif /* TESTS_SUPPORT_WIN32_SHIM_WINDOWS_H */

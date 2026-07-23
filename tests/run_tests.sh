@@ -71,6 +71,15 @@ run_suite render_state_test \
 run_suite wakeup_policy_test \
     tests/wakeup_policy_test.c
 
+# V8.6 — voice_modes mode->distance decision, now host-testable after the
+# ts/ui hook inversion. Uses the Win32 shim (hotkey helpers) + real zone_resolve.
+run_suite voice_modes_test \
+    -Itests/support/win32_shim \
+    tests/voice_modes_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/voice/voice_modes.c \
+    src/core/proximity/zone_resolve.c
+
 echo "=== summary ==="
 for r in "${RESULTS[@]}"; do
     echo "$r"
