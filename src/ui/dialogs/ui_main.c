@@ -21,7 +21,9 @@
 #pragma warning(disable : 4456) /* legacy UI reuses block-scoped names */
 #endif
 #include <uxtheme.h>
+#if defined(_MSC_VER)
 #pragma comment(lib, "uxtheme.lib")
+#endif
 
 // MODULE 14: SETTINGS UI (F10 DIALOG)
 // EN: plugin.cfg editor — paths, voice distances, zone overrides, presets, debug options.

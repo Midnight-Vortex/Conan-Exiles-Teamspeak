@@ -1,5 +1,6 @@
 #include "core/proximity/player_table.h"
 
+#include "core/util/compat_crt.h"
 #include "core/util/log.h"
 
 #include <windows.h>

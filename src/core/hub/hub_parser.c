@@ -1,5 +1,7 @@
 #include "core/hub/hub_parser.h"
 
+#include "core/util/compat_crt.h"
+
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
