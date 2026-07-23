@@ -48,7 +48,10 @@ Dieses Modul lebt an der Grenze zweier Threads. Wer was darf:
   `g_writerLock` publizieren (Phase-4.3-Muster).
 - `ts3_audio_recompute_all_force` / `_flush_recomputes` / `_mark_client_dirty` —
   Recompute-Steuerung: UI/CEPOS markieren „dirty“ + Wakeup, der Callback-Thread
-  rechnet spaeter im CEDRAIN-Zyklus.
+  rechnet spaeter im CEDRAIN-Zyklus. Der Dirty-Pfad hat ein **Budget** von
+  `TS3_RECOMPUTE_DRAIN_BUDGET` (64) Clients pro Drain und fordert bei Rest einen
+  erneuten Wakeup an (V8.4, `doku/aenderungen/011`); `recompute_all` bleibt ein
+  tabellen-begrenzter Durchlauf.
 - `ts3_audio_flush_unmutes` — Callback-Thread: sammelt gesetzte Unmute-Flags und
   hebt die TS-Stummschaltung als **ein** API-Batch auf (rate-limitiert).
 - `ts3_audio_invalidate_client` / `ts3_audio_reset` — Callback-Thread:

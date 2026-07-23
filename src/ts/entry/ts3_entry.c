@@ -419,10 +419,17 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         }
         if (cepos_send_pending()) {
             cepos_flush();
-            ts3d_apply();
         }
         if (ts3_audio_has_pending_recompute()) {
             ts3_audio_flush_recomputes();
+        }
+        /* Refresh remote players' TS 3D positions on EVERY proximity drain, not
+           only when our own CEPOS send was pending. Incoming remote CEPOS (no
+           local send pending) used to leave their 3D positions stale. ts3d_apply
+           has a 20 Hz internal throttle (TS3D_APPLY_MIN_MS) + epsilon dedup, so
+           the idle cost here is a timestamp check. */
+        if (ts3_audio_get_mode() == TS3_AUDIO_PROXIMITY) {
+            ts3d_apply();
         }
         server_profile_tick();
         chan_tick();
