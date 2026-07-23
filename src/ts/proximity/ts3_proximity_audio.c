@@ -17,7 +17,8 @@
 #define TS3_RECOMPUTE_ALL_MIN_MS 100   /* 10 Hz cap when local pos unchanged */
 #define TS3_RECOMPUTE_POS_EPS_CM 5.0f  /* centimeters — movement triggers refresh */
 #define TS3_UNMUTE_REARM_MS    500
-#define TS3_UNMUTE_BATCH_MAX   128
+/* Must match ts3_unmute_clients_for_pcm cap (63 clients + API zero sentinel). */
+#define TS3_UNMUTE_BATCH_MAX   64
 #define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue */
 #define TS3_AUDIO_CULL_MARGIN  1.25f /* hear-range multiplier for recompute culling */
 #define TS3_AUDIO_CULL_PAD_M   2.0f  /* meters beyond nominal range */
