@@ -203,6 +203,10 @@ extern HFONT hOverlayFont;
 extern BOOL overlayThreadRunning;
 
 // Channel management variables
+// V8.5: hubChannelID / ingameChannelID are DERIVED MIRRORS of the canonical
+// IDs owned by ts/channel/channel_manage (chan_get_hub_channel_id /
+// chan_get_ingame_channel_id). UI/overlay read only; the single writer is
+// plugin_ui_sync_live_state (callback thread). Do not assign elsewhere.
 extern mumble_channelid_t hubChannelID;
 extern mumble_channelid_t rootChannelID;
 extern mumble_channelid_t ingameChannelID;

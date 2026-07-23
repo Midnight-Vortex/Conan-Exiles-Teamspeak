@@ -362,6 +362,11 @@ void plugin_ui_sync_live_state(void) {
         localPlayerPosition.z = localPos.z / 100.0f;
     }
 
+    /* V8.5: channel_manage (ts/channel) is the SINGLE source of the hub/ingame
+       channel IDs. hubChannelID/ingameChannelID here are DERIVED MIRRORS for the
+       overlay HUD only — refreshed on the callback thread from the canonical
+       getters below. Never assign them anywhere else (grep-enforced: this is the
+       only writer). See doku/aenderungen/023-kanal-id-single-source.md. */
     const uint64 hubId = chan_get_hub_channel_id();
     const uint64 ingameId = chan_get_ingame_channel_id();
     hubChannelID = hubId ? (mumble_channelid_t)hubId : -1;
