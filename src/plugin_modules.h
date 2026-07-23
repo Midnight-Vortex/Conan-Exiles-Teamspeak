@@ -157,6 +157,8 @@ void installKeyMonitoring(void);
 void removeKeyMonitoring(void);
 void startKeyMonitorThread(void);
 void stopKeyMonitorThread(void);
+/* Close the F10 dialog (WM_CLOSE) and join its thread — shutdown only. */
+void settings_dialog_shutdown(void);
 
 /* mod_watcher.c */
 BOOL checkModFileActive(void);

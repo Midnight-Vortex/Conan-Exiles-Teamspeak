@@ -38,6 +38,9 @@
    (TS log stops after SERVERVIEW, process stays alive with no MainWindowTitle). */
 static volatile long g_overlay_armed = 0;
 static volatile long g_overlay_want_immediate = 0;
+/* Owned handle of the overlay UI thread (V8.8) — joined in ts3plugin_shutdown.
+   Only the callback thread creates/joins/closes it. */
+static HANDLE g_overlayThread = NULL;
 
 static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
     (void)arg;
@@ -59,6 +62,11 @@ static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
         DispatchMessage(&msg);
     }
 
+    /* This thread owns the overlay HWND — destroy it HERE, on the owning
+       thread, before exiting (V8.8). The old cross-thread SendMessage destroy
+       from overlay_stop raced the exiting message loop. */
+    destroyVoiceOverlay();
+
     overlay_ui_clear_thread();
     InterlockedExchange(&g_overlay_armed, 0);
     return 0;
@@ -68,13 +76,37 @@ static void overlay_schedule_start(void) {
     if (InterlockedCompareExchange(&g_overlay_armed, 1, 0) != 0) {
         return;
     }
-    HANDLE thread = (HANDLE)_beginthreadex(NULL, 0, overlay_deferred_start_thread, NULL, 0, NULL);
-    if (thread) {
-        CloseHandle(thread);
+    /* Reap the previous overlay thread's handle (armed was 0, so it has
+       exited or is returning right now — the wait is momentary). */
+    if (g_overlayThread) {
+        WaitForSingleObject(g_overlayThread, INFINITE);
+        CloseHandle(g_overlayThread);
+        g_overlayThread = NULL;
     }
-    else {
+    g_overlayThread = (HANDLE)_beginthreadex(NULL, 0, overlay_deferred_start_thread, NULL, 0, NULL);
+    if (!g_overlayThread) {
         InterlockedExchange(&g_overlay_armed, 0);
     }
+}
+
+/* JOIN the overlay UI thread (shutdown only, after overlay_stop signalled
+   WM_QUIT). The quit signal is re-posted while waiting: PostThreadMessage is
+   lost when it races the thread before its message queue exists, and the
+   thread checks pluginShuttingDown only between messages. */
+static void overlay_join_ui_thread(void) {
+    if (!g_overlayThread) {
+        return;
+    }
+    DWORD waitedMs = 0;
+    while (WaitForSingleObject(g_overlayThread, 500) != WAIT_OBJECT_0) {
+        overlay_ui_signal_quit();
+        waitedMs += 500;
+        if (waitedMs == 10000) {
+            log_write("SHUTDOWN: overlay thread slow to exit - waiting");
+        }
+    }
+    CloseHandle(g_overlayThread);
+    g_overlayThread = NULL;
 }
 
 static void overlay_request_immediate_start(void) {
@@ -230,20 +262,37 @@ int ts3plugin_init(void) {
     return 0;
 }
 
-/* 14.1 fixed shutdown sequence:
-   1. audio gate -> passthrough (PCM path inert, no snapshot reads matter)
-   2. UI thread down (overlay + settings dialog)
-   3. pos watcher thread down (no more update callbacks)
-   4. module state cleared (no TS API calls in any of these)
-   5. adapter down (command queue emptied, connection flags cleared)
-   6. log closed LAST so every step above can still log. */
+/* V8.8 fixed shutdown order (doku/01-architektur-v8.md, "Shutdown-Reihenfolge"):
+   1. Stop accepting work: audio to passthrough (PCM path inert),
+      pluginShuttingDown set (UI/overlay code stops touching HWNDs/GDI),
+      deferred overlay start disarmed.
+   2. Stop + JOIN every plugin thread, in dependency order:
+      a) key monitor (it spawns settings-dialog threads — stop it first)
+      b) settings dialog (WM_CLOSE + join; may still read pos/config state)
+      c) pos watcher (stop event + join; deletes its lock AFTER the join,
+         safe now because the dialog thread that read pos state is gone)
+      d) overlay monitor (join) + overlay UI thread (WM_QUIT + join; the
+         overlay thread destroys its own HWND), then overlay_finalize()
+         deletes overlayTextLock — only safe after that join.
+   3. Invalidate snapshots / reset module state (pure, no TS API calls).
+   4. Adapter shutdown: joins the wakeup thread and clears the connection
+      identity — after this ANY TS API call is a programming error (the
+      callback-thread guards log it).
+   5. Close the log LAST so every step above can still log. */
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
+    /* 1: stop accepting work */
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     plugin_ui_shutdown();
     InterlockedExchange(&g_overlay_armed, 0);
-    overlay_stop();
+    /* 2: stop + join all plugin threads */
+    removeKeyMonitoring();
+    settings_dialog_shutdown();
     pos_watcher_stop();
+    overlay_stop();
+    overlay_join_ui_thread();
+    overlay_finalize();
+    /* 3: reset module state */
     player_table_clear();
     cepos_reset();
     ts3d_reset();
@@ -252,8 +301,10 @@ void ts3plugin_shutdown(void) {
     nick_reset();
     ts3_version_reset();
     ts3_audio_reset();
+    /* 4: adapter down (joins wakeup thread; no TS API after this) */
     ts3_adapter_shutdown();
     log_write("SHUTDOWN: done");
+    /* 5: log closed last */
     log_close();
 }
 

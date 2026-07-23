@@ -305,7 +305,9 @@ int config_dialog_try_open(void);
 void config_dialog_close(void);
 int config_dialog_is_open(void);
 extern DWORD lastKeyPressTime;
-extern BOOL keyMonitorThreadRunning;
+/* Key monitor stop flag — Interlocked access only (set by start/stop on the
+   controlling thread, polled by the key monitor thread). */
+extern volatile LONG keyMonitorThreadRunning;
 extern HANDLE keyMonitorThread;
 extern BOOL lastKeyState;
 

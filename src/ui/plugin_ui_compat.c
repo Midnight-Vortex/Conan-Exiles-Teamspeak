@@ -154,7 +154,7 @@ int configUIKey = 121;
 // Key monitoring variables | Variables de surveillance des touches globales
 static volatile long g_configDialogOpen = 0;
 DWORD lastKeyPressTime = 0;
-BOOL keyMonitorThreadRunning = FALSE;
+volatile LONG keyMonitorThreadRunning = 0;
 HANDLE keyMonitorThread = NULL;
 BOOL lastKeyState = FALSE;
 
@@ -679,15 +679,31 @@ void overlay_start(void) {
     }
 }
 
+/* V8.8: overlay_stop only STOPS: it joins the resolution-monitor thread and
+   posts WM_QUIT to the overlay UI thread. The caller (ts3plugin_shutdown)
+   then joins the overlay UI thread — which destroys its own HWND on exit —
+   and calls overlay_finalize() afterwards. HWND destruction and the
+   overlayTextLock teardown moved out of here because both must not happen
+   while the overlay thread may still be painting. */
 void overlay_stop(void) {
-    removeKeyMonitoring();
     overlayThreadRunning = FALSE;
     if (g_overlayMonitorHandle) {
-        WaitForSingleObject(g_overlayMonitorHandle, 3000);
+        /* JOIN (poll loop wakes every 2s); never close a running thread's handle. */
+        if (WaitForSingleObject(g_overlayMonitorHandle, 5000) != WAIT_OBJECT_0) {
+            log_write("SHUTDOWN: overlay monitor thread slow to exit - waiting");
+            WaitForSingleObject(g_overlayMonitorHandle, INFINITE);
+        }
         CloseHandle(g_overlayMonitorHandle);
         g_overlayMonitorHandle = NULL;
     }
     overlay_ui_signal_quit();
+}
+
+/* Runs AFTER the overlay UI thread has been joined: fallback window/font
+   cleanup (no-op when the overlay thread destroyed its HWND itself) and the
+   overlayTextLock teardown — deleting a critical section is only safe once
+   no thread can enter it anymore (the overlay paint path used it). */
+void overlay_finalize(void) {
     plugin_destroy_voice_overlay_safely();
     if (InterlockedCompareExchange(&overlayTextLockInitialized, 0, 0)) {
         DeleteCriticalSection(&overlayTextLock);

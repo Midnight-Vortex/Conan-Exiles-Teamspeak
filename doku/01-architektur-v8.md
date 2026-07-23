@@ -130,14 +130,25 @@ Jeder Zustand hat ab V8 **genau einen** schreibenden Besitzer:
 **Warum?** Fast jeder schwer findbare V7-Bug war ein "zwei Schreiber"-Bug: zwei Config-
 Writer, zwei Hotkey-Poller, Reset-Pfad schreibt in Audio-Rampen. Ein Besitzer = eine Wahrheit.
 
-## Shutdown-Reihenfolge (fest definiert)
+## Shutdown-Reihenfolge (fest definiert — seit V8.8 umgesetzt, "Ist")
 
-1. **Annahme stoppen:** Queue nimmt nichts mehr an, Wakeups werden ignoriert.
-2. **Threads joinen:** Watcher, Hotkey-Poller, Overlay (WM_QUIT + Join), Settings-Dialog.
-3. **Audio neutralisieren:** Passthrough-Modus, Snapshots invalidieren (Generation++).
-4. **Adapter schliessen:** danach ist jeder API-Call ein Programmierfehler (Assert im Debug).
+So arbeitet `ts3plugin_shutdown()` (`src/ts/entry/ts3_entry.c`) es heute ab
+(Details: `doku/aenderungen/014-shutdown-haertung.md`):
+
+1. **Annahme stoppen:** Audio auf Passthrough, `pluginShuttingDown` gesetzt,
+   verzoegerte Overlay-Starts entschaerft.
+2. **Threads stoppen + joinen** (Abhaengigkeits-Reihenfolge): Hotkey-Poller →
+   Settings-Dialog (WM_CLOSE + Join) → Pos-Watcher (Event + Join) →
+   Overlay-Monitor (Join) + Overlay-UI (WM_QUIT + Join; zerstoert sein HWND
+   selbst) → `overlayTextLock` erst nach dem Join loeschen.
+3. **Modul-Zustand zuruecksetzen:** Player-Tabelle, CEPOS, 3D, Channel,
+   Profil, Nick, Version, Audio-Snapshots (pure Resets, keine TS-API).
+4. **Adapter schliessen:** joint den Wakeup-Thread, loescht die
+   Verbindungs-Identitaet — danach ist jeder API-Call ein Programmierfehler
+   (die Guards loggen ihn).
 5. **Log zuletzt schliessen.**
 
 **Warum diese Reihenfolge?** Ein Thread, der nach Adapter-Shutdown noch einen API-Call
 absetzt, greift ins Leere (Use-after-free). V7 hat Threads teils nicht gejoint —
-V8 macht jeden Thread joinbar, bevor irgendetwas freigegeben wird.
+V8 macht jeden Thread joinbar (ueberall `_beginthreadex`-Handles), bevor
+irgendetwas freigegeben wird.
