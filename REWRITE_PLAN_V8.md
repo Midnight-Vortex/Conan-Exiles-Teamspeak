@@ -56,12 +56,12 @@ systematisch erfasst — siehe `doku/02-lessons-learned-v7.md` fuer die Langfass
 
 Jede Phase endet mit: **gcc-Tests gruen + MinGW-Cross-Build OK** → Commit → (wo noetig) TS-Client-Test durch den Menschen.
 
-| Phase | Inhalt | Verifikation | TS-Client noetig? |
-|-------|--------|--------------|-------------------|
-| **V8.0** | Fundament: committete Binaries raus, `.gitignore` haerten, `compat_crt.h` (portable `_s`-Shims), gcc-Test-Runner, MinGW-Cross-Build-Skript | Tests laufen, DLL baut auf Linux | Nein |
-| **V8.1** | Pure-Core absichern: Unit-Tests fuer `hub_parser`, `zone_resolve`, `proximity_math`, `player_table` (portabel machen) | gcc-Tests | Nein |
-| **V8.2** | Sofort-Stabilisierung (kleine risikoarme Fixes): Unmute-Batch-Caps angleichen, `chan_has_pending_work` vervollstaendigen, doppeltes `createPresetsCategory()` raus, 4 tote 512er-Arrays + Stub-Funktionen entfernen | Cross-Build + Review | Kurztest |
-| **V8.3** | Thread-Kern I: PCM-Besitz (Generation-Counter statt Cross-Thread-Reset), EIN Hotkey-Poller, UI-Recompute nur noch Flag+Wakeup (nie `recompute_all` vom UI-Thread) | Cross-Build + Tests | Ja |
+| Phase | Inhalt | Verifikation | TS-Client noetig? | Status |
+|-------|--------|--------------|-------------------|--------|
+| **V8.0** | Fundament: committete Binaries raus, `.gitignore` haerten, `compat_crt.h` (portable `_s`-Shims), gcc-Test-Runner, MinGW-Cross-Build-Skript | Tests laufen, DLL baut auf Linux | Nein | ✅ 2026-07-23 (`doku/aenderungen/001`) |
+| **V8.1** | Pure-Core absichern: Unit-Tests fuer `hub_parser`, `zone_resolve`, `proximity_math`, `player_table` (portabel machen) | gcc-Tests | Nein | ✅ 2026-07-23 (4 Suiten, 144 Checks) |
+| **V8.2** | Sofort-Stabilisierung (kleine risikoarme Fixes): Unmute-Batch-Caps angleichen, `chan_has_pending_work` vervollstaendigen, doppeltes `createPresetsCategory()` raus, 4 tote 512er-Arrays + Stub-Funktionen entfernen | Cross-Build + Review | Kurztest | ✅ 2026-07-23 (`doku/aenderungen/002`) |
+| **V8.3** | Thread-Kern I: PCM-Besitz (Generation-Counter statt Cross-Thread-Reset), EIN Hotkey-Poller, UI-Recompute nur noch Flag+Wakeup (nie `recompute_all` vom UI-Thread) | Cross-Build + Tests | Ja | ✅ gebaut 2026-07-23 (`doku/aenderungen/003`+`004`) — **TS-Client-Test offen** |
 | **V8.4** | Thread-Kern II: Command-Queue als Steuerkanal (typisierte Kommandos statt Flag-Labyrinth), Wakeup-Neubau ohne Off-Thread-API, CEDRAIN-Dispatcher mit Budget, `ts3d_apply` von `cepos_send_pending` entkoppeln | Cross-Build + Tests | Ja (Lasttest) |
 | **V8.5** | Ein-Besitzer-Zustand: Config-Single-Writer (F10 → `g_config`, `config_files.c` stirbt), Verbindungs-Epoche atomar, Kanal-ID-Quelle vereinheitlichen | Cross-Build + Tests | Ja |
 | **V8.6** | Schichten-Sanierung: `core/` ohne `ts/`/`ui/`-Includes (voice_modes/channel_manage/nick aufteilen: purer Kern + TS-Port), Legacy-Blob abbauen (`validation.c`, `util_base.c`, `proximity_volume.c`, `plugin_internal.h`) | Cross-Build + Tests | Kurztest |
@@ -69,8 +69,9 @@ Jede Phase endet mit: **gcc-Tests gruen + MinGW-Cross-Build OK** → Commit → 
 | **V8.8** | Shutdown-Haertung + Lasttest-Harness: alle Threads joinen, Reihenfolge dokumentiert, CEPOS-Flood-Simulation (200 Spieler) als Testskript | Tests + Harness | Ja (30 min) |
 | **V8.9** | Doku-Vervollstaendigung, `plugin.h`-Restabbau, Version **8.0.0** final | Alles gruen | Abnahme |
 
-**Reihenfolge ist bindend** (wie V7). Phasen V8.0–V8.2 sind ohne TS-Client voll verifizierbar
-und wurden in der ersten V8-Session umgesetzt; ab V8.3 gilt: Build+Tests maschinell, Hoertest durch Menschen.
+**Reihenfolge ist bindend** (wie V7). Phasen V8.0–V8.3 wurden in der ersten V8-Session
+umgesetzt (Build+Tests maschinell verifiziert). **Vor V8.4 muss V8.3 im echten TS-Client
+getestet werden** — die manuellen Testschritte stehen in `doku/aenderungen/003` und `004`.
 
 ---
 
