@@ -4,3 +4,11 @@ obj/
 *.suo
 .vs/
 tmp_dumps/
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+tests/out/
