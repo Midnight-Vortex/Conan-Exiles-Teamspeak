@@ -52,9 +52,6 @@ void ts3_plugin_clear_pending_chat(void);
 void ts3_plugin_flush_pending_chat(void);
 
 /* config_files.c */
-void loadVoiceDistancesFromConfig(void);
-void readConfigurationSettings(void);
-void saveConfigurationChange(const char* key, const wchar_t* value);
 void saveVoiceSettings(void);
 void initializeVoicePresets(void);
 void saveVoicePreset(int presetIndex, const char* presetName);

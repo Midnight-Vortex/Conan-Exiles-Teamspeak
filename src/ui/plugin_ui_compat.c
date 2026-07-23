@@ -319,7 +319,10 @@ void plugin_ui_sync_to_config(void) {
     cfg.hudTheme = voiceHudTheme;
     cfg.hudPosition = voiceHudPosition;
     cfg.hudSize = voiceHudSize;
-    /* Active-path routing — see plugin_ui_on_settings_saved. */
+    /* The legacy savedPath global holds the ACTIVE path: auto-detected in
+       automatic mode, user-chosen in manual mode. Route it into the matching
+       config field so pos_file resolves Pos.txt correctly. Never persist UI
+       placeholders like "(Not configured)". */
     if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
         if (enableAutomaticPatchFind) {
             wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
@@ -330,6 +333,7 @@ void plugin_ui_sync_to_config(void) {
     }
     config_clamp(&cfg);
     config_apply(&cfg);
+    /* config_save() is the ONE writer of plugin.cfg (V8.5b single-writer). */
     config_save();
     log_set_enabled(cfg.debugMode);
     /* Only a REAL mode change goes through voice_mode_apply (chat notify);
@@ -777,51 +781,14 @@ void ts3_plugin_apply_proximity_volumes_force(void) {
 }
 
 void plugin_ui_on_settings_saved(void) {
-    PluginConfig cfg;
-    config_copy(&cfg);
-    cfg.distanceWhisper = distanceWhisper;
-    cfg.distanceNormal = distanceNormal;
-    cfg.distanceShout = distanceShout;
-    cfg.whisperKey = whisperKey;
-    cfg.normalKey = normalKey;
-    cfg.shoutKey = shoutKey;
-    cfg.voiceToggleKey = voiceToggleKey;
-    cfg.configUIKey = configUIKey;
-    cfg.enableDistanceMuting = enableDistanceMuting ? 1 : 0;
-    cfg.enableAutomaticChannelChange = enableAutomaticChannelChange ? 1 : 0;
-    cfg.enableVoiceToggle = enableVoiceToggle ? 1 : 0;
-    cfg.enableVoiceOverlay = enableVoiceOverlay ? 1 : 0;
-    cfg.automaticPatchFind = enableAutomaticPatchFind ? 1 : 0;
-    cfg.debugMode = enableLogGeneral ? 1 : 0;
-    cfg.hudTheme = voiceHudTheme;
-    cfg.hudPosition = voiceHudPosition;
-    cfg.hudSize = voiceHudSize;
-    /* The legacy savedPath global holds the ACTIVE path: auto-detected in
-       automatic mode, user-chosen in manual mode. Route it into the matching
-       config field so pos_file resolves Pos.txt correctly. Never persist UI
-       placeholders like "(Not configured)". */
-    if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
-        if (enableAutomaticPatchFind) {
-            wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-        }
-        else {
-            wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-        }
-    }
-    config_clamp(&cfg);
-    config_apply(&cfg);
-    /* Canonical rewrite of plugin.cfg — restores keys the legacy writers drop
-       (DefaultsAppliedServer, DebugMode, EnableVoiceOverlay). */
-    config_save();
-    log_set_enabled(cfg.debugMode);
-    if ((VoiceMode)currentVoiceMode != voice_mode_get_current()) {
-        voice_mode_apply((VoiceMode)currentVoiceMode);
-    }
-    cepos_invalidate_send_cache();
-    cepos_signal_send_pending();
-    /* Settings dialog thread (F10 Save) — flag + wakeup only; the recompute
-       runs in CEDRAIN on the callback thread (Phase 4.3 pattern). */
-    ts3_audio_request_recompute_all();
+    /* Single writer for plugin.cfg (V8.5b): push the legacy F10 globals into
+       g_config and persist them through config_save() — the ONE function that
+       writes plugin.cfg. sync_to_config also handles the canonical rewrite of
+       keys the old legacy writers used to drop (DefaultsAppliedServer,
+       DebugMode, EnableVoiceOverlay), voice-mode apply and the deferred
+       recompute request. */
+    plugin_ui_sync_to_config();
+    /* The F10 dialog additionally refreshes the live overlay after a save. */
     voice_overlay_refresh_theme();
     voice_overlay_refresh_position();
     voice_overlay_refresh_size();

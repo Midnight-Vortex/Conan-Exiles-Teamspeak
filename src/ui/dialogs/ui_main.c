@@ -2697,8 +2697,8 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             40, 740, 520, 25, hwnd, (HMENU)600, NULL, NULL);
         ApplyFontToControl(hStatusMessage, hFont);
 
-        // ✅ 8) CHARGER LES VALEURS (une seule fois)
-        loadVoiceDistancesFromConfig();
+        // ✅ 8) CHARGER LES VALEURS (une seule fois) — depuis g_config (single reader)
+        plugin_ui_sync_from_config();
 
         ShowCategoryControls(1);
 
@@ -4029,7 +4029,9 @@ int showConfigInterface() {
         }
     }
 
-    readConfigurationSettings();
+    /* V8.5b single reader: pull current values from g_config (loaded once at
+       init by config_load) instead of re-reading plugin.cfg directly. */
+    plugin_ui_sync_from_config();
     voice_overlay_refresh_theme();
     voice_overlay_refresh_position();
     voice_overlay_refresh_size();
