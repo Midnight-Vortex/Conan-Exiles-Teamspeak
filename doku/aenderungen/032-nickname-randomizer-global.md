@@ -29,6 +29,7 @@ NicknameRandomizer=True
 - Getter `server_profile_get_nickname_randomizer()` in `ts3_server_profile.c`
 - `nick_anonymize_before_ingame()` bricht sofort ab, wenn deaktiviert
 - Legacy-Spiegel `hubNicknameRandomizer` in `plugin_ui_compat.c`
+- PROFILE-Log: `nickRand=1` (an) / `nickRand=0` (aus)
 
 ## Tests
 
