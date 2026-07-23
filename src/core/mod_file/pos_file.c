@@ -5,6 +5,7 @@
 #include "core/util/poll_interval.h"
 
 #include <windows.h>
+#include <math.h>
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -67,12 +67,12 @@
     <ClInclude Include="..\src\ts\proximity\ts3_cepos.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_proximity_audio.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_3d.h" />
-    <ClInclude Include="..\src\core\channel\channel_manage.h" />
+    <ClInclude Include="..\src\ts\channel\channel_manage.h" />
     <ClInclude Include="..\src\core\hub\hub_parser.h" />
     <ClInclude Include="..\src\ts\profile\ts3_server_profile.h" />
     <ClInclude Include="..\src\core\proximity\zone_resolve.h" />
     <ClInclude Include="..\src\core\voice\voice_modes.h" />
-    <ClInclude Include="..\src\core\nick\nick_anonymize.h" />
+    <ClInclude Include="..\src\ts\nick\nick_anonymize.h" />
     <ClInclude Include="..\src\plugin.h" />
     <ClInclude Include="..\src\mumble_compat.h" />
     <ClInclude Include="..\src\plugin_modules.h" />
@@ -80,6 +80,7 @@
     <ClInclude Include="project\resource.h" />
     <ClInclude Include="..\src\ui\plugin_ui_compat.h" />
     <ClInclude Include="..\src\ui\overlay\voice_overlay.h" />
+    <ClInclude Include="..\src\ui\dialogs\ui_config_internal.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\ts\entry\ts3_entry.c" />
@@ -95,14 +96,19 @@
     <ClCompile Include="..\src\ts\proximity\ts3_cepos.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_proximity_audio.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_3d.c" />
-    <ClCompile Include="..\src\core\channel\channel_manage.c" />
+    <ClCompile Include="..\src\ts\channel\channel_manage.c" />
     <ClCompile Include="..\src\core\hub\hub_parser.c" />
     <ClCompile Include="..\src\ts\profile\ts3_server_profile.c" />
     <ClCompile Include="..\src\core\proximity\zone_resolve.c" />
     <ClCompile Include="..\src\core\voice\voice_modes.c" />
-    <ClCompile Include="..\src\core\nick\nick_anonymize.c" />
+    <ClCompile Include="..\src\ts\nick\nick_anonymize.c" />
     <ClCompile Include="..\src\ui\overlay\voice_overlay.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_main.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_config_dialog.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_config_controls.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_config_draw.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_presets.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_path_steam.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_dynamic.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_messages.c" />
     <ClCompile Include="..\src\ui\input\key_watcher.c" />
@@ -110,7 +116,6 @@
     <ClCompile Include="..\src\core\config\config_files.c" />
     <ClCompile Include="..\src\core\validation\validation.c" />
     <ClCompile Include="..\src\core\util\util_base.c" />
-    <ClCompile Include="..\src\core\proximity\proximity_volume.c" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="..\assets\BACKGROUND.bmp" />

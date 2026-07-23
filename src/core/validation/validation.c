@@ -1,10 +1,5 @@
 #include "plugin_internal.h"
-#include "ui/plugin_ui_compat.h"
 #include "resource.h"
-#ifdef CONAN_EXILES_TS_EXPORTS
-#include "ts/adapter/ts3_adapter.h"
-#include "ts/profile/ts3_server_profile.h"
-#endif
 #include "core/proximity/proximity_math.h"
 #include <math.h>
 #include <stdio.h>
@@ -56,26 +51,6 @@ BOOL shouldApplyDistanceLimits() {
         mumbleAPI.log(ownID, "Distance limits ENABLED: ForceDistanceBasedMuting = TRUE");
     }
     return TRUE;
-}
-
-// Check connection status | Fonction pour vérifier l'état de la connexion
-void checkConnectionStatus() {
-    ULONGLONG currentTime = GetTickCount64();
-    if (currentTime - lastConnectionCheck < 2000) {
-        return;
-    }
-    lastConnectionCheck = currentTime;
-
-    const BOOL wasConnected = isConnectedToServer;
-    isConnectedToServer = ts3_is_connected() ? TRUE : FALSE;
-
-    if (wasConnected != isConnectedToServer) {
-        if (!isConnectedToServer) {
-            hubDescriptionAvailable = FALSE;
-            hubLimitsActive = FALSE;
-        }
-    }
-    plugin_ui_sync_live_state();
 }
 
 // Determine if value should be validated | Déterminer si une valeur doit être validée
@@ -139,134 +114,8 @@ float validateDistanceValue(float value, float minimum, float maximum, const cha
     return value;
 }
 
-void validatePlayerDistances() {
-    // Override limits if player is in a zone | Surcharger les limites si le joueur est dans une zone
-    // Only flag limits as active and update UI if in a zone | Marquer les limites comme actives et MAJ interface si en zone
-    if (currentZoneIndex != -1) {
-        hubLimitsActive = TRUE;
-        applyDistanceToAllPlayers(); // Recalculate based on zone values via getVoiceDistanceForMode | Recalculer via getVoiceDistanceForMode
-        if (hConfigDialog && IsWindow(hConfigDialog)) updateDynamicInterface();
-        return; // Global variables remain unchanged (stay in RAM as user settings) | Les variables globales restent inchangées (restent en RAM comme réglages utilisateur)
-    }
-
-    // Check if limits should be applied | Vérifier si les limites doivent être appliquées
-    if (!shouldApplyDistanceLimits()) {
-        if (enableLogGeneral) {
-            mumbleAPI.log(ownID, "Distance validation SKIPPED: ForceDistanceBasedMuting = FALSE - user has full control of distances");
-        }
-        hubLimitsActive = FALSE;
-
-        // Ensure messages reflect user freedom | S'assurer que les messages reflètent la liberté de l'utilisateur
-        if (hConfigDialog && IsWindow(hConfigDialog)) {
-            updateDynamicInterface();
-        }
-
-        // Trigger immediate channel management check | Déclencher immédiatement une vérification de gestion des canaux
-        if (enableAutomaticChannelChange && channelManagementActive) {
-            lastChannelCheck = 0;
-            if (TEMP) {
-                mumbleAPI.log(ownID, "IMMEDIATE: Triggering channel management check");
-            }
-        }
-
-        return;
-    }
-
-    hubLimitsActive = TRUE;
-
-    BOOL distanceChanged = FALSE;
-    float originalWhisper = distanceWhisper;
-    float originalNormal = distanceNormal;
-    float originalShout = distanceShout;
-
-    // Validate whisper distance | Valider la distance whisper
-    if (distanceWhisper < hubMinimumWhisper) {
-        distanceWhisper = (float)hubMinimumWhisper;
-        distanceChanged = TRUE;
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "Whisper distance corrected: %.1f -> %.1f (below minimum)",
-                originalWhisper, distanceWhisper);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-    else if (distanceWhisper > hubMaximumWhisper) {
-        distanceWhisper = (float)hubMaximumWhisper;
-        distanceChanged = TRUE;
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "Whisper distance corrected: %.1f -> %.1f (above maximum)",
-                originalWhisper, distanceWhisper);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-
-    // Validate normal distance | Valider la distance normale
-    if (distanceNormal < hubMinimumNormal) {
-        distanceNormal = (float)hubMinimumNormal;
-        distanceChanged = TRUE;
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "Normal distance corrected: %.1f -> %.1f (below minimum)",
-                originalNormal, distanceNormal);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-    else if (distanceNormal > hubMaximumNormal) {
-        distanceNormal = (float)hubMaximumNormal;
-        distanceChanged = TRUE;
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "Normal distance corrected: %.1f -> %.1f (above maximum)",
-                originalNormal, distanceNormal);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-
-    // Validate shout distance | Valider la distance shout
-    if (distanceShout < hubMinimumShout) {
-        distanceShout = (float)hubMinimumShout;
-        distanceChanged = TRUE;
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "Shout distance corrected: %.1f -> %.1f (below minimum)",
-                originalShout, distanceShout);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-    else if (distanceShout > hubMaximumShout) {
-        distanceShout = (float)hubMaximumShout;
-        distanceChanged = TRUE;
-        if (enableLogGeneral) {
-            char logMsg[128];
-            snprintf(logMsg, sizeof(logMsg), "Shout distance corrected: %.1f -> %.1f (above maximum)",
-                originalShout, distanceShout);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
-
-    // Save and apply changes if necessary | Sauvegarder et appliquer les changements si nécessaire
-    if (distanceChanged) {
-        saveVoiceSettings();
-        applyDistanceToAllPlayers();
-
-        if (enableLogGeneral) {
-            char summaryMsg[256];
-            snprintf(summaryMsg, sizeof(summaryMsg),
-                "Distance validation complete: Whisper=%.1f, Normal=%.1f, Shout=%.1f",
-                distanceWhisper, distanceNormal, distanceShout);
-            mumbleAPI.log(ownID, summaryMsg);
-        }
-    }
-    else {
-        if (enableLogGeneral) {
-            mumbleAPI.log(ownID, "All player distances are valid - no corrections needed");
-        }
-    }
-}
-
-// Helper: 2D point-in-polygon (ray casting, even-odd rule)
-BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2, float x3, float z3, float x4, float z4) {
+// Helper: 2D point-in-polygon (ray casting, even-odd rule). Internal only.
+static BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2, float x3, float z3, float x4, float z4) {
     /* Ray-casting (even-odd rule): robust for convex quads regardless of winding. */
     const float vx[4] = { x1, x2, x3, x4 };
     const float vz[4] = { z1, z2, z3, z4 };
@@ -293,8 +142,9 @@ BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2
 /* One 3D zone box: horizontal quadrilateral + GroundY..TopY height.
    xzFloor=1: X-Z floor, Y height (original Mumble plugin layout).
    xzFloor=0: X-Y floor, Z height (Conan / UE; Z1..Z4 in config are world Y).
-   If GroundY and TopY are both 0, vertical bounds are not enforced. */
-BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor) {
+   If GroundY and TopY are both 0, vertical bounds are not enforced.
+   Internal only. */
+static BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor) {
     const float hEps = 1.0f;
     float hMin = z->groundY < z->topY ? z->groundY : z->topY;
     float hMax = z->groundY > z->topY ? z->groundY : z->topY;

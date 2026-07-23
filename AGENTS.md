@@ -30,7 +30,16 @@ Vibecoding: ACTIVE · Effort: Sx · Phase: Research|Implement · Rule: vibecodin
 
 Subagents: pass `MANDATORY: follow .cursor/rules/vibecoding-cost-efficient.mdc` in every Task prompt.
 
+## Documentation duty (V8+, mandatory)
+
+Every code change MUST be documented in `doku/` per
+`.cursor/rules/05-documentation/doku-pflicht.mdc`: what changed, why it is
+better/more stable than before, and how it works (beginner-friendly, German).
+A work package without its doku entry is **not done**.
+
 ## References
 
-- `REWRITE_PLAN.md` — golden rule, thread lessons, rewrite scope
+- `REWRITE_PLAN.md` — V7 golden rule, thread lessons, rewrite scope (historical)
+- `REWRITE_PLAN_V8.md` — current V8 rewrite plan (goals, phases, agent routing)
+- `doku/` — beginner-friendly documentation (architecture, modules, change log)
 - `plan.md` — scaling phases (do not edit unless user asks)

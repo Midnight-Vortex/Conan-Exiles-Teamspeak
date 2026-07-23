@@ -25,9 +25,13 @@ void plugin_ui_sync_live_state(void);
 /* Hub profile (zones/races) just applied — refresh HUD text and layout. */
 void plugin_ui_on_hub_profile_updated(void);
 
-/* Legacy overlay lifecycle wrappers used by ts3_entry. */
+/* Legacy overlay lifecycle wrappers used by ts3_entry.
+   Shutdown split (V8.8): overlay_stop() joins the monitor thread and posts
+   WM_QUIT; the caller joins the overlay UI thread, then overlay_finalize()
+   deletes the text lock (safe only after the join). */
 void overlay_start(void);
 void overlay_stop(void);
+void overlay_finalize(void);
 void overlay_ui_mark_thread(void);
 void overlay_ui_clear_thread(void);
 void overlay_ui_signal_quit(void);

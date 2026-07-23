@@ -5,6 +5,7 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #endif
+#include "core/config/config.h"
 #include "core/proximity/proximity_math.h"
 #include <math.h>
 #include <stdio.h>
@@ -19,352 +20,23 @@
 #include <ole2.h>
 
 // MODULE 2: CONFIGURATION AND FILES
-// EN: plugin.cfg read/write, voice presets, distance settings, Pos.txt path persistence.
-// FR: Lecture/écriture plugin.cfg, presets voix, réglages distance, persistance chemin Pos.txt.
+// EN: plugin.cfg is written ONLY by config_save() (core/config/config.c). This
+//     module keeps the voice-preset file (voice_presets.cfg) and the F10 save
+//     entry points, all of which route persistence through
+//     plugin_ui_on_settings_saved() → config_save().
+// FR: plugin.cfg est écrit UNIQUEMENT par config_save() (core/config/config.c).
+//     Ce module ne gère plus que voice_presets.cfg et les points d'entrée F10,
+//     qui passent par plugin_ui_on_settings_saved() → config_save().
 // ============================================================================
-void loadVoiceDistancesFromConfig() {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) return;
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    FILE* f = _wfopen(configFile, L"r");
-    if (f) {
-        wchar_t line[1024];
-        while (fgetws(line, 1024, f)) {
-            wchar_t* p = line;
-            while (*p == L' ' || *p == L'\t') ++p;
-            wchar_t* end = p + wcslen(p);
-            while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
-                *--end = L'\0';
-
-            if (*p == L'#' || *p == L';' || *p == L'\0') continue;
-
-            wchar_t* eq = wcschr(p, L'=');
-            if (!eq) continue;
-            *eq = L'\0';
-            wchar_t* key = p;
-            wchar_t* val = eq + 1;
-            while (*val == L' ' || *val == L'\t') ++val;
-
-            if (wcsncmp(key, L"DistanceWhisper", 15) == 0) {
-                distanceWhisper = (float)_wtof(val);
-            }
-            else if (wcsncmp(key, L"DistanceNormal", 14) == 0) {
-                distanceNormal = (float)_wtof(val);
-            }
-            else if (wcsncmp(key, L"DistanceShout", 13) == 0) {
-                distanceShout = (float)_wtof(val);
-            }
-        }
-        fclose(f);
-    }
-}
-
-void readConfigurationSettings() {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) return;
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    BOOL fileExists = (GetFileAttributesW(configFile) != INVALID_FILE_ATTRIBUTES);
-    BOOL foundSavedPath = FALSE;
-    BOOL foundEnableAutomaticChannelChange = FALSE;
-    BOOL foundDistanceWhisper = FALSE;
-    BOOL foundDistanceNormal = FALSE;
-    BOOL foundDistanceShout = FALSE;
-    BOOL foundAutomaticPatchFind = FALSE;
-
-    wchar_t savedPathValue[MAX_PATH] = L"";
-
-    if (fileExists) {
-        FILE* f = _wfopen(configFile, L"r");
-        if (f) {
-            wchar_t line[1024];
-            while (fgetws(line, 1024, f)) {
-                wchar_t* p = line;
-                while (*p == L' ' || *p == L'\t') ++p;
-                wchar_t* end = p + wcslen(p);
-                while (end > p && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t'))
-                    *--end = L'\0';
-
-                if (*p == L'#' || *p == L';' || *p == L'\0') continue;
-
-                wchar_t* eq = wcschr(p, L'=');
-                if (!eq) continue;
-                *eq = L'\0';
-                wchar_t* key = p;
-                wchar_t* val = eq + 1;
-                while (*val == L' ' || *val == L'\t') ++val;
-
-                wchar_t valLower[16] = { 0 };
-                int i = 0;
-                for (; i < 15 && val[i]; ++i) valLower[i] = (wchar_t)towlower(val[i]);
-                valLower[i] = 0;
-
-                if (wcsncmp(key, L"SavedPath", 9) == 0) {
-                    wcsncpy_s(savedPathValue, MAX_PATH, val, _TRUNCATE);
-                    foundSavedPath = TRUE;
-                }
-                else if (wcsncmp(key, L"EnableAutomaticChannelChange", 28) == 0) {
-                    enableAutomaticChannelChange = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                    foundEnableAutomaticChannelChange = TRUE;
-                }
-                else if (wcsncmp(key, L"WhisperKey", 10) == 0) {
-                    whisperKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"NormalKey", 9) == 0) {
-                    normalKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"ShoutKey", 8) == 0) {
-                    shoutKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"ConfigUIKey", 11) == 0) {
-                    configUIKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"EnableDistanceMuting", 20) == 0) {
-                    enableDistanceMuting = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                }
-                else if (wcsncmp(key, L"DistanceWhisper", 15) == 0) {
-                    distanceWhisper = (float)_wtof(val);
-                    foundDistanceWhisper = TRUE;
-                }
-                else if (wcsncmp(key, L"DistanceNormal", 14) == 0) {
-                    distanceNormal = (float)_wtof(val);
-                    foundDistanceNormal = TRUE;
-                }
-                else if (wcsncmp(key, L"DistanceShout", 13) == 0) {
-                    distanceShout = (float)_wtof(val);
-                    foundDistanceShout = TRUE;
-                }
-                else if (wcsncmp(key, L"VoiceToggleKey", 14) == 0) {
-                    voiceToggleKey = _wtoi(val);
-                }
-                else if (wcsncmp(key, L"EnableVoiceToggle", 17) == 0) {
-                    enableVoiceToggle = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                }
-                else if (wcsncmp(key, L"HudTheme", 8) == 0) {
-                    /* Voice overlay palette index (0=gray .. 11=lime), from plugin.cfg
-                       Index de palette overlay (0=gris .. 11=citron vert), depuis plugin.cfg */
-                    int theme = _wtoi(val);
-                    if (theme < 0) {
-                        theme = VOICE_HUD_THEME_GRAY;
-                    }
-                    if (theme >= VOICE_HUD_THEME_COUNT) {
-                        theme = VOICE_HUD_THEME_COUNT - 1;
-                    }
-                    voiceHudTheme = theme;
-                }
-                else if (wcsncmp(key, L"HudPosition", 11) == 0) {
-                    /* Voice overlay screen position (0=top-left .. 3=top-center), from plugin.cfg
-                       Position à l'écran du HUD (0=haut-gauche .. 3=haut-centre), depuis plugin.cfg */
-                    int position = _wtoi(val);
-                    if (position < 0) {
-                        position = VOICE_HUD_POSITION_BOTTOM_RIGHT;
-                    }
-                    if (position >= VOICE_HUD_POSITION_COUNT) {
-                        position = VOICE_HUD_POSITION_COUNT - 1;
-                    }
-                    voiceHudPosition = position;
-                }
-                else if (wcsncmp(key, L"HudSize", 7) == 0) {
-                    int hudSize = _wtoi(val);
-                    if (hudSize < 0) {
-                        hudSize = VOICE_HUD_SIZE_BIG;
-                    }
-                    if (hudSize >= VOICE_HUD_SIZE_COUNT) {
-                        hudSize = VOICE_HUD_SIZE_COUNT - 1;
-                    }
-                    voiceHudSize = hudSize;
-                }
-                else if (wcsncmp(key, L"AutomaticPatchFind", 18) == 0) {
-                    enableAutomaticPatchFind = (wcscmp(valLower, L"true") == 0 || wcscmp(valLower, L"1") == 0);
-                    foundAutomaticPatchFind = TRUE;
-                }
-
-            }
-            fclose(f);
-        }
-    }
-    // If file doesn't exist or critical settings are missing, create or update it | Si le fichier n'existe pas ou si des paramètres critiques manquent, le créer ou le mettre à jour
-    if (!fileExists || !foundSavedPath || !foundEnableAutomaticChannelChange || !foundAutomaticPatchFind) {
-        FILE* f = _wfopen(configFile, L"w");
-        if (f) {
-            fwprintf(f, L"SavedPath=%s\n", foundSavedPath ? savedPathValue : L"");
-            fwprintf(f, L"AutomaticSavedPath=\n");
-            fwprintf(f, L"AutomaticPatchFind=%s\n", TRUE ? L"true" : L"false");
-            fwprintf(f, L"AutomaticSavedPath=\n");
-            fwprintf(f, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
-            fwprintf(f, L"WhisperKey=%d\n", whisperKey);
-            fwprintf(f, L"NormalKey=%d\n", normalKey);
-            fwprintf(f, L"ShoutKey=%d\n", shoutKey);
-            fwprintf(f, L"ConfigUIKey=%d\n", configUIKey);
-            fwprintf(f, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-            fwprintf(f, L"DistanceWhisper=%.1f\n", foundDistanceWhisper ? distanceWhisper : 3.0f);
-            fwprintf(f, L"DistanceNormal=%.1f\n", foundDistanceNormal ? distanceNormal : 13.0f);
-            fwprintf(f, L"DistanceShout=%.1f\n", foundDistanceShout ? distanceShout : 26.0f);
-            fwprintf(f, L"VoiceToggleKey=%d\n", voiceToggleKey);
-            fwprintf(f, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
-            fclose(f);
-        }
-        // ✅ CORRECTION CRITIQUE : Définir enableAutomaticPatchFind à TRUE lors de la création initiale
-        enableAutomaticPatchFind = TRUE;
-    }
-
-    if (enableLogConfig) {
-        char logMsg[256];
-        snprintf(logMsg, sizeof(logMsg),
-            "Configuration loaded - Whisper: %.1fm, Normal: %.1fm, Shout: %.1fm, AutomaticPatchFind: %s",
-            distanceWhisper, distanceNormal, distanceShout, enableAutomaticPatchFind ? "TRUE" : "FALSE");
-        mumbleAPI.log(ownID, logMsg);
-    }
-}
-
-// Helper function to save specific parameter | Fonction pour sauvegarder un paramètre spécifique
-void saveConfigurationChange(const char* key, const wchar_t* value) {
-    // Call complete function to save everything at once | Appeler la fonction complète pour tout sauvegarder d'un coup
-    saveVoiceSettings();
-
-    if (TEMP) {
-        char logMsg[128];
-        snprintf(logMsg, sizeof(logMsg), "SAVED CONFIG CHANGE: %s = %ls", key, value);
-        mumbleAPI.log(ownID, logMsg);
-    }
-}
 
 // Save voice settings and manage channel state | Sauvegarder les paramètres vocaux et gérer l'état des canaux
+//
+// V8.5b single-writer: this no longer touches plugin.cfg directly. It only
+// refreshes the active voice distance and routes the current F10 globals
+// through plugin_ui_on_settings_saved() → config_save(), the ONE writer.
 void saveVoiceSettings() {
-    // Get configuration folder path | Obtenir le chemin du dossier de configuration
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) return;
-
-    // Build configuration file path | Construire le chemin du fichier de configuration
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    // Arrays to store configuration lines | Tableaux pour stocker les lignes de configuration
-    wchar_t (*lines)[1024] = (wchar_t(*)[1024])calloc(100, sizeof(*lines));
-    if (!lines) {
-        // Allocation échouée, sortir proprement
-        return;
-    }
-    int lineCount = 0;
-    BOOL foundWhisper = FALSE, foundNormal = FALSE, foundShout = FALSE;
-    BOOL foundDistanceMuting = FALSE, foundChannelChange = FALSE;
-    BOOL foundHudTheme = FALSE;
-    BOOL foundHudPosition = FALSE;
-    BOOL foundHudSize = FALSE;
-
-    // Read existing configuration file | Lire le fichier de configuration existant
-    FILE* f = NULL;
-    errno_t err = _wfopen_s(&f, configFile, L"r");
-    if (err == 0 && f) {
-        while (fgetws(lines[lineCount], 1024, f) && lineCount < 99) {
-            // Update whisper distance line | Mettre à jour la ligne de distance whisper
-            if (wcsncmp(lines[lineCount], L"DistanceWhisper=", 16) == 0) {
-                swprintf(lines[lineCount], 1024, L"DistanceWhisper=%.1f\n", distanceWhisper);
-                foundWhisper = TRUE;
-            }
-            // Update normal distance line | Mettre à jour la ligne de distance normale
-            else if (wcsncmp(lines[lineCount], L"DistanceNormal=", 15) == 0) {
-                swprintf(lines[lineCount], 1024, L"DistanceNormal=%.1f\n", distanceNormal);
-                foundNormal = TRUE;
-            }
-            // Update shout distance line | Mettre à jour la ligne de distance shout
-            else if (wcsncmp(lines[lineCount], L"DistanceShout=", 14) == 0) {
-                swprintf(lines[lineCount], 1024, L"DistanceShout=%.1f\n", distanceShout);
-                foundShout = TRUE;
-            }
-            // Update distance muting setting | Mettre à jour le paramètre de muting par distance
-            else if (wcsncmp(lines[lineCount], L"EnableDistanceMuting=", 21) == 0) {
-                swprintf(lines[lineCount], 1024, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-                foundDistanceMuting = TRUE;
-            }
-            // Update automatic channel change setting | Mettre à jour le paramètre de changement automatique de canal
-            else if (wcsncmp(lines[lineCount], L"EnableAutomaticChannelChange=", 29) == 0) {
-                swprintf(lines[lineCount], 1024, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
-                foundChannelChange = TRUE;
-            }
-            else if (wcsncmp(lines[lineCount], L"HudTheme=", 9) == 0) {
-                /* Update existing HudTheme line when rewriting plugin.cfg
-                   Met à jour la ligne HudTheme existante lors de la réécriture de plugin.cfg */
-                swprintf(lines[lineCount], 1024, L"HudTheme=%d\n", voiceHudTheme);
-                foundHudTheme = TRUE;
-            }
-            else if (wcsncmp(lines[lineCount], L"HudPosition=", 12) == 0) {
-                swprintf(lines[lineCount], 1024, L"HudPosition=%d\n", voiceHudPosition);
-                foundHudPosition = TRUE;
-            }
-            else if (wcsncmp(lines[lineCount], L"HudSize=", 8) == 0) {
-                swprintf(lines[lineCount], 1024, L"HudSize=%d\n", voiceHudSize);
-                foundHudSize = TRUE;
-            }
-            lineCount++;
-        }
-        fclose(f);
-    }
-
-    // Add missing configuration lines | Ajouter les lignes de configuration manquantes
-    if (!foundWhisper && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"DistanceWhisper=%.1f\n", distanceWhisper);
-    }
-    if (!foundNormal && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"DistanceNormal=%.1f\n", distanceNormal);
-    }
-    if (!foundShout && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"DistanceShout=%.1f\n", distanceShout);
-    }
-    if (!foundDistanceMuting && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-    }
-    if (!foundChannelChange && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
-    }
-    if (!foundHudTheme && lineCount < 99) {
-        /* Append HudTheme if older plugin.cfg files lack the key
-           Ajoute HudTheme si les anciens plugin.cfg n'ont pas cette clé */
-        swprintf(lines[lineCount++], 1024, L"HudTheme=%d\n", voiceHudTheme);
-    }
-    if (!foundHudPosition && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"HudPosition=%d\n", voiceHudPosition);
-    }
-    if (!foundHudSize && lineCount < 99) {
-        swprintf(lines[lineCount++], 1024, L"HudSize=%d\n", voiceHudSize);
-    }
-
-    // Write updated configuration to file | Écrire la configuration mise à jour dans le fichier
-    f = NULL;
-    err = _wfopen_s(&f, configFile, L"w");
-    if (err == 0 && f) {
-        BOOL hasAutomaticSavedPath = FALSE;
-        BOOL hasAutomaticPatchFind = FALSE;
-
-        for (int i = 0; i < lineCount; i++) {
-            fwprintf(f, L"%s", lines[i]);
-            if (wcsncmp(lines[i], L"AutomaticSavedPath=", 19) == 0) {
-                hasAutomaticSavedPath = TRUE;
-            }
-            if (wcsncmp(lines[i], L"AutomaticPatchFind=", 19) == 0) {
-                hasAutomaticPatchFind = TRUE;
-            }
-        }
-
-        fclose(f);
-
-        // Update active distance based on absolute truth | Mettre à jour la distance active selon la vérité absolue
-        localVoiceData.voiceDistance = getVoiceDistanceForMode(currentVoiceMode);
-
-        // Debug logging | Log de debug
-        if (TEMP) {
-            char logMsg[256];
-            snprintf(logMsg, sizeof(logMsg),
-                "Config saved - Voice mode preserved - Current distance: %.1f",
-                localVoiceData.voiceDistance);
-            mumbleAPI.log(ownID, logMsg);
-        }
-    }
+    // Update active distance based on absolute truth | Mettre à jour la distance active selon la vérité absolue
+    localVoiceData.voiceDistance = getVoiceDistanceForMode(currentVoiceMode);
     plugin_ui_on_settings_saved();
 }
 
@@ -501,30 +173,23 @@ void loadVoicePreset(int presetIndex) {
     localVoiceData.voiceDistance = getVoiceDistanceForMode(currentVoiceMode);
 
     wchar_t gameFolder[MAX_PATH] = L"";
-    wchar_t* configFolder = getConfigFolderPath();
-    if (configFolder) {
-        wchar_t configFile[MAX_PATH];
-        swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-        FILE* f = _wfopen(configFile, L"r");
-        if (f) {
-            wchar_t line[512];
-            while (fgetws(line, 512, f)) {
-                if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                    wchar_t* pathStart = line + 10;
-                    wchar_t* nl = wcschr(pathStart, L'\n');
-                    if (nl) *nl = L'\0';
-                    wchar_t* cr = wcschr(pathStart, L'\r');
-                    if (cr) *cr = L'\0';
+    {
+        PluginConfig cfg;
+        const wchar_t* savedBase = NULL;
 
-                    wcscpy_s(gameFolder, MAX_PATH, pathStart);
-                    wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
-                    if (conanSandbox) {
-                        *conanSandbox = L'\0';
-                    }
-                    break;
-                }
+        config_copy(&cfg);
+        if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+            savedBase = cfg.automaticSavedPath;
+        }
+        else if (cfg.savedPath[0]) {
+            savedBase = cfg.savedPath;
+        }
+        if (savedBase) {
+            wcsncpy_s(gameFolder, MAX_PATH, savedBase, _TRUNCATE);
+            wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
+            if (conanSandbox) {
+                *conanSandbox = L'\0';
             }
-            fclose(f);
         }
     }
 
@@ -536,7 +201,7 @@ void loadVoicePreset(int presetIndex) {
     writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
     // Apply changes | Appliquer les changements
-    applyDistanceToAllPlayers();
+    if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
     if (enableLogConfig) {
         char logMsg[256];
@@ -616,7 +281,7 @@ BOOL renameVoicePreset(int presetIndex, const char* newName) {
 
 // Save presets to configuration file | Sauvegarder les presets dans le fichier de configuration
 void savePresetsToConfigFile(void) {
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t presetFile[MAX_PATH];
@@ -661,7 +326,7 @@ void savePresetsToConfigFile(void) {
 
 // Load presets from configuration file | Charger les presets depuis le fichier de configuration
 void loadPresetsFromConfigFile(void) {
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t presetFile[MAX_PATH];
@@ -737,127 +402,62 @@ void loadPresetsFromConfigFile(void) {
     }
 }
 
-// Write full Saved path to config file | Écriture du chemin complet Saved dans le fichier de configuration
+// Persist the active Saved path + distances | Enregistrer le chemin Saved actif + distances
+//
+// V8.5b single-writer: no direct plugin.cfg write anymore. It computes the
+// active Saved path, updates the F10 globals, then routes everything through
+// plugin_ui_on_settings_saved() → config_save() (the ONE writer). config_save
+// preserves SavedPath / AutomaticSavedPath automatically (config_copy keeps the
+// unchanged field), so the old "read existing path before overwrite" dance is
+// no longer needed.
 void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhisper, const wchar_t* distNormal, const wchar_t* distShout) {
-    wchar_t* configFolder = getConfigFolderPath();
-    if (!configFolder) {
-        return;
-    }
-
-    wchar_t configFile[MAX_PATH];
-    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-
-    // Construire le chemin COMPLET pour l'enregistrement (avec \ConanSandbox\Saved)
+    // Construire le chemin COMPLET (avec \ConanSandbox\Saved)
     wchar_t savedPathFull[MAX_PATH];
 
-    // Si displayedPathText contient le chemin, ajouter \ConanSandbox\Saved
-    if (wcslen(displayedPathText) > 0) {
-        // displayedPathText = C:\...\Conan Exiles (SANS \ConanSandbox\Saved)
-        // Construire le chemin COMPLET = C:\...\Conan Exiles\ConanSandbox\Saved
-        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", displayedPathText);
-    }
-    // Sinon, construire depuis gameFolder (fallback)
-    else if (gameFolder && wcslen(gameFolder) > 0) {
+    /* Caller-supplied gameFolder wins over stale F10 label text (preset load,
+       background autodetect). displayedPathText is only a UI mirror. */
+    if (gameFolder && wcslen(gameFolder) > 0) {
         swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
     }
+    else if (wcslen(displayedPathText) > 0) {
+        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", displayedPathText);
+    }
     else {
-        // Valeur par défaut si rien n'est disponible
-        wcscpy_s(savedPathFull, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+        PluginConfig cfg;
+        const wchar_t* savedBase = NULL;
+
+        config_copy(&cfg);
+        if (cfg.automaticPatchFind && cfg.automaticSavedPath[0]) {
+            savedBase = cfg.automaticSavedPath;
+        }
+        else if (cfg.savedPath[0]) {
+            savedBase = cfg.savedPath;
+        }
+        if (savedBase) {
+            wcsncpy_s(savedPathFull, MAX_PATH, savedBase, _TRUNCATE);
+        }
+        else {
+            wcscpy_s(savedPathFull, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+        }
     }
 
     // Save current voice mode before modifying distances | Sauvegarder le mode de voix actuel AVANT de modifier les distances
     float currentVoiceDistance = localVoiceData.voiceDistance;
 
-    // CORRECTION: Convertir les valeurs d'entrée SANS appliquer de limites
-    float whisperValue = (float)_wtof(distWhisper);
-    float normalValue = (float)_wtof(distNormal);
-    float shoutValue = (float)_wtof(distShout);
+    // Update user distances WITHOUT clamping | Mettre à jour les distances SANS limites
+    distanceWhisper = (float)_wtof(distWhisper);
+    distanceNormal = (float)_wtof(distNormal);
+    distanceShout = (float)_wtof(distShout);
 
-    // CORRECTION: Mettre à jour les variables globales avec les valeurs ORIGINALES de l'utilisateur
-    distanceWhisper = whisperValue;
-    distanceNormal = normalValue;
-    distanceShout = shoutValue;
+    // Update mod file path | Mettre à jour le chemin du fichier mod
+    size_t converted = 0;
+    char modFilePathTemp[MAX_PATH] = "";
+    wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
+    snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
 
-    // Read existing SavedPath and AutomaticSavedPath before overwriting | Lire le SavedPath et AutomaticSavedPath existants avant écrasement
-    wchar_t existingSavedPath[MAX_PATH] = L"";
-    wchar_t existingAutoPath[MAX_PATH] = L"";
-
-    FILE* fRead = _wfopen(configFile, L"r");
-    if (fRead) {
-        wchar_t line[512];
-        while (fgetws(line, 512, fRead)) {
-            if (wcsncmp(line, L"SavedPath=", 10) == 0) {
-                wchar_t* pathStart = line + 10;
-                wchar_t* nl = wcschr(pathStart, L'\n');
-                if (nl) *nl = L'\0';
-                wchar_t* cr = wcschr(pathStart, L'\r');
-                if (cr) *cr = L'\0';
-                wcscpy_s(existingSavedPath, MAX_PATH, pathStart);
-            }
-            else if (wcsncmp(line, L"AutomaticSavedPath=", 19) == 0) {
-                wchar_t* pathStart = line + 19;
-                wchar_t* nl = wcschr(pathStart, L'\n');
-                if (nl) *nl = L'\0';
-                wchar_t* cr = wcschr(pathStart, L'\r');
-                if (cr) *cr = L'\0';
-                wcscpy_s(existingAutoPath, MAX_PATH, pathStart);
-            }
-        }
-        fclose(fRead);
-    }
-
-    // Write configuration file | Écrire le fichier de configuration
-    FILE* file = _wfopen(configFile, L"w");
-    if (!file) {
-        return;
-    }
-
-    // Logic for SavedPath | Logique pour SavedPath
-    if (enableAutomaticPatchFind) {
-        // Automatic mode: preserve manual path in SavedPath, write to AutomaticSavedPath | Mode automatique : préserver le chemin manuel dans SavedPath, écrire dans AutomaticSavedPath
-        if (wcslen(existingSavedPath) > 0) {
-            fwprintf(file, L"SavedPath=%s\n", existingSavedPath);
-        }
-        else {
-            fwprintf(file, L"SavedPath=\n");
-        }
-        fwprintf(file, L"AutomaticSavedPath=%s\n", savedPathFull);
-    }
-    else {
-        // Manual mode: write to SavedPath, preserve automatic path in AutomaticSavedPath | Mode manuel : écrire dans SavedPath, préserver le chemin automatique dans AutomaticSavedPath
-        fwprintf(file, L"SavedPath=%s\n", savedPathFull);
-        if (wcslen(existingAutoPath) > 0) {
-            fwprintf(file, L"AutomaticSavedPath=%s\n", existingAutoPath);
-        }
-        else {
-            fwprintf(file, L"AutomaticSavedPath=\n");
-        }
-    }
-
-    fwprintf(file, L"AutomaticPatchFind=%s\n", enableAutomaticPatchFind ? L"true" : L"false");
-    fwprintf(file, L"EnableDistanceMuting=%s\n", enableDistanceMuting ? L"true" : L"false");
-    fwprintf(file, L"EnableAutomaticChannelChange=%s\n", enableAutomaticChannelChange ? L"true" : L"false");
-    fwprintf(file, L"WhisperKey=%d\n", whisperKey);
-    fwprintf(file, L"NormalKey=%d\n", normalKey);
-    fwprintf(file, L"ShoutKey=%d\n", shoutKey);
-    fwprintf(file, L"ConfigUIKey=%d\n", configUIKey);
-    fwprintf(file, L"DistanceWhisper=%.1f\n", distanceWhisper);
-    fwprintf(file, L"DistanceNormal=%.1f\n", distanceNormal);
-    fwprintf(file, L"DistanceShout=%.1f\n", distanceShout);
-    fwprintf(file, L"VoiceToggleKey=%d\n", voiceToggleKey);
-    fwprintf(file, L"EnableVoiceToggle=%s\n", enableVoiceToggle ? L"true" : L"false");
-    fwprintf(file, L"HudTheme=%d\n", voiceHudTheme);
-    fwprintf(file, L"HudPosition=%d\n", voiceHudPosition);
-    fwprintf(file, L"HudSize=%d\n", voiceHudSize);
-    fclose(file);
-
-    if (enableLogConfig) {
-        char logMsg[256];
-        snprintf(logMsg, sizeof(logMsg),
-            "✅ USER VALUES SAVED: Whisper=%.1f, Normal=%.1f, Shout=%.1f",
-            distanceWhisper, distanceNormal, distanceShout);
-        mumbleAPI.log(ownID, logMsg);
-    }
+    /* Active-path global: the compat bridge routes it into the matching cfg
+       field (AutomaticSavedPath when auto mode, SavedPath otherwise). */
+    wcscpy_s(savedPath, MAX_PATH, savedPathFull);
 
     // Restore current voice mode instead of forcing Normal | Restaurer le mode de voix actuel au lieu de forcer Normal
     if (fabsf(currentVoiceDistance - distanceWhisper) < fabsf(currentVoiceDistance - distanceNormal) &&
@@ -871,19 +471,8 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
         localVoiceData.voiceDistance = distanceNormal;
     }
 
-    // Update mod file path | Mettre à jour le chemin du fichier mod
-    size_t converted = 0;
-    char modFilePathTemp[MAX_PATH] = "";
-    wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
-    snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
-
-    /* Keep the active-path global in sync for the compat bridge below. */
-    wcscpy_s(savedPath, MAX_PATH, savedPathFull);
-
-    /* Push everything into the new engine config (keys, distances, toggles,
-       path) and rewrite plugin.cfg canonically — the legacy write above
-       drops DefaultsAppliedServer/DebugMode/EnableVoiceOverlay and never
-       reached the new engine at all (hotkeys only worked after a restart). */
+    /* Single writer: push globals into g_config and rewrite plugin.cfg
+       canonically via config_save(). */
     plugin_ui_on_settings_saved();
 
     // Reinstall keyboard monitoring | Réinstaller la surveillance du clavier

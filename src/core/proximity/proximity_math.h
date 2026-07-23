@@ -68,7 +68,9 @@ void prox_apply_diffuse_samples(short* samples, int sampleCount, int channelCoun
 /* Log a fixed-value table through log_write (Phase 5 test aid). */
 void prox_math_self_test(void);
 
-/* Legacy UI / proximity_volume.c — hub+zone volume context (same curve as prox_volume_from_distance). */
+/* Hub+zone volume context (same curve as prox_volume_from_distance); kept for
+   the proximity_math unit tests. The legacy plugin-side builder was removed in
+   V8.5b (doku/019-legacy-abbau.md). */
 typedef struct ProximityVolumeContext {
     double hubAudioMinDistance;
     double hubAudioMaxVolume;

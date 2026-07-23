@@ -16,6 +16,12 @@ including all changes and additions you made.
 All other terms and conditions of the Mozilla Public License 2.0 remain unchanged.
 */
 
+// Legacy Mumble-era global state bag — still used by the F10 settings dialog and
+// overlay HUD. New code should use g_config (config.c), channel_manage (ts/),
+// and voice_modes hooks instead of adding new globals here. V8.9 trimmed dead
+// symbols; further reduction is tracked for post-8.0 UI migration (V8.7 split
+// is done; full g_config cutover remains in config_files.c / util_base.c).
+
 #ifndef PLUGIN_H
 #define PLUGIN_H
 
@@ -130,10 +136,8 @@ extern HWND hCategoryPresets;
 
 // Plugin control variables
 extern BOOL enableGetPlayerCoordinates;
-extern BOOL TEMP;
 extern BOOL enableAutomaticPatchFind;
 extern HWND hAutomaticPatchFindCheck;
-extern BOOL f9CoordinateBroadcastActive;
 extern ULONGLONG lastCoordinateBroadcast;
 
 // Log control variables
@@ -203,6 +207,10 @@ extern HFONT hOverlayFont;
 extern BOOL overlayThreadRunning;
 
 // Channel management variables
+// V8.5: hubChannelID / ingameChannelID are DERIVED MIRRORS of the canonical
+// IDs owned by ts/channel/channel_manage (chan_get_hub_channel_id /
+// chan_get_ingame_channel_id). UI/overlay read only; the single writer is
+// plugin_ui_sync_live_state (callback thread). Do not assign elsewhere.
 extern mumble_channelid_t hubChannelID;
 extern mumble_channelid_t rootChannelID;
 extern mumble_channelid_t ingameChannelID;
@@ -284,10 +292,7 @@ extern wchar_t displayedPathText[MAX_PATH];
 extern BOOL isUpdatingInterface;
 extern ULONGLONG lastInterfaceUpdate;
 
-// Interface text constants
-extern const wchar_t* infoText1;
-extern const wchar_t* infoText2;
-extern const wchar_t* infoText3;
+// Interface text constants (removed unused infoText1/2/3 in V8.9)
 
 // Voice toggle variables
 extern int voiceToggleKey;
@@ -305,7 +310,9 @@ int config_dialog_try_open(void);
 void config_dialog_close(void);
 int config_dialog_is_open(void);
 extern DWORD lastKeyPressTime;
-extern BOOL keyMonitorThreadRunning;
+/* Key monitor stop flag — Interlocked access only (set by start/stop on the
+   controlling thread, polled by the key monitor thread). */
+extern volatile LONG keyMonitorThreadRunning;
 extern HANDLE keyMonitorThread;
 extern BOOL lastKeyState;
 
@@ -323,7 +330,6 @@ extern double hubAudioBloom;
 extern double hubAudioFilterIntensity;
 extern BOOL hubForcePositionalAudio;
 extern ULONGLONG lastHubDescriptionCheck;
-extern char* lastHubDescriptionCache;
 
 // Hub distance limits
 extern double hubMinimumWhisper;
@@ -337,8 +343,6 @@ extern BOOL hubForceAutomaticChannelSwitching;
 
 // Voice system variables
 extern CompletePositionalData localVoiceData;
-extern CompletePositionalData remotePlayersData[512];
-extern size_t remotePlayerCount;
 extern ULONGLONG lastVoiceDataSent;
 extern ULONGLONG lastKeyCheck;
 
@@ -351,8 +355,6 @@ extern float distanceShout;
 extern BOOL enableDistanceMuting;
 
 // Mute system variables
-extern PlayerMuteState playerMuteStates[512];
-extern size_t playerMuteStateCount;
 extern ULONGLONG lastDistanceCheck;
 
 // Refresh variables
@@ -441,12 +443,6 @@ int ts3_plugin_compute_audio_mode(void);
 #endif
 
 // Adaptive system variables
-extern AdaptivePlayerData adaptivePlayerStates[512];
-extern size_t adaptivePlayerCount;
 extern Vector3 localPlayerPosition;
-
-// Audio volume states
-extern AudioVolumeState audioVolumeStates[512];
-extern size_t audioVolumeCount;
 
 #endif // PLUGIN_H

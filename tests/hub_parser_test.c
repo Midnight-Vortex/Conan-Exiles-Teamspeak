@@ -1,6 +1,8 @@
 /* Standalone test for hub_parse_settings — compiles hub_parser.c directly.
-   Build:  cl /W4 /I ..\src hub_parser_test.c ..\src\core\hub\hub_parser.c
-   Run:    hub_parser_test.exe   (exit code 0 = all checks passed) */
+   Build/run on Linux: bash tests/run_tests.sh (plain gcc, no TS SDK needed).
+   Exit code 0 = all checks passed. */
+
+#include "core/util/compat_crt.h"
 
 #include "core/hub/hub_parser.h"
 #include "core/proximity/zone_resolve.h"
@@ -9,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 
 void log_write(const char* fmt, ...) {
     (void)fmt;
@@ -190,11 +193,139 @@ static void test_newline_variant(void) {
         && s.races[0].listenAddDistance == 7.0f, "race values");
 }
 
+static void test_global_defaults_and_clamping(void) {
+    printf("[4] global defaults and clamping\n");
+    HubSettings s;
+
+    CHECK(hub_parse_settings("[GLOBAL]\n", &s) == 1, "minimal [GLOBAL] valid");
+    CHECK(s.audioMaxVolume == 1.0f, "default audioMaxVolume 1.0");
+    CHECK(s.audioMinDistance == 1.0f, "default audioMinDistance 1.0");
+    CHECK(s.filterIntensity == 100.0f, "default filterIntensity 100");
+    CHECK(s.realisticAudio == 0, "realisticAudio off by default");
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\n"
+        "  AudioMinDistance=0  \n"
+        "RealisticAudio=TRUE\n"
+        "FilterIntensity=150\n"
+        "hubAudioFilterIntensity=5\n"
+        "MaximumShout=5000\n", &s) == 1,
+        "whitespace + alias keys parse");
+    CHECK(s.audioMinDistance == 0.1f, "AudioMinDistance=0 clamped to 0.1");
+    CHECK(s.realisticAudio == 1, "RealisticAudio case-insensitive");
+    CHECK(s.filterIntensity == 5.0f, "hubAudioFilterIntensity alias wins last");
+    CHECK(s.maxShout == 1000.0f, "distance clamped to HUB_DIST_MAX (1000)");
+
+    CHECK(hub_parse_settings("[GLOBAL]\nAudioMaxVolume=250\n", &s) == 1,
+        "percent volume parses");
+    CHECK(s.audioMaxVolume == 2.0f, "AudioMaxVolume=250 -> gain 2.0 (cap)");
+
+    CHECK(hub_parse_settings("[GLOBAL]\nAudioMaxVolume=2.5\n", &s) == 1,
+        "direct gain parses");
+    CHECK(s.audioMaxVolume == 2.0f, "direct gain 2.5 clamped to 2.0");
+
+    /* Boundary: raw > 3 uses percent semantics; raw <= 3 is direct gain. */
+    CHECK(hub_parse_settings("[GLOBAL]\nAudioMaxVolume=3.0\n", &s) == 1,
+        "AudioMaxVolume=3.0 parses");
+    CHECK(s.audioMaxVolume == 2.0f, "3.0 treated as direct gain, capped to 2.0");
+    CHECK(hub_parse_settings("[GLOBAL]\nAudioMaxVolume=3.1\n", &s) == 1,
+        "AudioMaxVolume=3.1 parses");
+    CHECK(s.audioMaxVolume == 0.031f, "3.1 uses percent semantics (3.1/100)");
+}
+
+static void test_defaults_and_race_inheritance(void) {
+    printf("[5] [DEFAULT_SETTINGS] keys and race inheritance\n");
+    HubSettings s;
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\nMinimumNormal=10\nMaximumNormal=20\n"
+        "[DEFAULT_SETTINGS]\nDefaultWhisperKey=0\nDefaultVoiceToggleKey=300\n"
+        "[RACE]\nRace=Orc\nSteamID=(x)99\n", &s) == 1,
+        "defaults + race parse");
+    CHECK(s.defaults.whisperKey == 0, "invalid key 0 -> 0 (absent)");
+    CHECK(s.defaults.voiceToggleKey == 0, "key >= 256 -> 0 (absent)");
+    CHECK(s.raceCount == 1, "one race");
+    CHECK(s.races[0].minNormal == 10.0f && s.races[0].maxNormal == 20.0f,
+        "race inherits global limits before overrides");
+    CHECK(s.races[0].steamIDs[0] == 99ULL, "race steam id");
+}
+
+static void test_multiple_zones(void) {
+    printf("[6] multiple zones and headers\n");
+    HubSettings s;
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\n"
+        "[ZONES]\n"
+        "[ZoneName=Alpha]\nX1=1\nZ1=1\nX2=2\nZ2=1\nX3=2\nZ3=2\nX4=1\nZ4=2\n"
+        "SoundProof=true\nWisper=3\n"
+        "[Zone=Beta]\n"
+        "X1=10\nZ1=10\nX2=11\nZ2=10\nX3=11\nZ3=11\nX4=10\nZ4=11\n"
+        "Reverb=1\n", &s) == 1,
+        "two zones with bracket headers");
+    CHECK(s.zoneCount == 2, "two zones parsed");
+    CHECK(strcmp(s.zones[0].name, "Alpha") == 0, "zone[0] [ZoneName=] header");
+    CHECK(s.zones[0].soundproof == 1 && s.zones[0].whisperDist == 3.0f,
+        "zone[0] flags and distance");
+    CHECK(strcmp(s.zones[1].name, "Beta") == 0, "zone[1] [Zone=] header");
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\n[ZONES]\nZoneName=Plain\nX1=0\n", &s) == 1,
+        "unbracketed ZoneName= header");
+    CHECK(s.zoneCount == 1 && strcmp(s.zones[0].name, "Plain") == 0,
+        "plain ZoneName= parsed");
+
+    /* More zones than HUB_MAX_ZONES must clamp, not overflow. */
+    char big[16384] = "[GLOBAL]\n[ZONES]\n";
+    for (int i = 0; i < HUB_MAX_ZONES + 4; i++) {
+        char one[96];
+        snprintf(one, sizeof(one), "[ZoneName=Z%d]\nX1=%d\n", i, i + 1);
+        strcat_s(big, sizeof(big), one);
+    }
+    CHECK(hub_parse_settings(big, &s) == 1, "overflow zone list parses");
+    CHECK(s.zoneCount == HUB_MAX_ZONES, "zone count clamped to HUB_MAX_ZONES");
+}
+
+static void test_partial_and_unknown_sections(void) {
+    printf("[7] partial descriptions and unknown sections\n");
+    HubSettings s;
+
+    CHECK(hub_parse_settings("[GLOBAL]\nMinimumWisper=4\n[UNKNOWN]\nFoo=Bar\n", &s) == 1,
+        "[GLOBAL] + unknown section still valid");
+    CHECK(s.minWhisper == 4.0f, "global key before unknown section kept");
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\nMinimumWisper=1\n[ZONES]\n[ZoneName=Later]\n"
+        "[RACE]\nRace=Late\n", &s) == 1,
+        "section switch clears zone context");
+    CHECK(s.zoneCount == 1, "zone parsed before [RACE]");
+    CHECK(s.raceCount == 1 && strcmp(s.races[0].name, "Late") == 0,
+        "race parsed after leaving [ZONES]");
+    CHECK(strcmp(s.zones[0].name, "Later") == 0, "zone name preserved");
+}
+
+static void test_nonfinite_values(void) {
+    printf("[8] non-finite numeric values\n");
+    HubSettings s;
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\nMinimumWisper=nan\nMaximumNormal=inf\nAudioMinDistance=-5\n", &s) == 1,
+        "non-finite globals parse");
+    CHECK(s.minWhisper == 0.0f, "NaN whisper -> clamp min 0");
+    CHECK(s.maxNormal == 0.0f, "inf normal -> clamp min 0");
+    CHECK(s.audioMinDistance == 0.1f, "negative AudioMinDistance -> clamp 0.1");
+}
+
 int main(void) {
     test_real_description();
     test_zone_audio_rules();
     test_malformed();
     test_newline_variant();
+    test_global_defaults_and_clamping();
+    test_defaults_and_race_inheritance();
+    test_multiple_zones();
+    test_partial_and_unknown_sections();
+    test_nonfinite_values();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

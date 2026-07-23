@@ -2,7 +2,7 @@
 #include "core/util/log.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
-#include "core/channel/channel_manage.h"
+#include "ts/channel/channel_manage.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/proximity/ts3_cepos.h"
@@ -33,12 +33,9 @@ BOOL backgroundDrawn = FALSE;
 
 // Plugin control variables | Variables de contrôle du plugin
 BOOL enableGetPlayerCoordinates = TRUE;
-BOOL TEMP = FALSE;
 BOOL enableAutomaticPatchFind = FALSE;
 HWND hAutomaticPatchFindCheck = NULL;
 
-// F9 coordinate broadcast variables | Variables pour la diffusion des coordonnées en F9
-BOOL f9CoordinateBroadcastActive = FALSE;
 ULONGLONG lastCoordinateBroadcast = 0;
 
 // Log control variables | Variables pour contrôler l'activation des logs
@@ -154,7 +151,7 @@ int configUIKey = 121;
 // Key monitoring variables | Variables de surveillance des touches globales
 static volatile long g_configDialogOpen = 0;
 DWORD lastKeyPressTime = 0;
-BOOL keyMonitorThreadRunning = FALSE;
+volatile LONG keyMonitorThreadRunning = 0;
 HANDLE keyMonitorThread = NULL;
 BOOL lastKeyState = FALSE;
 
@@ -222,14 +219,8 @@ double hubAudioBloom = 0.0;
 double hubAudioFilterIntensity = 0.0;
 BOOL hubForcePositionalAudio = FALSE;
 ULONGLONG lastHubDescriptionCheck = 0;
-char* lastHubDescriptionCache = NULL;
-const wchar_t* infoText1 = L"";
-const wchar_t* infoText2 = L"";
-const wchar_t* infoText3 = L"";
 
 CompletePositionalData localVoiceData = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 10.0f, "" };
-CompletePositionalData remotePlayersData[512];
-size_t remotePlayerCount = 0;
 ULONGLONG lastVoiceDataSent = 0;
 ULONGLONG lastKeyCheck = 0;
 
@@ -247,8 +238,6 @@ int voiceHudSize = VOICE_HUD_SIZE_BIG;
 HFONT hOverlayFont = NULL;
 BOOL overlayThreadRunning = FALSE;
 
-PlayerMuteState playerMuteStates[512];
-size_t playerMuteStateCount = 0;
 ULONGLONG lastDistanceCheck = 0;
 BOOL forceGlobalMuteRefresh = FALSE;
 ULONGLONG lastGlobalRefresh = 0;
@@ -265,11 +254,7 @@ Zone zones[MAX_ZONES];
 size_t zoneCount = 0;
 int currentZoneIndex = -1;
 
-AdaptivePlayerData adaptivePlayerStates[512];
-size_t adaptivePlayerCount = 0;
 Vector3 localPlayerPosition = { 0.0f, 0.0f, 0.0f };
-AudioVolumeState audioVolumeStates[512];
-size_t audioVolumeCount = 0;
 
 #ifdef CONAN_EXILES_TS_EXPORTS
 mumble_channelid_t ts3LocalChannelID = -1;
@@ -327,7 +312,10 @@ void plugin_ui_sync_to_config(void) {
     cfg.hudTheme = voiceHudTheme;
     cfg.hudPosition = voiceHudPosition;
     cfg.hudSize = voiceHudSize;
-    /* Active-path routing — see plugin_ui_on_settings_saved. */
+    /* The legacy savedPath global holds the ACTIVE path: auto-detected in
+       automatic mode, user-chosen in manual mode. Route it into the matching
+       config field so pos_file resolves Pos.txt correctly. Never persist UI
+       placeholders like "(Not configured)". */
     if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
         if (enableAutomaticPatchFind) {
             wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
@@ -338,6 +326,7 @@ void plugin_ui_sync_to_config(void) {
     }
     config_clamp(&cfg);
     config_apply(&cfg);
+    /* config_save() is the ONE writer of plugin.cfg (V8.5b single-writer). */
     config_save();
     log_set_enabled(cfg.debugMode);
     /* Only a REAL mode change goes through voice_mode_apply (chat notify);
@@ -347,7 +336,9 @@ void plugin_ui_sync_to_config(void) {
     }
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    /* Settings/UI thread — never run the heavy recompute here; CEDRAIN picks
+       up the pending flag on the callback thread milliseconds later. */
+    ts3_audio_request_recompute_all();
 }
 
 void plugin_ui_sync_live_state(void) {
@@ -364,6 +355,11 @@ void plugin_ui_sync_live_state(void) {
         localPlayerPosition.z = localPos.z / 100.0f;
     }
 
+    /* V8.5: channel_manage (ts/channel) is the SINGLE source of the hub/ingame
+       channel IDs. hubChannelID/ingameChannelID here are DERIVED MIRRORS for the
+       overlay HUD only — refreshed on the callback thread from the canonical
+       getters below. Never assign them anywhere else (grep-enforced: this is the
+       only writer). See doku/aenderungen/023-kanal-id-single-source.md. */
     const uint64 hubId = chan_get_hub_channel_id();
     const uint64 ingameId = chan_get_ingame_channel_id();
     hubChannelID = hubId ? (mumble_channelid_t)hubId : -1;
@@ -478,6 +474,8 @@ void plugin_ui_sync_live_state(void) {
 
 void plugin_ui_on_hub_profile_updated(void) {
     plugin_ui_sync_live_state();
+    /* Callback thread only (channel description/edit events in ts3_entry.c),
+       so the synchronous recompute is allowed here. */
     ts3_audio_recompute_all();
     voice_overlay_refresh_position();
     updateVoiceOverlay();
@@ -632,19 +630,6 @@ BOOL hubDescriptionHasContent(const char* description) {
     return FALSE;
 }
 
-void readHubDescription(void) { }
-void parseHubDescription(const char* description) { (void)description; }
-void applyDefaultSettingsIfNeeded(const char* description, mumble_connection_t connection) {
-    (void)description;
-    (void)connection;
-}
-void initializeChannelIDs(void) { }
-void manageChannelBasedOnCoordinates(void) { }
-void ts3_show_pending_hub_confirm(void) { }
-int ts3_is_root_channel_id(uint64_t channelID) { (void)channelID; return 0; }
-void hubDescriptionMonitorThread(void* arg) { (void)arg; }
-void channelManagementThread(void* arg) { (void)arg; }
-
 void plugin_ui_init(void) {
     mumbleAPI.log = compat_mumble_log;
     ownID = 1;
@@ -696,15 +681,31 @@ void overlay_start(void) {
     }
 }
 
+/* V8.8: overlay_stop only STOPS: it joins the resolution-monitor thread and
+   posts WM_QUIT to the overlay UI thread. The caller (ts3plugin_shutdown)
+   then joins the overlay UI thread — which destroys its own HWND on exit —
+   and calls overlay_finalize() afterwards. HWND destruction and the
+   overlayTextLock teardown moved out of here because both must not happen
+   while the overlay thread may still be painting. */
 void overlay_stop(void) {
-    removeKeyMonitoring();
     overlayThreadRunning = FALSE;
     if (g_overlayMonitorHandle) {
-        WaitForSingleObject(g_overlayMonitorHandle, 3000);
+        /* JOIN (poll loop wakes every 2s); never close a running thread's handle. */
+        if (WaitForSingleObject(g_overlayMonitorHandle, 5000) != WAIT_OBJECT_0) {
+            log_write("SHUTDOWN: overlay monitor thread slow to exit - waiting");
+            WaitForSingleObject(g_overlayMonitorHandle, INFINITE);
+        }
         CloseHandle(g_overlayMonitorHandle);
         g_overlayMonitorHandle = NULL;
     }
     overlay_ui_signal_quit();
+}
+
+/* Runs AFTER the overlay UI thread has been joined: fallback window/font
+   cleanup (no-op when the overlay thread destroyed its HWND itself) and the
+   overlayTextLock teardown — deleting a critical section is only safe once
+   no thread can enter it anymore (the overlay paint path used it). */
+void overlay_finalize(void) {
     plugin_destroy_voice_overlay_safely();
     if (InterlockedCompareExchange(&overlayTextLockInitialized, 0, 0)) {
         DeleteCriticalSection(&overlayTextLock);
@@ -769,56 +770,23 @@ int ts3_plugin_is_proximity_active(void) {
 void ts3_plugin_apply_proximity_volumes_force(void) {
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    /* Called from the settings dialog / UI dialogs (applyDistanceToAllPlayers,
+       loadVoicePreset) — defer the recompute to the callback thread. */
+    ts3_audio_request_recompute_all();
     if (ts3_is_connected()) {
         ts3_request_wakeup();
     }
 }
 
 void plugin_ui_on_settings_saved(void) {
-    PluginConfig cfg;
-    config_copy(&cfg);
-    cfg.distanceWhisper = distanceWhisper;
-    cfg.distanceNormal = distanceNormal;
-    cfg.distanceShout = distanceShout;
-    cfg.whisperKey = whisperKey;
-    cfg.normalKey = normalKey;
-    cfg.shoutKey = shoutKey;
-    cfg.voiceToggleKey = voiceToggleKey;
-    cfg.configUIKey = configUIKey;
-    cfg.enableDistanceMuting = enableDistanceMuting ? 1 : 0;
-    cfg.enableAutomaticChannelChange = enableAutomaticChannelChange ? 1 : 0;
-    cfg.enableVoiceToggle = enableVoiceToggle ? 1 : 0;
-    cfg.enableVoiceOverlay = enableVoiceOverlay ? 1 : 0;
-    cfg.automaticPatchFind = enableAutomaticPatchFind ? 1 : 0;
-    cfg.debugMode = enableLogGeneral ? 1 : 0;
-    cfg.hudTheme = voiceHudTheme;
-    cfg.hudPosition = voiceHudPosition;
-    cfg.hudSize = voiceHudSize;
-    /* The legacy savedPath global holds the ACTIVE path: auto-detected in
-       automatic mode, user-chosen in manual mode. Route it into the matching
-       config field so pos_file resolves Pos.txt correctly. Never persist UI
-       placeholders like "(Not configured)". */
-    if (savedPath[0] && wcsstr(savedPath, L"(Not configured)") == NULL) {
-        if (enableAutomaticPatchFind) {
-            wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-        }
-        else {
-            wcsncpy_s(cfg.savedPath, CONFIG_MAX_PATH, savedPath, _TRUNCATE);
-        }
-    }
-    config_clamp(&cfg);
-    config_apply(&cfg);
-    /* Canonical rewrite of plugin.cfg — restores keys the legacy writers drop
-       (DefaultsAppliedServer, DebugMode, EnableVoiceOverlay). */
-    config_save();
-    log_set_enabled(cfg.debugMode);
-    if ((VoiceMode)currentVoiceMode != voice_mode_get_current()) {
-        voice_mode_apply((VoiceMode)currentVoiceMode);
-    }
-    cepos_invalidate_send_cache();
-    cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    /* Single writer for plugin.cfg (V8.5b): push the legacy F10 globals into
+       g_config and persist them through config_save() — the ONE function that
+       writes plugin.cfg. sync_to_config also handles the canonical rewrite of
+       keys the old legacy writers used to drop (DefaultsAppliedServer,
+       DebugMode, EnableVoiceOverlay), voice-mode apply and the deferred
+       recompute request. */
+    plugin_ui_sync_to_config();
+    /* The F10 dialog additionally refreshes the live overlay after a save. */
     voice_overlay_refresh_theme();
     voice_overlay_refresh_position();
     voice_overlay_refresh_size();

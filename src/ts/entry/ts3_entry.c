@@ -17,12 +17,12 @@
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
-#include "core/channel/channel_manage.h"
+#include "ts/channel/channel_manage.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/info/ts3_plugin_version.h"
 #include "core/voice/voice_modes.h"
 #include "plugin_modules.h"
-#include "core/nick/nick_anonymize.h"
+#include "ts/nick/nick_anonymize.h"
 #include "ui/overlay/voice_overlay.h"
 #include "ui/plugin_ui_compat.h"
 #include "plugin_modules.h"
@@ -38,6 +38,9 @@
    (TS log stops after SERVERVIEW, process stays alive with no MainWindowTitle). */
 static volatile long g_overlay_armed = 0;
 static volatile long g_overlay_want_immediate = 0;
+/* Owned handle of the overlay UI thread (V8.8) — joined in ts3plugin_shutdown.
+   Only the callback thread creates/joins/closes it. */
+static HANDLE g_overlayThread = NULL;
 
 static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
     (void)arg;
@@ -59,6 +62,11 @@ static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
         DispatchMessage(&msg);
     }
 
+    /* This thread owns the overlay HWND — destroy it HERE, on the owning
+       thread, before exiting (V8.8). The old cross-thread SendMessage destroy
+       from overlay_stop raced the exiting message loop. */
+    destroyVoiceOverlay();
+
     overlay_ui_clear_thread();
     InterlockedExchange(&g_overlay_armed, 0);
     return 0;
@@ -68,13 +76,37 @@ static void overlay_schedule_start(void) {
     if (InterlockedCompareExchange(&g_overlay_armed, 1, 0) != 0) {
         return;
     }
-    HANDLE thread = (HANDLE)_beginthreadex(NULL, 0, overlay_deferred_start_thread, NULL, 0, NULL);
-    if (thread) {
-        CloseHandle(thread);
+    /* Reap the previous overlay thread's handle (armed was 0, so it has
+       exited or is returning right now — the wait is momentary). */
+    if (g_overlayThread) {
+        WaitForSingleObject(g_overlayThread, INFINITE);
+        CloseHandle(g_overlayThread);
+        g_overlayThread = NULL;
     }
-    else {
+    g_overlayThread = (HANDLE)_beginthreadex(NULL, 0, overlay_deferred_start_thread, NULL, 0, NULL);
+    if (!g_overlayThread) {
         InterlockedExchange(&g_overlay_armed, 0);
     }
+}
+
+/* JOIN the overlay UI thread (shutdown only, after overlay_stop signalled
+   WM_QUIT). The quit signal is re-posted while waiting: PostThreadMessage is
+   lost when it races the thread before its message queue exists, and the
+   thread checks pluginShuttingDown only between messages. */
+static void overlay_join_ui_thread(void) {
+    if (!g_overlayThread) {
+        return;
+    }
+    DWORD waitedMs = 0;
+    while (WaitForSingleObject(g_overlayThread, 500) != WAIT_OBJECT_0) {
+        overlay_ui_signal_quit();
+        waitedMs += 500;
+        if (waitedMs == 10000) {
+            log_write("SHUTDOWN: overlay thread slow to exit - waiting");
+        }
+    }
+    CloseHandle(g_overlayThread);
+    g_overlayThread = NULL;
 }
 
 static void overlay_request_immediate_start(void) {
@@ -91,9 +123,60 @@ static void ts3_on_local_position_update(void) {
     ts3_audio_on_local_position_update();
 }
 
-/* Pos watcher tick (every PLUGIN_POLL_INTERVAL_MS): voice hotkeys. */
-static void ts3_on_watcher_tick(void) {
-    voice_mode_hotkey_poll();
+/* ---- voice_modes layering hooks (V8.6b) -----------------------------------
+   voice_modes.c is pure core and no longer includes ts/ or ui/ headers. This
+   is where the ts/ui layer "plugs in the socket": the real chat/CEPOS/overlay
+   functions and the server-profile read used by the distance clamp. Wired once
+   in ts3plugin_init (callback thread). */
+static void voice_hooks_notify_chat(const char* message) {
+    if (ts3_is_connected()) {
+        displayInChat(message);
+    }
+}
+
+static void voice_hooks_invalidate_cepos_cache(void) {
+    cepos_invalidate_send_cache();
+}
+
+static void voice_hooks_signal_send_pending(void) {
+    cepos_signal_send_pending();
+}
+
+static void voice_hooks_overlay_sync(void) {
+    updateVoiceOverlay();
+}
+
+static int voice_hooks_get_profile(VoiceModeProfile* out) {
+    if (!out) {
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+    out->active = server_profile_get(&out->hub);
+    if (out->active) {
+        out->hasRace = server_profile_get_local_race(&out->race);
+    }
+    return out->active;
+}
+
+static int voice_hooks_has_pending_chat(void) {
+    return ts3_plugin_has_pending_chat();
+}
+
+static void voice_hooks_flush_pending_chat(void) {
+    ts3_plugin_flush_pending_chat();
+}
+
+static void voice_mode_wire_hooks(void) {
+    static const VoiceModeHooks hooks = {
+        voice_hooks_notify_chat,
+        voice_hooks_invalidate_cepos_cache,
+        voice_hooks_signal_send_pending,
+        voice_hooks_overlay_sync,
+        voice_hooks_get_profile,
+        voice_hooks_has_pending_chat,
+        voice_hooks_flush_pending_chat,
+    };
+    voice_mode_set_hooks(&hooks);
 }
 
 #define PLUGIN_API_VERSION 26
@@ -106,7 +189,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "7.0.4";
+    return "8.0.0";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -204,6 +287,7 @@ int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
     config_load();
+    voice_mode_wire_hooks();
     {
         const wchar_t* logPath = log_get_path();
         if (logPath) {
@@ -217,7 +301,8 @@ int ts3plugin_init(void) {
     plugin_ui_init();
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
-    pos_watcher_set_tick_callback(ts3_on_watcher_tick);
+    /* No tick callback: voice hotkeys are polled ONLY by the key-watcher
+       thread (single owner of the arming/debounce state — see voice_modes.h). */
     pos_watcher_start();
     overlay_schedule_start();
     if (log_is_enabled()) {
@@ -234,20 +319,37 @@ int ts3plugin_init(void) {
     return 0;
 }
 
-/* 14.1 fixed shutdown sequence:
-   1. audio gate -> passthrough (PCM path inert, no snapshot reads matter)
-   2. UI thread down (overlay + settings dialog)
-   3. pos watcher thread down (no more update callbacks)
-   4. module state cleared (no TS API calls in any of these)
-   5. adapter down (command queue emptied, connection flags cleared)
-   6. log closed LAST so every step above can still log. */
+/* V8.8 fixed shutdown order (doku/01-architektur-v8.md, "Shutdown-Reihenfolge"):
+   1. Stop accepting work: audio to passthrough (PCM path inert),
+      pluginShuttingDown set (UI/overlay code stops touching HWNDs/GDI),
+      deferred overlay start disarmed.
+   2. Stop + JOIN every plugin thread, in dependency order:
+      a) key monitor (it spawns settings-dialog threads — stop it first)
+      b) settings dialog (WM_CLOSE + join; may still read pos/config state)
+      c) pos watcher (stop event + join; deletes its lock AFTER the join,
+         safe now because the dialog thread that read pos state is gone)
+      d) overlay monitor (join) + overlay UI thread (WM_QUIT + join; the
+         overlay thread destroys its own HWND), then overlay_finalize()
+         deletes overlayTextLock — only safe after that join.
+   3. Invalidate snapshots / reset module state (pure, no TS API calls).
+   4. Adapter shutdown: joins the wakeup thread and clears the connection
+      identity — after this ANY TS API call is a programming error (the
+      callback-thread guards log it).
+   5. Close the log LAST so every step above can still log. */
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
+    /* 1: stop accepting work */
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     plugin_ui_shutdown();
     InterlockedExchange(&g_overlay_armed, 0);
-    overlay_stop();
+    /* 2: stop + join all plugin threads */
+    removeKeyMonitoring();
+    settings_dialog_shutdown();
     pos_watcher_stop();
+    overlay_stop();
+    overlay_join_ui_thread();
+    overlay_finalize();
+    /* 3: reset module state */
     player_table_clear();
     cepos_reset();
     ts3d_reset();
@@ -256,8 +358,10 @@ void ts3plugin_shutdown(void) {
     nick_reset();
     ts3_version_reset();
     ts3_audio_reset();
+    /* 4: adapter down (joins wakeup thread; no TS API after this) */
     ts3_adapter_shutdown();
     log_write("SHUTDOWN: done");
+    /* 5: log closed last */
     log_close();
 }
 
@@ -365,6 +469,21 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
     }
 }
 
+/* Single source of truth for "is there CEDRAIN work waiting?". Used by BOTH the
+   drain early-out and the end-of-drain "re-wake if leftover" logic, so a new
+   pending source only has to be registered in ONE place.
+ *
+ * >>> ADD NEW PENDING SOURCES HERE <<<  (V8.2 fix 2 was a forgotten entry.) */
+static int ts3_pending_work_any(void) {
+    return ts3_cmd_queue_nonempty()
+        || voice_mode_has_pending_notify()
+        || ts3_plugin_has_pending_chat()
+        || cepos_send_pending()
+        || ts3_audio_has_pending_unmutes()
+        || ts3_audio_has_pending_recompute()
+        || chan_has_pending_work();
+}
+
 void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char* pluginName, const char* pluginCommand, anyID invokerClientID, const char* invokerName, const char* invokerUniqueIdentity) {
     (void)invokerName;
     (void)invokerUniqueIdentity;
@@ -394,13 +513,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
-        if (!ts3_cmd_queue_nonempty()
-            && !voice_mode_has_pending_notify()
-            && !ts3_plugin_has_pending_chat()
-            && !cepos_send_pending()
-            && !ts3_audio_has_pending_unmutes()
-            && !ts3_audio_has_pending_recompute()
-            && !chan_has_pending_work()) {
+        if (!ts3_pending_work_any()) {
             return;
         }
         if (ts3_cmd_queue_nonempty()) {
@@ -414,19 +527,32 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         }
         if (cepos_send_pending()) {
             cepos_flush();
-            ts3d_apply();
         }
         if (ts3_audio_has_pending_recompute()) {
             ts3_audio_flush_recomputes();
+        }
+        /* Refresh remote players' TS 3D positions on EVERY proximity drain, not
+           only when our own CEPOS send was pending. Incoming remote CEPOS (no
+           local send pending) used to leave their 3D positions stale. ts3d_apply
+           has a 20 Hz internal throttle (TS3D_APPLY_MIN_MS) + epsilon dedup, so
+           the idle cost here is a timestamp check. */
+        if (ts3_audio_get_mode() == TS3_AUDIO_PROXIMITY) {
+            ts3d_apply();
         }
         server_profile_tick();
         chan_tick();
         if (ts3_audio_has_pending_unmutes()) {
             ts3_audio_flush_unmutes();
         }
-        /* Chat may be queued from a hotkey thread while we were draining. */
+        /* Re-wake if any work is still pending — leftover from a per-drain
+           budget (e.g. dirty-client recomputes capped at
+           TS3_RECOMPUTE_DRAIN_BUDGET) or queued from another thread while we
+           drained. Chat is latency-sensitive, so it gets the urgent wakeup. */
         if (ts3_plugin_has_pending_chat()) {
             ts3_request_wakeup_urgent();
+        }
+        else if (ts3_pending_work_any()) {
+            ts3_request_wakeup();
         }
     }
 }

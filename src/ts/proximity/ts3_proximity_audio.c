@@ -1,3 +1,28 @@
+/*
+ * ts3_proximity_audio.c — proximity PCM path (gain/pan ramp, LPF, cave reverb)
+ * plus the seqlock snapshots and TS unmute batching that feed it.
+ *
+ * THREAD CONTRACT (V8.3 — PCM owns its render state exclusively)
+ * ------------------------------------------------------------------
+ *  - The audio thread (onEditPlaybackVoiceDataEvent -> ts3_audio_process_playback)
+ *    is the ONLY writer of the render arrays g_renderGain/g_renderPanL/
+ *    g_renderPanR and the per-client lowpass state g_lpf. It never calls the TS
+ *    API and never takes a lock; it reads target values from lock-free seqlock
+ *    snapshots only.
+ *  - The callback thread (invalidate/reset from disconnect, eviction, channel
+ *    move, tab switch) does NOT write those render arrays anymore. To invalidate
+ *    a client it publishes a neutral snapshot (as before) AND bumps that client's
+ *    generation counter g_snapGeneration[id] (InterlockedIncrement). That is the
+ *    only cross-thread signal about render state.
+ *  - The audio thread keeps its own last-seen copy g_renderGeneration[id]
+ *    (single-writer = itself, no atomics needed). At buffer start it compares the
+ *    two; if the callback bumped the generation, the audio thread reinitializes
+ *    the ramp/LPF for that client itself — replicating the exact state the
+ *    callback used to write (gain 1.0, pan 0.7071/0.7071, LPF uninitialized).
+ *
+ *  Result: exactly one writer per array => no torn floats, no cross-thread race
+ *  on client-ID reuse. See doku/aenderungen/004-pcm-besitz-generation-counter.md.
+ */
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
 #include "ts/adapter/ts3_adapter.h"
@@ -16,8 +41,13 @@
 
 #define TS3_RECOMPUTE_ALL_MIN_MS 100   /* 10 Hz cap when local pos unchanged */
 #define TS3_RECOMPUTE_POS_EPS_CM 5.0f  /* centimeters — movement triggers refresh */
+/* Per-drain budget for the dirty-client recompute path (V8.4). Caps callback
+   work per CEDRAIN so a CEPOS burst (up to PLAYER_TABLE_MAX_PLAYERS dirty at
+   once) cannot spike one callback; leftovers re-wake for the next drain. */
+#define TS3_RECOMPUTE_DRAIN_BUDGET 64
 #define TS3_UNMUTE_REARM_MS    500
-#define TS3_UNMUTE_BATCH_MAX   128
+/* Must match ts3_unmute_clients_for_pcm cap (63 clients + API zero sentinel). */
+#define TS3_UNMUTE_BATCH_MAX   64
 #define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue */
 #define TS3_AUDIO_CULL_MARGIN  1.25f /* hear-range multiplier for recompute culling */
 #define TS3_AUDIO_CULL_PAD_M   2.0f  /* meters beyond nominal range */
@@ -52,6 +82,13 @@ static float g_renderGain[TS3_MAX_CLIENT_ID];
 static float g_renderPanL[TS3_MAX_CLIENT_ID];
 static float g_renderPanR[TS3_MAX_CLIENT_ID];
 
+/* V8.3 ownership signal. The callback thread bumps g_snapGeneration[id]
+   (InterlockedIncrement) instead of writing the render arrays; the audio thread
+   compares it against its own g_renderGeneration[id] and reinitializes its
+   ramp/LPF for that client when it changed. See the file-header thread contract. */
+static volatile LONG g_snapGeneration[TS3_MAX_CLIENT_ID];  /* callback thread writes */
+static LONG g_renderGeneration[TS3_MAX_CLIENT_ID];         /* audio thread only */
+
 /* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
 static volatile long g_pendingUnmute[TS3_MAX_CLIENT_ID];
 static volatile long g_pendingUnmuteCount = 0;
@@ -75,14 +112,22 @@ static volatile long g_recomputeAllPending = 0;
 
 /* Phase 4.5 — diagnostics (throttled log in flush paths). */
 static volatile long g_unmuteRingOverflow = 0;
+static volatile long g_unmuteRingPushLock = 0;
 
 static void unmute_ring_push(anyID clientID) {
-    const long w = InterlockedIncrement(&g_unmuteRingWrite) - 1;
+    /* Serialize producers: publish write index only after the slot store is
+       complete so ts3_audio_flush_unmutes never observes a new index early. */
+    while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
+        YieldProcessor();
+    }
+    const long w = InterlockedCompareExchange(&g_unmuteRingWrite, 0, 0);
     const long r = InterlockedCompareExchange(&g_unmuteRingRead, 0, 0);
     if (w - r >= TS3_UNMUTE_RING_SIZE) {
         InterlockedIncrement(&g_unmuteRingOverflow);
     }
     g_unmuteRing[w % TS3_UNMUTE_RING_SIZE] = clientID;
+    InterlockedExchange(&g_unmuteRingWrite, w + 1);
+    InterlockedExchange(&g_unmuteRingPushLock, 0);
 }
 
 static void audio_signal_unmute_flag_only(anyID clientID);
@@ -528,6 +573,12 @@ static void audio_recompute_client_impl(anyID clientID) {
 static void audio_recompute_all_impl(void) {
     writer_lock_ensure();
 
+    /* Claim the pending flag BEFORE reading any inputs. A request that arrives
+       while this recompute is running re-sets the flag and wakes CEDRAIN again,
+       so its (possibly newer) inputs get a fresh pass instead of being wiped
+       by a clear at the end (lost-update race found in the V8.3 review). */
+    InterlockedExchange(&g_recomputeAllPending, 0);
+
     PosSample local;
     const int localValid = pos_get_current(&local);
 
@@ -562,7 +613,6 @@ static void audio_recompute_all_impl(void) {
         batchCount++;
         audio_clear_client_dirty(cid);
     }
-    InterlockedExchange(&g_recomputeAllPending, 0);
     audio_reconcile_dirty_count();
 
     EnterCriticalSection(&g_writerLock);
@@ -594,6 +644,11 @@ void ts3_audio_recompute_all_force(void) {
 
 void ts3_audio_recompute_all(void) {
     ts3_audio_recompute_all_force();
+}
+
+void ts3_audio_request_recompute_all(void) {
+    InterlockedExchange(&g_recomputeAllPending, 1);
+    ts3_request_wakeup();
 }
 
 void ts3_audio_on_local_position_update(void) {
@@ -657,17 +712,28 @@ void ts3_audio_flush_recomputes(void) {
 
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
+    int processed = 0;
     for (int i = 0; i < count; i++) {
         const anyID cid = (anyID)players[i].clientID;
         if (!ts3_client_id_valid(players[i].clientID)) {
             continue;
         }
+        if (processed >= TS3_RECOMPUTE_DRAIN_BUDGET) {
+            break; /* budget spent — finish the rest on the next drain */
+        }
         if (InterlockedCompareExchange(&g_recomputeDirty[cid], 0, 1) == 1) {
             InterlockedDecrement(&g_recomputeDirtyCount);
             audio_recompute_client_impl(cid);
+            processed++;
         }
     }
     audio_reconcile_dirty_count();
+
+    /* Leftover dirty clients (budget or a request that arrived mid-drain):
+       re-wake so CEDRAIN runs again for the remainder. */
+    if (InterlockedCompareExchange(&g_recomputeDirtyCount, 0, 0) > 0) {
+        ts3_request_wakeup();
+    }
 }
 
 /* ---- 10.3 lowpass (audio thread, no locks, no allocations) ------------------- */
@@ -813,6 +879,21 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
     if (!samples || sampleCount <= 0 || channels <= 0
         || !ts3_client_id_valid(clientID)) {
         return;
+    }
+
+    /* V8.3 PCM-owns-its-state: if the callback thread signaled invalidation
+       (client left / evicted / moved away / reset) since our last buffer, we
+       reinitialize the ramp + LPF ourselves — the exact state the callback used
+       to write (gain 1.0, neutral pan, LPF uninitialized). Reading the volatile
+       LONG generation is a single aligned read (InterlockedCompareExchange with
+       a no-op compare); the last-seen copy is audio-thread-private. */
+    const LONG curGen = InterlockedCompareExchange(&g_snapGeneration[clientID], 0, 0);
+    if (render_state_needs_reinit(g_renderGeneration[clientID], curGen)) {
+        g_renderGain[clientID] = 1.0f;
+        g_renderPanL[clientID] = 0.7071f;
+        g_renderPanR[clientID] = 0.7071f;
+        g_lpf[clientID].initialized = 0;
+        g_renderGeneration[clientID] = curGen;
     }
 
     const long mode = InterlockedCompareExchange(&g_audioMode, 0, 0);
@@ -1089,9 +1170,10 @@ void ts3_audio_invalidate_client(anyID clientID) {
     }
     g_clientUnlocked[clientID] = 0;
     g_lastUnmuteMs[clientID] = 0;
-    g_renderGain[clientID] = 1.0f;
-    g_renderPanL[clientID] = 0.7071f;
-    g_renderPanR[clientID] = 0.7071f;
+    /* Render ramp + LPF are audio-thread-owned. Signal invalidation via the
+       generation counter; the audio thread resets the ramp/LPF itself on its
+       next buffer for this ID (same values this used to write directly). */
+    InterlockedIncrement(&g_snapGeneration[clientID]);
     audio_clear_client_dirty(clientID);
     ts3d_invalidate_client(clientID);
 }
@@ -1148,19 +1230,29 @@ void ts3_audio_reset(void) {
         InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);
+    while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
+        YieldProcessor();
+    }
     InterlockedExchange(&g_unmuteRingWrite, 0);
     InterlockedExchange(&g_unmuteRingRead, 0);
     InterlockedExchange(&g_unmuteRingOverflow, 0);
+    memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
+    InterlockedExchange(&g_unmuteRingPushLock, 0);
     InterlockedExchange(&g_recomputeDirtyCount, 0);
     InterlockedExchange(&g_recomputeAllPending, 0);
-    memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
     InterlockedExchange(&g_lastLocalSeq, -1);
     InterlockedExchange64(&g_lastRecomputeAllMs, 0);
-    /* Ramp/pan state lives on the audio thread; reset every ID so reused clientIDs
-       never inherit stale gain/pan after selective invalidate (5.2). No writer lock. */
+    /* Ramp/pan/LPF state lives on the audio thread. Bump every client's
+       generation counter so the next PCM buffer for any (possibly reused) ID
+       reinitializes its own ramp/LPF — even if no callback ran for it and even
+       if its snapshot was already invalid (the reused-ID leak the old full
+       plain-write sweep guarded against). This replaces that O(TS3_MAX_CLIENT_ID)
+       write loop with one atomic per ID; it never touches the render arrays, so
+       there is no race with the audio thread. The O(active) invalidate scan
+       above (Phase 5.2) is unchanged. Render state is only ever consumed by the
+       audio thread, so bumping the generation is sufficient: a NEW connection
+       reusing an ID cannot inherit stale gain/pan/LPF. */
     for (int i = 1; i < TS3_MAX_CLIENT_ID; i++) {
-        g_renderGain[i] = 1.0f;
-        g_renderPanL[i] = 0.7071f;
-        g_renderPanR[i] = 0.7071f;
+        InterlockedIncrement(&g_snapGeneration[i]);
     }
 }

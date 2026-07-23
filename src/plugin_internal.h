@@ -29,8 +29,6 @@ int ts3_plugin_is_soundproof_muted_at(float rx, float ry, float rz);
 int ts3_plugin_client_soundproof_muted(unsigned int clientID);
 int ts3_plugin_zone_reverb_active(int localZone, int remoteZone);
 
-ProximityVolumeContext plugin_proximity_volume_context(void);
-
 int plugin_should_show_voice_overlay(void);
 void updateVoiceOverlayVisibility(void);
 

@@ -1,11 +1,14 @@
 #include "ts/adapter/ts3_adapter.h"
+#include "ts/adapter/ts3_cmd_ring.h"
 #include "core/util/poll_interval.h"
+#include "core/util/wakeup_policy.h"
 #include "core/util/log.h"
 
 #include "sdk/include/teamspeak/public_errors.h"
 #include "sdk/include/teamspeak/public_rare_definitions.h"
 
 #include <windows.h>
+#include <process.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -37,9 +40,41 @@ static int ts3_require_callback_thread(const char* where) {
 
 /* ---- 3.1 connection state ----------------------------------------------- */
 
+/*
+ * Connection identity contract (V8.5):
+ *
+ * The identity is the triple (g_activeConnection, g_localClientID, g_connected).
+ * Writers: ONLY the callback thread (connect status event, tab-switch event,
+ * adapter shutdown). Cross-thread readers: wakeup thread and PCM thread.
+ *
+ * Publish order (enforced by the Interlocked full barriers below):
+ *   CONNECT / tab adopt:  g_connected=0 -> id + local client -> g_connected=1 LAST
+ *   DISCONNECT/shutdown:  g_connected=0 FIRST -> id + local client cleared
+ *
+ * Reader rules:
+ *   - Gate on ts3_is_connected() BEFORE trusting the id (wakeup thread does).
+ *   - Or compare the id for exact equality (PCM playback event); id 0 never
+ *     matches a real serverConnectionHandlerID, so a cleared id is inert.
+ * Because g_connected flips to 1 last and to 0 first, no reader can ever see
+ * "connected" paired with a half-published identity.
+ *
+ * All cross-thread accesses to the 64-bit id go through conn_id_store/_load
+ * (InterlockedExchange64 / InterlockedCompareExchange64): x64 aligned loads
+ * are not torn, but the ORDERING against g_connected needs the barrier —
+ * plain volatile gives none under MinGW GCC. Callback-thread-only reads
+ * (the g_ts3.*() call sites below) stay plain: same thread as every writer.
+ */
 static volatile uint64 g_activeConnection = 0;
 static volatile long g_connected = 0;
 static volatile long g_localClientID = 0;
+
+static void conn_id_store(uint64 id) {
+    InterlockedExchange64((volatile LONG64*)&g_activeConnection, (LONG64)id);
+}
+
+static uint64 conn_id_load(void) {
+    return (uint64)InterlockedCompareExchange64((volatile LONG64*)&g_activeConnection, 0, 0);
+}
 
 int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus) {
     if (newStatus == STATUS_DISCONNECTED) {
@@ -50,9 +85,10 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
                 (unsigned long long)serverConnectionHandlerID);
             return 0;
         }
+        /* Publish order: connected off FIRST, then the identity. */
         InterlockedExchange(&g_connected, 0);
         InterlockedExchange(&g_localClientID, 0);
-        g_activeConnection = 0;
+        conn_id_store(0);
         log_write("TS-EVT: DISCONNECTED");
         return 1;
     }
@@ -75,7 +111,9 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
             }
         }
 
-        g_activeConnection = serverConnectionHandlerID;
+        /* Publish order: identity (id + local client) FIRST, connected LAST. */
+        InterlockedExchange(&g_connected, 0);
+        conn_id_store(serverConnectionHandlerID);
         anyID localID = 0;
         if (g_ts3.getClientID
             && g_ts3.getClientID(serverConnectionHandlerID, &localID) == ERROR_ok) {
@@ -102,7 +140,14 @@ int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {
         }
     }
 
-    g_activeConnection = serverConnectionHandlerID;
+    /* Adopting a different tab = new identity. Publish order: connected off
+       FIRST (readers stop trusting the old id), then the new identity, then
+       connected on LAST — never expose connected=1 with a half-switched id
+       (the old code stored the id first, so the wakeup thread could send on
+       a not-yet-established tab). */
+    InterlockedExchange(&g_connected, 0);
+    InterlockedExchange(&g_localClientID, 0);
+    conn_id_store(serverConnectionHandlerID);
     if (status == STATUS_CONNECTION_ESTABLISHED) {
         anyID localID = 0;
         if (g_ts3.getClientID
@@ -110,10 +155,6 @@ int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {
             InterlockedExchange(&g_localClientID, (long)localID);
         }
         InterlockedExchange(&g_connected, 1);
-    }
-    else {
-        InterlockedExchange(&g_connected, 0);
-        InterlockedExchange(&g_localClientID, 0);
     }
     log_write("TS-EVT: active server tab changed -> conn=%llu (connected=%d)",
         (unsigned long long)serverConnectionHandlerID,
@@ -126,31 +167,30 @@ int ts3_is_connected(void) {
 }
 
 uint64 ts3_get_active_connection(void) {
-    return g_activeConnection;
+    /* Cross-thread reader (PCM playback event) — barriered load, see contract. */
+    return conn_id_load();
 }
 
 anyID ts3_get_local_client_id(void) {
     return (anyID)InterlockedCompareExchange(&g_localClientID, 0, 0);
 }
 
-/* ---- 3.2 command queue --------------------------------------------------- */
+/* ---- 3.2 command queue (control-plane channel B — see ts3_adapter.h) ----- */
 
-#define TS3_CMD_QUEUE_SIZE 256
-
-/* Ring buffer with its own private lock. The lock only guards the memcpy of
-   one command in push/pop — commands are executed OUTSIDE the lock, so the
-   TS API is never called while this lock is held. */
+/* The pure ring (index math + element copy) lives in ts3_cmd_ring.h so it can
+   be host-unit-tested without Win32. THIS file owns the single lock that makes
+   it safe from any producer thread: the lock only guards one push/pop copy —
+   commands EXECUTE outside the lock (see ts3_cmd_queue_drain), so the TS API is
+   never called while the lock is held. */
 static CRITICAL_SECTION g_cmdLock;
 static INIT_ONCE g_cmdLockOnce = INIT_ONCE_STATIC_INIT;
-static Ts3Command g_cmdQueue[TS3_CMD_QUEUE_SIZE];
-static int g_cmdHead = 0; /* next pop  */
-static int g_cmdTail = 0; /* next push */
-static int g_cmdCount = 0;
-static volatile long g_cmdDropped = 0;
+static Ts3CmdRing g_cmdRing;
+static long g_cmdDroppedLogged = 0; /* last dropped count we logged at */
 
 static BOOL CALLBACK ts3_cmd_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
     (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_cmdLock);
+    ts3_cmd_ring_init(&g_cmdRing);
     return TRUE;
 }
 
@@ -164,21 +204,16 @@ int ts3_cmd_queue_push(const Ts3Command* cmd) {
     }
     ts3_cmd_lock_ensure();
 
-    int pushed = 0;
+    int pushed;
+    long dropped;
     EnterCriticalSection(&g_cmdLock);
-    if (g_cmdCount < TS3_CMD_QUEUE_SIZE) {
-        g_cmdQueue[g_cmdTail] = *cmd;
-        g_cmdTail = (g_cmdTail + 1) % TS3_CMD_QUEUE_SIZE;
-        g_cmdCount++;
-        pushed = 1;
-    }
+    pushed = ts3_cmd_ring_push(&g_cmdRing, cmd);
+    dropped = g_cmdRing.dropped;
     LeaveCriticalSection(&g_cmdLock);
 
-    if (!pushed) {
-        long dropped = InterlockedIncrement(&g_cmdDropped);
-        if ((dropped % 100) == 1) {
-            log_write("TS-CMD: queue full, dropped=%ld", dropped);
-        }
+    if (!pushed && dropped != g_cmdDroppedLogged) {
+        g_cmdDroppedLogged = dropped;
+        log_write("TS-CMD: queue full, dropped=%ld", dropped);
     }
     return pushed;
 }
@@ -186,14 +221,9 @@ int ts3_cmd_queue_push(const Ts3Command* cmd) {
 static int ts3_cmd_queue_pop(Ts3Command* out) {
     ts3_cmd_lock_ensure();
 
-    int popped = 0;
+    int popped;
     EnterCriticalSection(&g_cmdLock);
-    if (g_cmdCount > 0) {
-        *out = g_cmdQueue[g_cmdHead];
-        g_cmdHead = (g_cmdHead + 1) % TS3_CMD_QUEUE_SIZE;
-        g_cmdCount--;
-        popped = 1;
-    }
+    popped = ts3_cmd_ring_pop(&g_cmdRing, out);
     LeaveCriticalSection(&g_cmdLock);
     return popped;
 }
@@ -288,7 +318,10 @@ void ts3_cmd_queue_drain(void) {
 
     Ts3Command cmd;
     int executed = 0;
-    while (executed < TS3_CMD_QUEUE_SIZE && ts3_cmd_queue_pop(&cmd)) {
+    /* Bounded by capacity so a producer that keeps pushing during the drain
+       cannot pin the callback thread here forever — leftovers ride the next
+       CEDRAIN (the dispatcher re-wakes via ts3_pending_work_any). */
+    while (executed < TS3_CMD_RING_CAPACITY && ts3_cmd_queue_pop(&cmd)) {
         ts3_cmd_execute(&cmd);
         executed++;
     }
@@ -298,46 +331,173 @@ int ts3_cmd_queue_nonempty(void) {
     ts3_cmd_lock_ensure();
     int nonempty = 0;
     EnterCriticalSection(&g_cmdLock);
-    nonempty = g_cmdCount > 0;
+    nonempty = ts3_cmd_ring_count(&g_cmdRing) > 0;
     LeaveCriticalSection(&g_cmdLock);
     return nonempty;
 }
 
-/* ---- 3.3 wakeup ----------------------------------------------------------- */
+/* ---- 3.3 wakeup — single owner (V8.4) ------------------------------------- */
 
-static volatile LONG64 s_lastWakeMs = 0;
+/*
+ * V7 called sendPluginCommand("CEDRAIN:1") DIRECTLY from any requesting thread
+ * (pos watcher, UI, settings). That made stability depend on the SDK being
+ * thread-safe for that one call from arbitrary threads — the documented V7
+ * gap. V8.4 gives a single dedicated thread exclusive ownership of that call:
+ *
+ *   producers (any thread, incl. PCM) --> set pending/urgent flag + SetEvent
+ *   wakeup thread (this file, ONE thread) --> coalesce + rate-limit + send
+ *
+ * ts3_request_wakeup()/..._urgent() now do PURE Win32 only (Interlocked flag +
+ * SetEvent), so they are safe from any thread. The wakeup thread is the ONLY
+ * place sendPluginCommand runs off the callback thread.
+ *
+ * Full single-thread purity is impossible: the TS SDK has no timer/wake
+ * callback we could use to run this on the callback thread. So the TS API is
+ * touched by exactly TWO threads total — the TS callback thread (everything)
+ * and this wakeup thread (exactly one function, sendPluginCommand). That is
+ * the minimal possible surface.
+ */
 
-static void ts3_send_wakeup(int urgent) {
-    if (!g_ts3FunctionsSet || !ts3_is_connected()
-        || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
-        return;
-    }
+static volatile LONG64 s_lastWakeMs = 0;   /* last send time, wakeup thread */
 
-    LONG64 now = (LONG64)GetTickCount64();
-    if (!urgent) {
-        /* Rate limit: one wakeup round trip per PLUGIN_POLL_INTERVAL_MS. */
-        LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
-        if (now - last < PLUGIN_POLL_INTERVAL_MS) {
-            return;
+static HANDLE g_wakeupEvent = NULL;        /* auto-reset; signals "work queued" */
+static HANDLE g_wakeupThread = NULL;
+static volatile long g_wakeupStarted = 0;
+static volatile long g_wakeupStop = 0;     /* set once at shutdown, never reset here */
+static volatile long g_wakeupPending = 0;  /* a wakeup was requested */
+static volatile long g_wakeupUrgent = 0;   /* the pending request was urgent */
+
+static unsigned __stdcall ts3_wakeup_thread(void* arg) {
+    (void)arg;
+    for (;;) {
+        WaitForSingleObject(g_wakeupEvent, INFINITE);
+        if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
+            break;
         }
-        if (InterlockedCompareExchange64(&s_lastWakeMs, now, last) != last) {
-            return; /* someone else just sent one */
+        /* Coalesce: many SetEvents collapse into the single pending flag.
+           Do NOT clear pending until CEDRAIN actually sends — otherwise a
+           rate-limit or transient disconnect drops the drain forever. */
+        if (InterlockedCompareExchange(&g_wakeupPending, 0, 0) == 0) {
+            continue; /* spurious/shutdown wake with nothing queued */
         }
-    }
-    else {
+
+        /* Drop while unconnected — keep pending and retry (reconnect / next tick).
+           Identity contract: gate on g_connected FIRST, then load the id with
+           a barrier; a concurrent disconnect clears g_connected before the id,
+           so a stale-but-valid id is the worst case and id 0 is skipped. */
+        if (!g_ts3FunctionsSet || !ts3_is_connected()
+            || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
+            continue;
+        }
+
+        const long urgent = InterlockedCompareExchange(&g_wakeupUrgent, 0, 0);
+        const LONG64 now = (LONG64)GetTickCount64();
+        const LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
+        if (!wakeup_should_send(now, last, urgent != 0, PLUGIN_POLL_INTERVAL_MS)) {
+            const LONG64 elapsed = now - last;
+            DWORD waitMs = (DWORD)(PLUGIN_POLL_INTERVAL_MS - elapsed);
+            if (waitMs == 0 || waitMs > (DWORD)PLUGIN_POLL_INTERVAL_MS) {
+                waitMs = 1;
+            }
+            if (urgent) {
+                InterlockedExchange(&g_wakeupUrgent, 1);
+            }
+            Sleep(waitMs);
+            SetEvent(g_wakeupEvent);
+            continue; /* rate limited: pending stays set, retry after window */
+        }
+
+        /* Load connection id only after any rate-limit sleep — tab switches
+           during the wait must not leave a stale handler id on the send. */
+        if (!ts3_is_connected()) {
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
+            continue;
+        }
+        const uint64 conn = conn_id_load();
+        if (conn == 0) {
+            Sleep(PLUGIN_POLL_INTERVAL_MS);
+            SetEvent(g_wakeupEvent);
+            continue;
+        }
+
         InterlockedExchange64(&s_lastWakeMs, now);
-    }
+        g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
+            PluginCommandTarget_SERVER, NULL, NULL);
 
-    g_ts3.sendPluginCommand(g_activeConnection, g_pluginID, "CEDRAIN:1",
-        PluginCommandTarget_SERVER, NULL, NULL);
+        InterlockedExchange(&g_wakeupPending, 0);
+        InterlockedExchange(&g_wakeupUrgent, 0);
+    }
+    return 0;
 }
 
+/* Start the single wakeup thread once. Called when the function pointers are
+   set (earliest point the send is meaningful). Idempotent. */
+static void ts3_wakeup_start(void) {
+    if (InterlockedCompareExchange(&g_wakeupStarted, 1, 0) != 0) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupStop, 0);
+    g_wakeupEvent = CreateEvent(NULL, FALSE, FALSE, NULL); /* auto-reset */
+    if (!g_wakeupEvent) {
+        InterlockedExchange(&g_wakeupStarted, 0);
+        log_write("TS-WAKE: CreateEvent failed - wakeup disabled");
+        return;
+    }
+    g_wakeupThread = (HANDLE)_beginthreadex(NULL, 0, ts3_wakeup_thread, NULL, 0, NULL);
+    if (!g_wakeupThread) {
+        CloseHandle(g_wakeupEvent);
+        g_wakeupEvent = NULL;
+        InterlockedExchange(&g_wakeupStarted, 0);
+        log_write("TS-WAKE: thread create failed - wakeup disabled");
+    }
+}
+
+/* Signal + JOIN the wakeup thread. Must run BEFORE the connection state the
+   thread reads (g_connected/g_activeConnection/g_pluginID) is torn down. */
+static void ts3_wakeup_stop(void) {
+    if (InterlockedCompareExchange(&g_wakeupStarted, 0, 0) == 0) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupStop, 1);
+    if (g_wakeupEvent) {
+        SetEvent(g_wakeupEvent);
+    }
+    if (g_wakeupThread) {
+        WaitForSingleObject(g_wakeupThread, INFINITE);
+        CloseHandle(g_wakeupThread);
+        g_wakeupThread = NULL;
+    }
+    if (g_wakeupEvent) {
+        CloseHandle(g_wakeupEvent);
+        g_wakeupEvent = NULL;
+    }
+    InterlockedExchange(&g_wakeupStarted, 0);
+}
+
+/* Ask the wakeup thread to send a CEDRAIN. PURE Win32 — any thread, incl. PCM.
+   No-op once shutdown has been signalled. */
 void ts3_request_wakeup(void) {
-    ts3_send_wakeup(0);
+    if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupPending, 1);
+    if (g_wakeupEvent) {
+        SetEvent(g_wakeupEvent);
+    }
 }
 
 void ts3_request_wakeup_urgent(void) {
-    ts3_send_wakeup(1);
+    if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupUrgent, 1);
+    InterlockedExchange(&g_wakeupPending, 1);
+    if (g_wakeupEvent) {
+        SetEvent(g_wakeupEvent);
+    }
 }
 
 /* ---- plugin commands -------------------------------------------------------- */
@@ -617,6 +777,9 @@ void ts3_adapter_set_functions(const struct TS3Functions* funcs) {
     g_ts3 = *funcs;
     g_ts3FunctionsSet = 1;
     ts3_cmd_lock_ensure();
+    /* Earliest lifecycle hook where sendPluginCommand is meaningful — start the
+       single wakeup owner here (joined in ts3_adapter_shutdown). */
+    ts3_wakeup_start();
 }
 
 void ts3_adapter_set_plugin_id(const char* id) {
@@ -627,14 +790,21 @@ void ts3_adapter_set_plugin_id(const char* id) {
 }
 
 void ts3_adapter_shutdown(void) {
-    InterlockedExchange(&g_connected, 0);
-    g_activeConnection = 0;
+    /* Join the wakeup thread FIRST: after this it cannot read g_connected /
+       g_activeConnection / g_pluginID / g_ts3, and ts3_request_wakeup is a
+       no-op (g_wakeupStop set). Only then tear the connection state down. */
+    ts3_wakeup_stop();
 
-    /* Drop anything still queued. */
+    /* Publish order: connected off FIRST, then the identity (contract above). */
+    InterlockedExchange(&g_connected, 0);
+    InterlockedExchange(&g_localClientID, 0);
+    conn_id_store(0);
+
+    /* Drop anything still queued (preserve the lifetime drop counter). */
     ts3_cmd_lock_ensure();
     EnterCriticalSection(&g_cmdLock);
-    g_cmdHead = 0;
-    g_cmdTail = 0;
-    g_cmdCount = 0;
+    g_cmdRing.head = 0;
+    g_cmdRing.tail = 0;
+    g_cmdRing.count = 0;
     LeaveCriticalSection(&g_cmdLock);
 }
