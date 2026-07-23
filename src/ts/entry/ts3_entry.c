@@ -17,7 +17,7 @@
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
-#include "core/channel/channel_manage.h"
+#include "ts/channel/channel_manage.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/info/ts3_plugin_version.h"
 #include "core/voice/voice_modes.h"

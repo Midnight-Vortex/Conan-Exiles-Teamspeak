@@ -1,5 +1,5 @@
-#ifndef CORE_CHANNEL_CHANNEL_MANAGE_H
-#define CORE_CHANNEL_CHANNEL_MANAGE_H
+#ifndef TS_CHANNEL_CHANNEL_MANAGE_H
+#define TS_CHANNEL_CHANNEL_MANAGE_H
 
 /*
  * Phase 8 — channel management (hub <-> ingame auto-move + playback gate).
@@ -56,4 +56,4 @@ int chan_has_pending_work(void);
 uint64 chan_get_hub_channel_id(void);
 uint64 chan_get_ingame_channel_id(void);
 
-#endif /* CORE_CHANNEL_CHANNEL_MANAGE_H */
+#endif /* TS_CHANNEL_CHANNEL_MANAGE_H */

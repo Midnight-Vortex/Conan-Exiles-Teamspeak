@@ -1,4 +1,4 @@
-#include "core/channel/channel_manage.h"
+#include "ts/channel/channel_manage.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/profile/ts3_server_profile.h"

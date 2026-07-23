@@ -2,7 +2,7 @@
 #include "core/util/log.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
-#include "core/channel/channel_manage.h"
+#include "ts/channel/channel_manage.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/proximity/ts3_cepos.h"

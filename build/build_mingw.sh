@@ -69,7 +69,7 @@ SOURCES=(
     src/ts/proximity/ts3_cepos.c
     src/ts/proximity/ts3_proximity_audio.c
     src/ts/proximity/ts3_3d.c
-    src/core/channel/channel_manage.c
+    src/ts/channel/channel_manage.c
     src/core/hub/hub_parser.c
     src/ts/profile/ts3_server_profile.c
     src/core/proximity/zone_resolve.c
