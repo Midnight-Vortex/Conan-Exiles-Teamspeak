@@ -6,12 +6,18 @@
  *
  * Architecture rule (lesson from the old plugin's lock-corruption crashes):
  *  - TS API functions are called ONLY on the TS callback thread.
- *  - Background threads (pos watcher, later audio/heartbeat) never call the
- *    API directly; they push commands into the queue and request a wakeup.
- *  - The single exception is ts3_request_wakeup(): it may send one
- *    rate-limited "CEDRAIN" plugin command from any thread (the TS client
- *    SDK is internally thread-safe; the old plugin's crashes came from its
- *    own shared CRITICAL_SECTION, which this rewrite does not have).
+ *  - Background threads (pos watcher, UI, audio) never call the API directly;
+ *    they push commands into the queue and request a wakeup.
+ *
+ * V8.4 wakeup rebuild: ts3_request_wakeup()/..._urgent() no longer touch the
+ * TS API at all — they only set an Interlocked flag and SetEvent (pure Win32,
+ * callable from ANY thread incl. the PCM audio thread). A single dedicated
+ * wakeup thread OWNS the off-callback sendPluginCommand("CEDRAIN:1") call.
+ *
+ * Result: the TS API is touched by exactly TWO threads total — the TS callback
+ * thread (everything) and the wakeup thread (exactly one function,
+ * sendPluginCommand). Full single-thread purity is impossible because the SDK
+ * offers no timer/wake callback; this is the minimal possible surface.
  *
  * Thread contract per function is noted below.
  */
@@ -82,8 +88,10 @@ int ts3_cmd_queue_nonempty(void);
 
 /* ---- 3.3 wakeup ---------------------------------------------------------- */
 
-/* Ask the TS callback thread to run ts3_cmd_queue_drain() soon. Any thread.
-   Rate-limited to one server round trip per PLUGIN_POLL_INTERVAL_MS. */
+/* Ask the callback thread to run ts3_cmd_queue_drain() soon. Any thread
+   (incl. the PCM audio thread): sets a flag + SetEvent only, no TS API. The
+   dedicated wakeup thread sends the actual CEDRAIN, rate-limited to one server
+   round trip per PLUGIN_POLL_INTERVAL_MS. No-op after adapter shutdown. */
 void ts3_request_wakeup(void);
 
 /* Same as ts3_request_wakeup but bypasses the rate limit — for chat/UI

@@ -66,6 +66,11 @@ run_suite render_state_test \
     -Isdk/include \
     tests/render_state_test.c
 
+# V8.4 — pure wakeup coalescing/rate-limit decision (wakeup_should_send).
+# Header-only, no Win32/TS coupling.
+run_suite wakeup_policy_test \
+    tests/wakeup_policy_test.c
+
 echo "=== summary ==="
 for r in "${RESULTS[@]}"; do
     echo "$r"

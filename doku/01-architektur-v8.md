@@ -20,8 +20,13 @@ Ein TeamSpeak-Plugin lebt in einer feindlichen Umgebung:
 
 ## Der Thread-Vertrag (die oberste Regel)
 
-> **Regel 1:** Nur der **Callback-Thread** ruft die TS-API. Ausnahmslos — ab V8 auch
-> nicht mehr fuer den Wakeup (das war die V7-Luecke).
+> **Regel 1:** Nur der **Callback-Thread** ruft die TS-API. Die einzige, bewusst
+> in Kauf genommene Ausnahme ist der **Wakeup-Thread** (V8.4): Er ruft *genau
+> eine* Funktion, `sendPluginCommand("CEDRAIN:1")`. Mehr geht nicht, weil das SDK
+> keinen Timer-/Wake-Callback bietet. Alle Fremd-Threads (Watcher, UI, PCM)
+> fordern einen Wakeup nur per Flag+Event an — sie rufen selbst **keine** TS-API
+> mehr (das war die V7-Luecke). Damit beruehren genau **zwei** Threads die API:
+> Callback-Thread (alles) + Wakeup-Thread (ein Aufruf).
 >
 > **Regel 2:** Der **Audio-Thread** ruft NIE die TS-API und nimmt NIE Locks. Er liest nur
 > lock-freie **Snapshots** und besitzt seinen Render-Zustand (Gain-Rampen) **exklusiv**.
@@ -104,6 +109,10 @@ Early-Out-Pruefung vergass Flags, der Wakeup selbst brach den Thread-Vertrag.
   Rest laeuft im naechsten Durchlauf weiter.
 - Duplikate werden beim Einreihen zusammengefasst (z. B. "recompute client 5" nur 1× pending).
 - Der Wakeup sagt nur noch "es liegt Arbeit da" — **ohne** selbst die TS-API zu benutzen.
+  Umgesetzt in V8.4 (`doku/aenderungen/010`): `ts3_request_wakeup*` setzen nur ein
+  Flag + `SetEvent`; ein einziger dedizierter **Wakeup-Thread** sendet den
+  `CEDRAIN`-Befehl (gedrosselt auf 1×/30 ms, urgent umgeht die Drossel) und wird
+  beim Shutdown vor dem Zustands-Teardown gejoint.
 
 ## Besitzer-Prinzip (Ownership)
 

@@ -1,11 +1,13 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "core/util/poll_interval.h"
+#include "core/util/wakeup_policy.h"
 #include "core/util/log.h"
 
 #include "sdk/include/teamspeak/public_errors.h"
 #include "sdk/include/teamspeak/public_rare_definitions.h"
 
 #include <windows.h>
+#include <process.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -303,41 +305,134 @@ int ts3_cmd_queue_nonempty(void) {
     return nonempty;
 }
 
-/* ---- 3.3 wakeup ----------------------------------------------------------- */
+/* ---- 3.3 wakeup — single owner (V8.4) ------------------------------------- */
 
-static volatile LONG64 s_lastWakeMs = 0;
+/*
+ * V7 called sendPluginCommand("CEDRAIN:1") DIRECTLY from any requesting thread
+ * (pos watcher, UI, settings). That made stability depend on the SDK being
+ * thread-safe for that one call from arbitrary threads — the documented V7
+ * gap. V8.4 gives a single dedicated thread exclusive ownership of that call:
+ *
+ *   producers (any thread, incl. PCM) --> set pending/urgent flag + SetEvent
+ *   wakeup thread (this file, ONE thread) --> coalesce + rate-limit + send
+ *
+ * ts3_request_wakeup()/..._urgent() now do PURE Win32 only (Interlocked flag +
+ * SetEvent), so they are safe from any thread. The wakeup thread is the ONLY
+ * place sendPluginCommand runs off the callback thread.
+ *
+ * Full single-thread purity is impossible: the TS SDK has no timer/wake
+ * callback we could use to run this on the callback thread. So the TS API is
+ * touched by exactly TWO threads total — the TS callback thread (everything)
+ * and this wakeup thread (exactly one function, sendPluginCommand). That is
+ * the minimal possible surface.
+ */
 
-static void ts3_send_wakeup(int urgent) {
-    if (!g_ts3FunctionsSet || !ts3_is_connected()
-        || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
-        return;
-    }
+static volatile LONG64 s_lastWakeMs = 0;   /* last send time, wakeup thread */
 
-    LONG64 now = (LONG64)GetTickCount64();
-    if (!urgent) {
-        /* Rate limit: one wakeup round trip per PLUGIN_POLL_INTERVAL_MS. */
-        LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
-        if (now - last < PLUGIN_POLL_INTERVAL_MS) {
-            return;
+static HANDLE g_wakeupEvent = NULL;        /* auto-reset; signals "work queued" */
+static HANDLE g_wakeupThread = NULL;
+static volatile long g_wakeupStarted = 0;
+static volatile long g_wakeupStop = 0;     /* set once at shutdown, never reset here */
+static volatile long g_wakeupPending = 0;  /* a wakeup was requested */
+static volatile long g_wakeupUrgent = 0;   /* the pending request was urgent */
+
+static unsigned __stdcall ts3_wakeup_thread(void* arg) {
+    (void)arg;
+    for (;;) {
+        WaitForSingleObject(g_wakeupEvent, INFINITE);
+        if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
+            break;
         }
-        if (InterlockedCompareExchange64(&s_lastWakeMs, now, last) != last) {
-            return; /* someone else just sent one */
+        /* Coalesce: many SetEvents collapse into the single pending flag. */
+        if (InterlockedExchange(&g_wakeupPending, 0) == 0) {
+            continue; /* spurious/shutdown wake with nothing queued */
         }
-    }
-    else {
+        const long urgent = InterlockedExchange(&g_wakeupUrgent, 0);
+
+        /* Drop while unconnected — reconnect/next tick re-requests (as V7). */
+        if (!g_ts3FunctionsSet || !ts3_is_connected()
+            || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
+            continue;
+        }
+
+        const LONG64 now = (LONG64)GetTickCount64();
+        const LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
+        if (!wakeup_should_send(now, last, urgent != 0, PLUGIN_POLL_INTERVAL_MS)) {
+            continue; /* rate limited: drop, a later request retries */
+        }
         InterlockedExchange64(&s_lastWakeMs, now);
-    }
 
-    g_ts3.sendPluginCommand(g_activeConnection, g_pluginID, "CEDRAIN:1",
-        PluginCommandTarget_SERVER, NULL, NULL);
+        g_ts3.sendPluginCommand(g_activeConnection, g_pluginID, "CEDRAIN:1",
+            PluginCommandTarget_SERVER, NULL, NULL);
+    }
+    return 0;
 }
 
+/* Start the single wakeup thread once. Called when the function pointers are
+   set (earliest point the send is meaningful). Idempotent. */
+static void ts3_wakeup_start(void) {
+    if (InterlockedCompareExchange(&g_wakeupStarted, 1, 0) != 0) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupStop, 0);
+    g_wakeupEvent = CreateEvent(NULL, FALSE, FALSE, NULL); /* auto-reset */
+    if (!g_wakeupEvent) {
+        InterlockedExchange(&g_wakeupStarted, 0);
+        log_write("TS-WAKE: CreateEvent failed - wakeup disabled");
+        return;
+    }
+    g_wakeupThread = (HANDLE)_beginthreadex(NULL, 0, ts3_wakeup_thread, NULL, 0, NULL);
+    if (!g_wakeupThread) {
+        CloseHandle(g_wakeupEvent);
+        g_wakeupEvent = NULL;
+        InterlockedExchange(&g_wakeupStarted, 0);
+        log_write("TS-WAKE: thread create failed - wakeup disabled");
+    }
+}
+
+/* Signal + JOIN the wakeup thread. Must run BEFORE the connection state the
+   thread reads (g_connected/g_activeConnection/g_pluginID) is torn down. */
+static void ts3_wakeup_stop(void) {
+    if (InterlockedCompareExchange(&g_wakeupStarted, 0, 0) == 0) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupStop, 1);
+    if (g_wakeupEvent) {
+        SetEvent(g_wakeupEvent);
+    }
+    if (g_wakeupThread) {
+        WaitForSingleObject(g_wakeupThread, INFINITE);
+        CloseHandle(g_wakeupThread);
+        g_wakeupThread = NULL;
+    }
+    if (g_wakeupEvent) {
+        CloseHandle(g_wakeupEvent);
+        g_wakeupEvent = NULL;
+    }
+    InterlockedExchange(&g_wakeupStarted, 0);
+}
+
+/* Ask the wakeup thread to send a CEDRAIN. PURE Win32 — any thread, incl. PCM.
+   No-op once shutdown has been signalled. */
 void ts3_request_wakeup(void) {
-    ts3_send_wakeup(0);
+    if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupPending, 1);
+    if (g_wakeupEvent) {
+        SetEvent(g_wakeupEvent);
+    }
 }
 
 void ts3_request_wakeup_urgent(void) {
-    ts3_send_wakeup(1);
+    if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
+        return;
+    }
+    InterlockedExchange(&g_wakeupUrgent, 1);
+    InterlockedExchange(&g_wakeupPending, 1);
+    if (g_wakeupEvent) {
+        SetEvent(g_wakeupEvent);
+    }
 }
 
 /* ---- plugin commands -------------------------------------------------------- */
@@ -617,6 +712,9 @@ void ts3_adapter_set_functions(const struct TS3Functions* funcs) {
     g_ts3 = *funcs;
     g_ts3FunctionsSet = 1;
     ts3_cmd_lock_ensure();
+    /* Earliest lifecycle hook where sendPluginCommand is meaningful — start the
+       single wakeup owner here (joined in ts3_adapter_shutdown). */
+    ts3_wakeup_start();
 }
 
 void ts3_adapter_set_plugin_id(const char* id) {
@@ -627,6 +725,11 @@ void ts3_adapter_set_plugin_id(const char* id) {
 }
 
 void ts3_adapter_shutdown(void) {
+    /* Join the wakeup thread FIRST: after this it cannot read g_connected /
+       g_activeConnection / g_pluginID / g_ts3, and ts3_request_wakeup is a
+       no-op (g_wakeupStop set). Only then tear the connection state down. */
+    ts3_wakeup_stop();
+
     InterlockedExchange(&g_connected, 0);
     g_activeConnection = 0;
 
