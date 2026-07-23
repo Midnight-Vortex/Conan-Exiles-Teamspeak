@@ -181,29 +181,9 @@ void displayHubParametersConfirmation(BOOL globalSuccess, BOOL racesSuccess, BOO
     displayInChat(confirmMsg);
 }
 
-// Get configuration folder path | Obtenir le chemin du dossier de configuration
-wchar_t* getConfigFolderPath(void) {
-    static wchar_t configPath[MAX_PATH];
-    PWSTR documentsPath = NULL;
-
-    // Get Documents folder | Obtenir le dossier Documents
-    if (SUCCEEDED(SHGetKnownFolderPath(&FOLDERID_Documents, 0, NULL, &documentsPath))) {
-        // Create full path | Créer le chemin complet
-        swprintf(configPath, MAX_PATH, L"%s\\Conan Exiles TeamSpeak plugin", documentsPath);
-
-        // Create folder if it doesn't exist | Créer le dossier s'il n'existe pas
-        CreateDirectoryW(configPath, NULL);
-
-        CoTaskMemFree(documentsPath);
-        return configPath;
-    }
-
-    return NULL;
-}
-
 // Check if patch is already saved | Vérifier si le patch est déjà sauvegardé
 int isPatchAlreadySaved() {
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) {
         return 0;
     }
@@ -230,22 +210,6 @@ int isPatchAlreadySaved() {
     }
     fclose(file);
     return found;
-}
-
-// Calculate distance between two points | Calculer la distance entre deux points
-float calculateDistance(float x1, float y1, float z1, float x2, float y2, float z2) {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float dz = z2 - z1;
-    return sqrtf(dx * dx + dy * dy + dz * dz);
-}
-
-// Calculate 3D distance | Calculer la distance 3D entre deux points
-float calculateDistance3D(Vector3* a, Vector3* b) {
-    float dx = a->x - b->x;
-    float dy = a->y - b->y;
-    float dz = a->z - b->z;
-    return sqrtf(dx * dx + dy * dy + dz * dz);
 }
 
 // Count significant digits in value | Compter les chiffres significatifs dans une valeur

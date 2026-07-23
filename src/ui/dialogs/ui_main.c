@@ -2047,7 +2047,7 @@ BOOL readSteamIDFromRegistry(uint64_t* outSteamID) {
 
 // Load default settings from config file | Charger les paramètres par défaut depuis le fichier de config
 void loadDefaultSettingsFromConfig() {
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t configFile[MAX_PATH];
@@ -2125,7 +2125,7 @@ void saveDefaultSettingsToConfig() {
         return;
     }
 
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t configFile[MAX_PATH];
@@ -2288,7 +2288,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         wchar_t automaticPathFromConfig[MAX_PATH] = L"";
 
         // ✅ CORRECTION CRITIQUE : Lire le fichier de config CORRECTEMENT
-        wchar_t* configFolder = getConfigFolderPath();
+        const wchar_t* configFolder = config_get_folder_path();
         if (configFolder) {
             wchar_t configFile[MAX_PATH];
             swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
@@ -3109,7 +3109,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 }
                 else {
                     // MODE MANUEL : Charger le chemin MANUEL depuis la config
-                    wchar_t* configFolder = getConfigFolderPath();
+                    const wchar_t* configFolder = config_get_folder_path();
                     if (configFolder) {
                         wchar_t configFile[MAX_PATH];
                         swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
@@ -3286,7 +3286,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 
                wchar_t gameFolder[MAX_PATH] = L"";
 
-               wchar_t* configFolder = getConfigFolderPath();
+               const wchar_t* configFolder = config_get_folder_path();
                if (configFolder) {
                    wchar_t configFile[MAX_PATH];
                    swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
@@ -3327,7 +3327,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                    localVoiceData.voiceDistance = distanceNormal;
                }
 
-               applyDistanceToAllPlayers();
+               if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
                showConfigSavedNotice(hwnd, L"Advanced options saved successfully!");
 
@@ -3396,7 +3396,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             }
 
             // Apply changes | Appliquer les changements
-            applyDistanceToAllPlayers();
+            if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
             showConfigSavedNotice(hwnd, L"Advanced options saved successfully!");
 

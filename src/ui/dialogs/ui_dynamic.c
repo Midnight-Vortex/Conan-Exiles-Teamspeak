@@ -266,7 +266,7 @@ void updateDynamicInterface() {
     // Always save distance changes | Toujours sauvegarder les changements de distance
     if (distanceChanged) {
         saveVoiceSettings();
-        applyDistanceToAllPlayers();
+        if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
         if (enableLogGeneral) {
             char saveMsg[256];

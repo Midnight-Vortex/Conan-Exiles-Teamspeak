@@ -20,16 +20,16 @@ cd "$ROOT"
 
 # Files under src/core/ that STILL include a ts/ or ui/ header today.
 # Two documented groups (see doku/aenderungen/017-layering-wache.md):
-#   1) legacy Mumble blob — dies with V8.5b (config parsing / validation /
-#      base utils / volume math still cross-linked into the old plugin.c world)
+#   1) legacy Mumble blob — the F10-save persistence bridge (config_files.c)
+#      and the shared base utils (util_base.c) still reference ui/ts symbols;
+#      full relocation is tracked for V8.6. proximity_volume.c was deleted and
+#      validation.c was decoupled from ui/ts in V8.5b (doku/019-legacy-abbau.md).
 #   2) nick_anonymize.c — fully TS-callback-coupled (calls ts3_* directly);
 #      relocation into ts/ is tracked for a later V8.6 sub-package, exactly
 #      like channel_manage was moved in V8.6a.
 ALLOWLIST=(
-    "src/core/config/config_files.c"       # legacy, removed in V8.5b
-    "src/core/validation/validation.c"     # legacy, removed in V8.5b
-    "src/core/util/util_base.c"            # legacy, removed in V8.5b
-    "src/core/proximity/proximity_volume.c" # legacy, removed in V8.5b
+    "src/core/config/config_files.c"       # legacy F10-save bridge, relocation tracked for V8.6
+    "src/core/util/util_base.c"            # legacy shared utils, relocation tracked for V8.6
     "src/core/nick/nick_anonymize.c"       # TS-coupled, relocation to ts/ tracked
 )
 

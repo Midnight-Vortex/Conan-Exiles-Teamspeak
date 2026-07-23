@@ -172,7 +172,7 @@ void loadVoicePreset(int presetIndex) {
     localVoiceData.voiceDistance = getVoiceDistanceForMode(currentVoiceMode);
 
     wchar_t gameFolder[MAX_PATH] = L"";
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (configFolder) {
         wchar_t configFile[MAX_PATH];
         swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
@@ -207,7 +207,7 @@ void loadVoicePreset(int presetIndex) {
     writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
     // Apply changes | Appliquer les changements
-    applyDistanceToAllPlayers();
+    if (enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
 
     if (enableLogConfig) {
         char logMsg[256];
@@ -287,7 +287,7 @@ BOOL renameVoicePreset(int presetIndex, const char* newName) {
 
 // Save presets to configuration file | Sauvegarder les presets dans le fichier de configuration
 void savePresetsToConfigFile(void) {
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t presetFile[MAX_PATH];
@@ -332,7 +332,7 @@ void savePresetsToConfigFile(void) {
 
 // Load presets from configuration file | Charger les presets depuis le fichier de configuration
 void loadPresetsFromConfigFile(void) {
-    wchar_t* configFolder = getConfigFolderPath();
+    const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t presetFile[MAX_PATH];

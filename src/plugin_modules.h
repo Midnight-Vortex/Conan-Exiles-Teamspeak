@@ -11,7 +11,6 @@
    3  validation.c         Validation, limits, zones (3D polygons)
    4  hub_parser.c         Root channel description parsing
    5  channel_manage.c     Hub / ingame channel moves
-   6  proximity_volume.c   Volume calculations
    8  proximity_adaptive.c Per-player volume state
   12  voice_modes.c        Voice modes and positional send
   13  voice_overlay.c      In-game HUD overlay
@@ -40,10 +39,7 @@ int resolvePlayerZoneIndex(float px, float py, float pz);
 const char* getKeyName(int vkCode);
 void displayInChat(const char* message);
 void displayHubParametersConfirmation(BOOL globalSuccess, BOOL racesSuccess, BOOL playerInRace, BOOL zonesSuccess);
-wchar_t* getConfigFolderPath(void);
 int isPatchAlreadySaved(void);
-float calculateDistance(float x1, float y1, float z1, float x2, float y2, float z2);
-float calculateDistance3D(Vector3* a, Vector3* b);
 int countSignificantDigits(float value);
 BOOL getServerHashForTracking(mumble_connection_t connection, char* outHash, size_t hashSize);
 void ts3_queue_chat_message(const char* message);
@@ -63,22 +59,14 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
 
 /* validation.c */
 BOOL shouldApplyDistanceLimits(void);
-void checkConnectionStatus(void);
 BOOL shouldValidateValue(float value, float minimum, float maximum, const char* modeName);
 float validateDistanceValue(float value, float minimum, float maximum, const char* modeName);
-void validatePlayerDistances(void);
 BOOL isPointInPolygon(float px, float pz, float x1, float z1, float x2, float z2, float x3, float z3, float x4, float z4);
 BOOL zoneContainsPoint(const Zone* z, float px, float py, float pz, int xzFloor);
 int getPlayerZone(float playerX, float playerY, float playerZ);
 
 /* channel_manage.c */
 int ts3_plugin_should_send_position(void);
-
-/* proximity_volume.c */
-float calculateVolumeMultiplier(float distance, float maxDistance);
-float calculateVolumeMultiplierWithHubSettings(float distance, float voiceDistance);
-void applyDistanceToAllPlayers(void);
-ProximityVolumeContext plugin_proximity_volume_context(void);
 
 /* proximity_adaptive.c */
 void setUserAdaptiveVolume(mumble_userid_t userID, float targetVolume);

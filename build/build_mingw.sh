@@ -84,7 +84,6 @@ SOURCES=(
     src/core/config/config_files.c
     src/core/validation/validation.c
     src/core/util/util_base.c
-    src/core/proximity/proximity_volume.c
 )
 
 echo "== MinGW cross build ($($CC -dumpversion)) =="
