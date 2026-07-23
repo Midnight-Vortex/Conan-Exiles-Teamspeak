@@ -28,7 +28,7 @@ bash build/build_mingw.sh
 # Erfolg: "OK: built bin/mingw/conan_exiles.dll (... bytes)"
 ```
 
-**Was passiert:** Das Skript kompiliert exakt dieselben 29 `.c`-Dateien wie
+**Was passiert:** Das Skript kompiliert exakt dieselben 28 `.c`-Dateien wie
 die `.vcxproj` (Liste steht im Skript) mit `x86_64-w64-mingw32-gcc`, einem
 GCC, der Windows-DLLs erzeugt. Auch die Ressourcen (`project/Resource.rc`,
 Bitmaps/Icons) werden per `windres` eingebunden. Ergebnis ist eine echte
