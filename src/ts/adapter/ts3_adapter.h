@@ -7,7 +7,42 @@
  * Architecture rule (lesson from the old plugin's lock-corruption crashes):
  *  - TS API functions are called ONLY on the TS callback thread.
  *  - Background threads (pos watcher, UI, audio) never call the API directly;
- *    they push commands into the queue and request a wakeup.
+ *    they hand work over and request a wakeup.
+ *
+ * ===========================================================================
+ *  THE TWO-CHANNEL CONTROL PLANE (V8.4, finalised — read this before adding
+ *  a new cross-thread trigger)
+ * ===========================================================================
+ *
+ * Off-thread producers can drive callback-thread TS work over TWO channels.
+ * Both are drained by the SINGLE dispatcher `ts3plugin_onPluginCommandEvent`
+ * ("CEDRAIN" branch, ts3_entry.c) in a fixed order with a per-drain budget.
+ * Pick the channel by the NATURE of the work:
+ *
+ *  (A) COALESCING pending-work FLAGS  — for high-frequency state where "N
+ *      requests" collapse to "one thing to do". A producer sets an Interlocked
+ *      flag (or bumps a per-client dirty bit) and requests a wakeup. The
+ *      dispatcher asks ts3_pending_work_any() (the single "is there work?"
+ *      aggregator) and, when a flag is set, runs that step ONCE over current
+ *      state. Examples that MUST stay flags: audio recompute-all / per-client
+ *      dirty recompute, CEPOS send-pending, unmute-pending, channel
+ *      position-update, voice-mode notify, pending chat.
+ *      WHY: at 200 players @ 1 Hz CEPOS, turning "recompute needed" into N
+ *      queued commands would flood the callback thread. Coalescing is a
+ *      correctness/perf FEATURE, not a missing queue. Do NOT convert these.
+ *
+ *  (B) The typed command RING (Ts3Command / Ts3CmdType, this header) — for
+ *      DISCRETE one-shot actions that do NOT coalesce and cannot flood: a
+ *      one-time "log the channel list", a UI-triggered single request, etc.
+ *      A producer fills a Ts3Command and ts3_cmd_queue_push()es it (safe from
+ *      any thread; full ring drops + logs), then requests a wakeup. The
+ *      dispatcher drains the ring FIRST each cycle. The pure ring mechanics
+ *      live in ts3_cmd_ring.h (host-unit-tested); the lock lives in the .c.
+ *
+ * Rule of thumb: if the same request fired 200x in one tick should still be
+ * "do it once", it is (A) a flag. If each request is a distinct action that
+ * must each happen, and it can never fire at per-packet frequency, it is (B)
+ * a command. When unsure, prefer a flag — flooding is the expensive mistake.
  *
  * V8.4 wakeup rebuild: ts3_request_wakeup()/..._urgent() no longer touch the
  * TS API at all — they only set an Interlocked flag and SetEvent (pure Win32,
@@ -60,8 +95,15 @@ int ts3_is_connected(void);                 /* any thread */
 uint64 ts3_get_active_connection(void);     /* any thread */
 anyID ts3_get_local_client_id(void);        /* any thread */
 
-/* ---- 3.2 command queue --------------------------------------------------- */
+/* ---- 3.2 command queue — channel (B): DISCRETE one-shot actions ---------- */
 
+/* Command types for the typed ring. ONLY for discrete one-shot work that does
+ * not coalesce and can never fire at per-packet frequency (see the two-channel
+ * note above). High-frequency, naturally-coalescing state stays a FLAG behind
+ * ts3_pending_work_any() — do NOT add "recompute", "cepos", "unmute", etc. here.
+ *
+ * >>> ADD NEW COMMAND TYPES HERE <<<  (parallels ts3_entry.c's
+ * ">>> ADD NEW PENDING SOURCES HERE <<<" for channel A's flags.) */
 typedef enum Ts3CmdType {
     TS3_CMD_NONE = 0,
     TS3_CMD_LOG_CHANNEL_LIST   /* Phase 3 self-test: log channel count+names */
