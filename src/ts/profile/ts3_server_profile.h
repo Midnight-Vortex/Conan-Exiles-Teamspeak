@@ -48,6 +48,10 @@ float server_profile_get_max_volume(void);
 /* 1 when the server forces hub<->ingame auto-move. Any thread. */
 int server_profile_force_auto_channel(void);
 
+/* 1 when ingame nicknames should be replaced with random digits before the
+   ingame move. Default 1 without profile (legacy behavior). Any thread. */
+int server_profile_get_nickname_randomizer(void);
+
 /* Ingame channel password ("" when none). Callback thread. */
 const char* server_profile_get_ingame_password(void);
 

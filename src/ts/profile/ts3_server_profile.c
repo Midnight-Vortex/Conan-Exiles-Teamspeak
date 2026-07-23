@@ -334,6 +334,14 @@ int server_profile_force_auto_channel(void) {
     return settings.forceAutoChannelSwitch;
 }
 
+int server_profile_get_nickname_randomizer(void) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
+        return 1;
+    }
+    return settings.nicknameRandomizer;
+}
+
 const char* server_profile_get_ingame_password(void) {
     return g_ingamePassword;
 }

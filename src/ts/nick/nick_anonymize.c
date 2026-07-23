@@ -1,6 +1,7 @@
 #include "ts/nick/nick_anonymize.h"
 #include "core/util/log.h"
 #include "ts/adapter/ts3_adapter.h"
+#include "ts/profile/ts3_server_profile.h"
 
 #include <windows.h>
 #include <stdio.h>
@@ -114,6 +115,9 @@ void nick_on_connected(void) {
 
 void nick_anonymize_before_ingame(uint64 ingameChannelID) {
     if (!ts3_thread_is_callback() || !ts3_is_connected() || ingameChannelID == 0) {
+        return;
+    }
+    if (!server_profile_get_nickname_randomizer()) {
         return;
     }
 
