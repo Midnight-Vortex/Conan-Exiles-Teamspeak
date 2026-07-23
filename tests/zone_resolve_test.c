@@ -131,12 +131,96 @@ static void test_degenerate_zones(void) {
     CHECK(zone_resolve(&s, 25.0f, 0.0f, 25.0f) == -1, "corner-less zone is skipped");
 }
 
+static void test_overlapping_zones(void) {
+    printf("[6] overlapping zones — first match wins\n");
+    HubSettings s;
+    make_settings(&s);
+
+    /* Zone 1 hall (100..120) contains point (110,55,110); zone 0 cave does not. */
+    CHECK(zone_resolve(&s, 110.0f, 55.0f, 110.0f) == 1, "point in hall only -> zone 1");
+
+    /* Stack a second zone 0 copy on top of cave center — index 0 wins. */
+    s.zones[0].x1 = 20.0f; s.zones[0].z1 = 20.0f;
+    s.zones[0].x2 = 30.0f; s.zones[0].z2 = 20.0f;
+    s.zones[0].x3 = 30.0f; s.zones[0].z3 = 30.0f;
+    s.zones[0].x4 = 20.0f; s.zones[0].z4 = 30.0f;
+    CHECK(zone_resolve(&s, 25.0f, 0.0f, 25.0f) == 0, "overlapping coverage -> lowest index");
+}
+
+static void test_corners_and_z_edges(void) {
+    printf("[7] quad corners and Z edges\n");
+    HubSettings s;
+    make_settings(&s);
+
+    CHECK(zone_resolve(&s, 20.0f, 0.0f, 20.0f) == 0, "SW corner (min x, min z) inside");
+    CHECK(zone_resolve(&s, 20.1f, 0.0f, 29.9f) == 0, "inset NW near max z still inside");
+    CHECK(zone_resolve(&s, 20.0f, 0.0f, 30.0f) == -1, "exact max z corner outside (half-open)");
+    CHECK(zone_resolve(&s, 25.0f, 0.0f, 20.0f) == 0, "south edge (z=20) inside");
+    CHECK(zone_resolve(&s, 25.0f, 0.0f, 30.0f) == -1, "north edge (z=30) outside");
+}
+
+static void test_height_band_boundaries(void) {
+    printf("[8] height band ±1m tolerance\n");
+    HubSettings s;
+    make_settings(&s);
+
+    /* hall band 50..60 with hEps=1 -> effective 49..61 */
+    CHECK(zone_resolve(&s, 110.0f, 49.0f, 110.0f) == 1, "1m below GroundY tolerated");
+    CHECK(zone_resolve(&s, 110.0f, 48.9f, 110.0f) == -1, "just outside lower tolerance -> -1");
+    CHECK(zone_resolve(&s, 110.0f, 61.0f, 110.0f) == 1, "1m above TopY tolerated");
+    CHECK(zone_resolve(&s, 110.0f, 61.1f, 110.0f) == -1, "just outside upper tolerance -> -1");
+}
+
+static void test_scale_probes(void) {
+    printf("[9] coordinate scale probes\n");
+    HubSettings s;
+    memset(&s, 0, sizeof(s));
+    s.valid = 1;
+    s.zoneCount = 1;
+    /* Admin entered UE centimeters; player position arrives in meters. */
+    s.zones[0].x1 = 2000.0f; s.zones[0].z1 = 2000.0f;
+    s.zones[0].x2 = 3000.0f; s.zones[0].z2 = 2000.0f;
+    s.zones[0].x3 = 3000.0f; s.zones[0].z3 = 3000.0f;
+    s.zones[0].x4 = 2000.0f; s.zones[0].z4 = 3000.0f;
+
+    CHECK(zone_resolve(&s, 25.0f, 0.0f, 25.0f) == 0,
+        "meters position ×100 matches cm corners");
+    CHECK(zone_resolve(&s, 2500.0f, 0.0f, 2500.0f) == 0,
+        "raw cm coordinates match at 1x scale");
+}
+
+static void test_ue_layout_and_reverb_mix(void) {
+    printf("[10] UE X-Y floor layout + mixed reverb/soundproof\n");
+    HubSettings s;
+    memset(&s, 0, sizeof(s));
+    s.valid = 1;
+    s.zoneCount = 1;
+    /* xzFloor=0: zone Z* fields hold world Y; player height is pz. */
+    s.zones[0].x1 = 20.0f; s.zones[0].z1 = 20.0f;
+    s.zones[0].x2 = 30.0f; s.zones[0].z2 = 20.0f;
+    s.zones[0].x3 = 30.0f; s.zones[0].z3 = 30.0f;
+    s.zones[0].x4 = 20.0f; s.zones[0].z4 = 30.0f;
+    s.zones[0].groundY = 5.0f;
+    s.zones[0].topY = 15.0f;
+    s.zones[0].reverb = 1;
+
+    CHECK(zone_resolve(&s, 25.0f, 25.0f, 10.0f) == 0, "UE layout: inside X-Y + height");
+    CHECK(zone_resolve(&s, 25.0f, 25.0f, 3.0f) == -1, "UE layout: below height band");
+    CHECK(zone_reverb_active(&s, 0, -1) == 1, "listener in UE-layout reverb zone");
+    CHECK(zone_soundproof_muted(&s, -1, 0) == 0, "non-soundproof zone never hard-mutes");
+}
+
 int main(void) {
     test_point_in_zone();
     test_height_band();
     test_soundproof_one_way();
     test_reverb_active();
     test_degenerate_zones();
+    test_overlapping_zones();
+    test_corners_and_z_edges();
+    test_height_band_boundaries();
+    test_scale_probes();
+    test_ue_layout_and_reverb_mix();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

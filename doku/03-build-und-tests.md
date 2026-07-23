@@ -53,15 +53,18 @@ bash tests/run_tests.sh
 # Erfolg: "RESULT: ALL SUITES PASSED" (Exit-Code 0)
 ```
 
-**Was passiert:** Vier Test-Suiten werden mit normalem Host-gcc gebaut und
+**Was passiert:** Fuenf Test-Suiten werden mit normalem Host-gcc gebaut und
 ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 
-| Suite | Modul | Prueft |
-|---|---|---|
-| `hub_parser_test` | `src/core/hub/hub_parser.c` | Parsen der Server-Beschreibung ([GLOBAL]/[ZONES]/[RACE]/[DEFAULT_SETTINGS]), kaputte Eingaben, Limits |
-| `proximity_math_test` | `src/core/proximity/proximity_math.c` | Distanz, Lautstaerke-Kurve (0 m ≈ 1.0, ab 1.12× Reichweite = 0, monoton fallend), Equal-Power-Pan, Lowpass, DRR, Rear-Daempfung, Binaural-Gains |
-| `zone_resolve_test` | `src/core/proximity/zone_resolve.c` | Punkt-in-Zone (innen/aussen/Kante), Hoehenband, Soundproof-Einbahnregel, Reverb-Flag |
-| `player_table_test` | `src/core/proximity/player_table.c` | put/get, Namens-Abschneidung, Snapshot, 120-s-Verfall, LRU-Verdraengung bei voller Tabelle |
+| Suite | Modul | Checks | Prueft |
+|---|---|---:|---|
+| `hub_parser_test` | `src/core/hub/hub_parser.c` | 97 | Parsen der Server-Beschreibung ([GLOBAL]/[ZONES]/[RACE]/[DEFAULT_SETTINGS]), Defaults, Clamping, kaputte Eingaben, Limits |
+| `proximity_math_test` | `src/core/proximity/proximity_math.c` | 59 | Distanz, Lautstaerke-Kurve (Monotonie, Soft-Tail, Randfaelle), Equal-Power-Pan, Lowpass, DRR, Rear-Psycho, Binaural-Gains, Hub-Helfer, Diffuse-PCM |
+| `zone_resolve_test` | `src/core/proximity/zone_resolve.c` | 46 | Punkt-in-Zone (innen/aussen/Kante/Ecke), Hoehenband ±1m, Skalen-Sonden, UE-Layout, Soundproof-Einbahnregel, Reverb, Ueberlappung |
+| `player_table_test` | `src/core/proximity/player_table.c` | 30 | put/get, Namens-Abschneidung, Snapshot, 120-s-Verfall, LRU-Verdraengung bei voller Tabelle |
+| `render_state_test` | `ts3_proximity_audio.h` (inline) | 9 | PCM-Generation-Counter: wann Render-State neu initialisiert wird |
+
+**Stand Checks:** 241 gesamt (V8.1-Erweiterung in `doku/aenderungen/008`).
 
 **Wie das ohne Windows geht:**
 
