@@ -39,9 +39,41 @@ static int ts3_require_callback_thread(const char* where) {
 
 /* ---- 3.1 connection state ----------------------------------------------- */
 
+/*
+ * Connection identity contract (V8.5):
+ *
+ * The identity is the triple (g_activeConnection, g_localClientID, g_connected).
+ * Writers: ONLY the callback thread (connect status event, tab-switch event,
+ * adapter shutdown). Cross-thread readers: wakeup thread and PCM thread.
+ *
+ * Publish order (enforced by the Interlocked full barriers below):
+ *   CONNECT / tab adopt:  g_connected=0 -> id + local client -> g_connected=1 LAST
+ *   DISCONNECT/shutdown:  g_connected=0 FIRST -> id + local client cleared
+ *
+ * Reader rules:
+ *   - Gate on ts3_is_connected() BEFORE trusting the id (wakeup thread does).
+ *   - Or compare the id for exact equality (PCM playback event); id 0 never
+ *     matches a real serverConnectionHandlerID, so a cleared id is inert.
+ * Because g_connected flips to 1 last and to 0 first, no reader can ever see
+ * "connected" paired with a half-published identity.
+ *
+ * All cross-thread accesses to the 64-bit id go through conn_id_store/_load
+ * (InterlockedExchange64 / InterlockedCompareExchange64): x64 aligned loads
+ * are not torn, but the ORDERING against g_connected needs the barrier —
+ * plain volatile gives none under MinGW GCC. Callback-thread-only reads
+ * (the g_ts3.*() call sites below) stay plain: same thread as every writer.
+ */
 static volatile uint64 g_activeConnection = 0;
 static volatile long g_connected = 0;
 static volatile long g_localClientID = 0;
+
+static void conn_id_store(uint64 id) {
+    InterlockedExchange64((volatile LONG64*)&g_activeConnection, (LONG64)id);
+}
+
+static uint64 conn_id_load(void) {
+    return (uint64)InterlockedCompareExchange64((volatile LONG64*)&g_activeConnection, 0, 0);
+}
 
 int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatus) {
     if (newStatus == STATUS_DISCONNECTED) {
@@ -52,9 +84,10 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
                 (unsigned long long)serverConnectionHandlerID);
             return 0;
         }
+        /* Publish order: connected off FIRST, then the identity. */
         InterlockedExchange(&g_connected, 0);
         InterlockedExchange(&g_localClientID, 0);
-        g_activeConnection = 0;
+        conn_id_store(0);
         log_write("TS-EVT: DISCONNECTED");
         return 1;
     }
@@ -77,7 +110,9 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
             }
         }
 
-        g_activeConnection = serverConnectionHandlerID;
+        /* Publish order: identity (id + local client) FIRST, connected LAST. */
+        InterlockedExchange(&g_connected, 0);
+        conn_id_store(serverConnectionHandlerID);
         anyID localID = 0;
         if (g_ts3.getClientID
             && g_ts3.getClientID(serverConnectionHandlerID, &localID) == ERROR_ok) {
@@ -104,7 +139,14 @@ int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {
         }
     }
 
-    g_activeConnection = serverConnectionHandlerID;
+    /* Adopting a different tab = new identity. Publish order: connected off
+       FIRST (readers stop trusting the old id), then the new identity, then
+       connected on LAST — never expose connected=1 with a half-switched id
+       (the old code stored the id first, so the wakeup thread could send on
+       a not-yet-established tab). */
+    InterlockedExchange(&g_connected, 0);
+    InterlockedExchange(&g_localClientID, 0);
+    conn_id_store(serverConnectionHandlerID);
     if (status == STATUS_CONNECTION_ESTABLISHED) {
         anyID localID = 0;
         if (g_ts3.getClientID
@@ -112,10 +154,6 @@ int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {
             InterlockedExchange(&g_localClientID, (long)localID);
         }
         InterlockedExchange(&g_connected, 1);
-    }
-    else {
-        InterlockedExchange(&g_connected, 0);
-        InterlockedExchange(&g_localClientID, 0);
     }
     log_write("TS-EVT: active server tab changed -> conn=%llu (connected=%d)",
         (unsigned long long)serverConnectionHandlerID,
@@ -128,7 +166,8 @@ int ts3_is_connected(void) {
 }
 
 uint64 ts3_get_active_connection(void) {
-    return g_activeConnection;
+    /* Cross-thread reader (PCM playback event) — barriered load, see contract. */
+    return conn_id_load();
 }
 
 anyID ts3_get_local_client_id(void) {
@@ -349,10 +388,17 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
         }
         const long urgent = InterlockedExchange(&g_wakeupUrgent, 0);
 
-        /* Drop while unconnected — reconnect/next tick re-requests (as V7). */
+        /* Drop while unconnected — reconnect/next tick re-requests (as V7).
+           Identity contract: gate on g_connected FIRST, then load the id with
+           a barrier; a concurrent disconnect clears g_connected before the id,
+           so a stale-but-valid id is the worst case and id 0 is skipped. */
         if (!g_ts3FunctionsSet || !ts3_is_connected()
             || g_pluginID[0] == '\0' || !g_ts3.sendPluginCommand) {
             continue;
+        }
+        const uint64 conn = conn_id_load();
+        if (conn == 0) {
+            continue; /* disconnect raced us — nothing to wake */
         }
 
         const LONG64 now = (LONG64)GetTickCount64();
@@ -362,7 +408,7 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
         }
         InterlockedExchange64(&s_lastWakeMs, now);
 
-        g_ts3.sendPluginCommand(g_activeConnection, g_pluginID, "CEDRAIN:1",
+        g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
             PluginCommandTarget_SERVER, NULL, NULL);
     }
     return 0;
@@ -730,8 +776,10 @@ void ts3_adapter_shutdown(void) {
        no-op (g_wakeupStop set). Only then tear the connection state down. */
     ts3_wakeup_stop();
 
+    /* Publish order: connected off FIRST, then the identity (contract above). */
     InterlockedExchange(&g_connected, 0);
-    g_activeConnection = 0;
+    InterlockedExchange(&g_localClientID, 0);
+    conn_id_store(0);
 
     /* Drop anything still queued. */
     ts3_cmd_lock_ensure();
