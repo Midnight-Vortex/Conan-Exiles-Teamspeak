@@ -361,6 +361,21 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
     }
 }
 
+/* Single source of truth for "is there CEDRAIN work waiting?". Used by BOTH the
+   drain early-out and the end-of-drain "re-wake if leftover" logic, so a new
+   pending source only has to be registered in ONE place.
+ *
+ * >>> ADD NEW PENDING SOURCES HERE <<<  (V8.2 fix 2 was a forgotten entry.) */
+static int ts3_pending_work_any(void) {
+    return ts3_cmd_queue_nonempty()
+        || voice_mode_has_pending_notify()
+        || ts3_plugin_has_pending_chat()
+        || cepos_send_pending()
+        || ts3_audio_has_pending_unmutes()
+        || ts3_audio_has_pending_recompute()
+        || chan_has_pending_work();
+}
+
 void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char* pluginName, const char* pluginCommand, anyID invokerClientID, const char* invokerName, const char* invokerUniqueIdentity) {
     (void)invokerName;
     (void)invokerUniqueIdentity;
@@ -390,13 +405,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
-        if (!ts3_cmd_queue_nonempty()
-            && !voice_mode_has_pending_notify()
-            && !ts3_plugin_has_pending_chat()
-            && !cepos_send_pending()
-            && !ts3_audio_has_pending_unmutes()
-            && !ts3_audio_has_pending_recompute()
-            && !chan_has_pending_work()) {
+        if (!ts3_pending_work_any()) {
             return;
         }
         if (ts3_cmd_queue_nonempty()) {
@@ -420,9 +429,15 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         if (ts3_audio_has_pending_unmutes()) {
             ts3_audio_flush_unmutes();
         }
-        /* Chat may be queued from a hotkey thread while we were draining. */
+        /* Re-wake if any work is still pending — leftover from a per-drain
+           budget (e.g. dirty-client recomputes capped at
+           TS3_RECOMPUTE_DRAIN_BUDGET) or queued from another thread while we
+           drained. Chat is latency-sensitive, so it gets the urgent wakeup. */
         if (ts3_plugin_has_pending_chat()) {
             ts3_request_wakeup_urgent();
+        }
+        else if (ts3_pending_work_any()) {
+            ts3_request_wakeup();
         }
     }
 }

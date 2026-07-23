@@ -41,6 +41,10 @@
 
 #define TS3_RECOMPUTE_ALL_MIN_MS 100   /* 10 Hz cap when local pos unchanged */
 #define TS3_RECOMPUTE_POS_EPS_CM 5.0f  /* centimeters — movement triggers refresh */
+/* Per-drain budget for the dirty-client recompute path (V8.4). Caps callback
+   work per CEDRAIN so a CEPOS burst (up to PLAYER_TABLE_MAX_PLAYERS dirty at
+   once) cannot spike one callback; leftovers re-wake for the next drain. */
+#define TS3_RECOMPUTE_DRAIN_BUDGET 64
 #define TS3_UNMUTE_REARM_MS    500
 /* Must match ts3_unmute_clients_for_pcm cap (63 clients + API zero sentinel). */
 #define TS3_UNMUTE_BATCH_MAX   64
@@ -700,17 +704,28 @@ void ts3_audio_flush_recomputes(void) {
 
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
+    int processed = 0;
     for (int i = 0; i < count; i++) {
         const anyID cid = (anyID)players[i].clientID;
         if (!ts3_client_id_valid(players[i].clientID)) {
             continue;
         }
+        if (processed >= TS3_RECOMPUTE_DRAIN_BUDGET) {
+            break; /* budget spent — finish the rest on the next drain */
+        }
         if (InterlockedCompareExchange(&g_recomputeDirty[cid], 0, 1) == 1) {
             InterlockedDecrement(&g_recomputeDirtyCount);
             audio_recompute_client_impl(cid);
+            processed++;
         }
     }
     audio_reconcile_dirty_count();
+
+    /* Leftover dirty clients (budget or a request that arrived mid-drain):
+       re-wake so CEDRAIN runs again for the remainder. */
+    if (InterlockedCompareExchange(&g_recomputeDirtyCount, 0, 0) > 0) {
+        ts3_request_wakeup();
+    }
 }
 
 /* ---- 10.3 lowpass (audio thread, no locks, no allocations) ------------------- */
