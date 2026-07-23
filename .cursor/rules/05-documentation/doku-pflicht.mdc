@@ -1,0 +1,39 @@
+---
+description: Doku-Pflicht (V8+) - jede Aenderung wird in doku/ dokumentiert; was anders/besser, warum, wie es funktioniert - anfaengertauglich
+alwaysApply: true
+---
+
+# Doku-Pflicht (gilt ab V8 fuer JEDE Aenderung)
+
+**Jede Code-Aenderung in diesem Repo MUSS dokumentiert werden — im Ordner `doku/`.**
+Ziel: Ein Anfaenger kann anhand der Doku nachvollziehen, **was** geaendert wurde,
+**warum** es anders/besser ist als vorher, und **wie** es funktioniert.
+
+## Wo dokumentieren
+
+| Art der Aenderung | Ort |
+|---|---|
+| Neues/umgebautes Modul | `doku/module/<modulname>.md` (anlegen oder aktualisieren) |
+| Arbeitspaket / Fix / Rewrite-Schritt | `doku/aenderungen/<nummer>-<kurzname>.md` (fortlaufend nummeriert) |
+| Architektur-Entscheidung | `doku/01-architektur-v8.md` ergaenzen |
+| Lesson Learned (Bug/Crash-Ursache) | `doku/02-lessons-learned-v7.md` ergaenzen |
+| Build/Test-Aenderung | `doku/03-build-und-tests.md` ergaenzen |
+
+## Pflicht-Inhalt pro Aenderungs-Eintrag (`doku/aenderungen/`)
+
+1. **Was wurde geaendert?** (Dateien, Funktionen — konkret)
+2. **Wie war es vorher (V7)?** Was war das Problem? (Bug, Race, Unklarheit, Duplikat …)
+3. **Warum ist die neue Loesung besser/stabiler?** (Begruendung, nicht nur Behauptung)
+4. **Wie funktioniert es jetzt?** Anfaengertaugliche Erklaerung: Datenfluss,
+   welcher Thread ruft was, gerne mit kleinem ASCII-Diagramm.
+5. **Wie wurde es getestet?** (Unit-Test, Cross-Build, TS-Client-Test noetig?)
+6. **Lerneffekt:** 1-3 Saetze "Was kann man daraus allgemein lernen?"
+
+## Regeln
+
+- Doku-Sprache: **Deutsch**, einfach erklaert (Fachbegriffe beim ersten Auftreten kurz erklaeren).
+- Code/Kommentare/Commits bleiben **Englisch** (Projekt-Konvention).
+- Doku wird im **selben Commit** wie die Code-Aenderung gepflegt — nie "spaeter nachziehen".
+- Subagents: jeder Task-Prompt, der Code aendert, MUSS den Doku-Eintrag mit ausliefern
+  (oder der Parent-Agent schreibt ihn direkt nach Abschluss des Pakets).
+- Kein Eintrag = Arbeitspaket ist **nicht fertig** (Definition of Done).
