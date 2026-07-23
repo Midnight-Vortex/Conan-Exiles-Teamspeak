@@ -443,7 +443,8 @@ void chan_reset(void) {
 }
 
 int chan_has_pending_work(void) {
-    return g_moveInFlight != 0;
+    return g_moveInFlight != 0
+        || InterlockedCompareExchange(&g_positionUpdatePending, 0, 0) != 0;
 }
 
 uint64 chan_get_hub_channel_id(void) {
