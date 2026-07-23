@@ -71,6 +71,12 @@ run_suite render_state_test \
 run_suite wakeup_policy_test \
     tests/wakeup_policy_test.c
 
+# V8.4 — typed command ring (control-plane channel B). Pure mechanics in
+# ts3_cmd_ring.h; needs -Isdk/include for the Ts3Command type (SDK uint64).
+run_suite cmd_queue_test \
+    -Isdk/include \
+    tests/cmd_queue_test.c
+
 # V8.6 — voice_modes mode->distance decision, now host-testable after the
 # ts/ui hook inversion. Uses the Win32 shim (hotkey helpers) + real zone_resolve.
 run_suite voice_modes_test \
