@@ -25,6 +25,8 @@
 #pragma comment(lib, "uxtheme.lib")
 #endif
 #include "ui_config_internal.h"
+#include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_state.h"
 
 /*
  * ui_config_dialog.c: dialog shell (ConfigDialogProc), category switching, foreground helper, GDI teardown, showConfigInterface + thread entry.
@@ -445,6 +447,7 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         hHudSizeLabel = NULL;
         hConfigDialog = NULL;
         ui_release_config_dialog_gdi();
+        ui_cfg_dialog_end();
         PostQuitMessage(0); // Ends GetMessage loop in showConfigInterface() | Termine la boucle GetMessage
         break;
 
@@ -461,11 +464,13 @@ int showConfigInterface() {
         mumbleAPI.log(ownID, "showConfigInterface: Function started");
     }
 
+    ui_cfg_dialog_begin();
+
     // Try automatic patch find if enabled | Essayer le patch automatique si activé
-    if (enableAutomaticPatchFind) {
+    if (ui_cfg()->automaticPatchFind) {
         wchar_t automaticPath[MAX_PATH] = L"";
         if (findConanExilesAutomatic(automaticPath, MAX_PATH)) {
-            wcscpy_s(savedPath, MAX_PATH, automaticPath);
+            ui_cfg_set_active_saved_path_full(automaticPath);
             size_t converted = 0;
             wcstombs_s(&converted, modFilePath, MAX_PATH, automaticPath, _TRUNCATE);
             strcat_s(modFilePath, MAX_PATH, "\\Pos.txt");
@@ -479,9 +484,9 @@ int showConfigInterface() {
             }
 
             wchar_t distWhisper[32], distNormal[32], distShout[32];
-            swprintf(distWhisper, 32, L"%.1f", distanceWhisper);
-            swprintf(distNormal, 32, L"%.1f", distanceNormal);
-            swprintf(distShout, 32, L"%.1f", distanceShout);
+            swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
+            swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
+            swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
 
             writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 
@@ -493,9 +498,6 @@ int showConfigInterface() {
         }
     }
 
-    /* V8.5b single reader: pull current values from g_config (loaded once at
-       init by config_load) instead of re-reading plugin.cfg directly. */
-    plugin_ui_sync_from_config();
     voice_overlay_refresh_theme();
     voice_overlay_refresh_position();
     voice_overlay_refresh_size();

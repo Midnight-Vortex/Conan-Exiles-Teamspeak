@@ -104,6 +104,7 @@
     <ClCompile Include="..\src\ts\nick\nick_anonymize.c" />
     <ClCompile Include="..\src\ui\overlay\voice_overlay.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_main.c" />
+    <ClCompile Include="..\src\ui\dialogs\ui_config_command.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_config_dialog.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_config_controls.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_config_draw.c" />
@@ -113,9 +114,12 @@
     <ClCompile Include="..\src\ui\dialogs\ui_messages.c" />
     <ClCompile Include="..\src\ui\input\key_watcher.c" />
     <ClCompile Include="..\src\ui\plugin_ui_compat.c" />
-    <ClCompile Include="..\src\core\config\config_files.c" />
-    <ClCompile Include="..\src\core\validation\validation.c" />
-    <ClCompile Include="..\src\core\util\util_base.c" />
+    <ClCompile Include="..\src\ui\config\ui_voice_presets.c" />
+    <ClCompile Include="..\src\ui\config\ui_config_state.c" />
+    <ClCompile Include="..\src\ui\util\ui_key_util.c" />
+    <ClCompile Include="..\src\ui\util\ui_display_util.c" />
+    <ClCompile Include="..\src\ui\validation\ui_hub_validation.c" />
+    <ClCompile Include="..\src\ui\util\ui_ts_chat_queue.c" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="..\assets\BACKGROUND.bmp" />

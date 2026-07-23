@@ -2,6 +2,7 @@
 #include "ui/plugin_ui_compat.h"
 #include "plugin_modules.h"
 #include "core/voice/voice_modes.h"
+#include "core/config/config.h"
 #include "core/util/poll_interval.h"
 
 #include <process.h>
@@ -77,7 +78,7 @@ static unsigned __stdcall keyMonitorThreadFunction(void* arg) {
         if (pluginShuttingDown) {
             break;
         }
-        const BOOL currentKeyState = (GetAsyncKeyState(configUIKey) & 0x8000) != 0;
+        const BOOL currentKeyState = (GetAsyncKeyState(g_config.configUIKey) & 0x8000) != 0;
 
         if (currentKeyState && !lastKeyState) {
             if (config_dialog_try_open() && !pluginShuttingDown) {
@@ -85,7 +86,7 @@ static unsigned __stdcall keyMonitorThreadFunction(void* arg) {
                     char msg[128];
                     snprintf(msg, sizeof(msg),
                         "KEY INSTANT-DETECTED! %s (VK:%d) - opening settings...",
-                        getKeyName(configUIKey), configUIKey);
+                        getKeyName(g_config.configUIKey), g_config.configUIKey);
                     mumbleAPI.log(ownID, msg);
                 }
 
@@ -122,7 +123,7 @@ void startKeyMonitorThread(void) {
     if (enableLogGeneral) {
         char msg[128];
         snprintf(msg, sizeof(msg), "Key monitor thread started for key: %s (VK:%d)",
-            getKeyName(configUIKey), configUIKey);
+            getKeyName(g_config.configUIKey), g_config.configUIKey);
         mumbleAPI.log(ownID, msg);
     }
 }

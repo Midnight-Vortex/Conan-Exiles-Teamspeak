@@ -13,10 +13,8 @@
 void plugin_ui_init(void);
 void plugin_ui_shutdown(void);
 
-/* Pull g_config (+ live hub/pos state) into legacy globals. */
+/* V8.12: F10 uses ui_cfg() working copy; these refresh legacy mirrors or commit. */
 void plugin_ui_sync_from_config(void);
-
-/* Push legacy globals into g_config and persist. */
 void plugin_ui_sync_to_config(void);
 
 /* Refresh hub/zones/coordinates flags used by the legacy UI messages. */
