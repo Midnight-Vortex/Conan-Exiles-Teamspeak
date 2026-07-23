@@ -339,7 +339,9 @@ void plugin_ui_sync_to_config(void) {
     }
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    /* Settings/UI thread — never run the heavy recompute here; CEDRAIN picks
+       up the pending flag on the callback thread milliseconds later. */
+    ts3_audio_request_recompute_all();
 }
 
 void plugin_ui_sync_live_state(void) {
@@ -470,6 +472,8 @@ void plugin_ui_sync_live_state(void) {
 
 void plugin_ui_on_hub_profile_updated(void) {
     plugin_ui_sync_live_state();
+    /* Callback thread only (channel description/edit events in ts3_entry.c),
+       so the synchronous recompute is allowed here. */
     ts3_audio_recompute_all();
     voice_overlay_refresh_position();
     updateVoiceOverlay();
@@ -748,7 +752,9 @@ int ts3_plugin_is_proximity_active(void) {
 void ts3_plugin_apply_proximity_volumes_force(void) {
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    /* Called from the settings dialog / UI dialogs (applyDistanceToAllPlayers,
+       loadVoicePreset) — defer the recompute to the callback thread. */
+    ts3_audio_request_recompute_all();
     if (ts3_is_connected()) {
         ts3_request_wakeup();
     }
@@ -797,7 +803,9 @@ void plugin_ui_on_settings_saved(void) {
     }
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
-    ts3_audio_recompute_all();
+    /* Settings dialog thread (F10 Save) — flag + wakeup only; the recompute
+       runs in CEDRAIN on the callback thread (Phase 4.3 pattern). */
+    ts3_audio_request_recompute_all();
     voice_overlay_refresh_theme();
     voice_overlay_refresh_position();
     voice_overlay_refresh_size();

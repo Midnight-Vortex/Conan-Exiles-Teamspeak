@@ -37,8 +37,14 @@ Ts3AudioMode ts3_audio_get_mode(void);
    local position. Any thread (writers serialize on a private lock). */
 void ts3_audio_recompute_client(anyID clientID);
 
-/* Recompute all known clients immediately (settings / profile refresh). */
+/* Recompute all known clients immediately (settings / profile refresh).
+   Heavy (player-table iteration under g_writerLock) — callback thread ONLY;
+   UI/settings threads use ts3_audio_request_recompute_all() instead. */
 void ts3_audio_recompute_all_force(void);
+
+/* Mark "recompute all" pending and wake CEDRAIN; the actual recompute runs
+   milliseconds later on the callback thread. Any thread (UI/settings). */
+void ts3_audio_request_recompute_all(void);
 
 /* Throttled local-move driver (~10 Hz cap when position unchanged). */
 void ts3_audio_on_local_position_update(void);

@@ -597,6 +597,11 @@ void ts3_audio_recompute_all(void) {
     ts3_audio_recompute_all_force();
 }
 
+void ts3_audio_request_recompute_all(void) {
+    InterlockedExchange(&g_recomputeAllPending, 1);
+    ts3_request_wakeup();
+}
+
 void ts3_audio_on_local_position_update(void) {
     PosSample local;
     const int localValid = pos_get_current(&local);
