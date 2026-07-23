@@ -561,6 +561,12 @@ static void audio_recompute_client_impl(anyID clientID) {
 static void audio_recompute_all_impl(void) {
     writer_lock_ensure();
 
+    /* Claim the pending flag BEFORE reading any inputs. A request that arrives
+       while this recompute is running re-sets the flag and wakes CEDRAIN again,
+       so its (possibly newer) inputs get a fresh pass instead of being wiped
+       by a clear at the end (lost-update race found in the V8.3 review). */
+    InterlockedExchange(&g_recomputeAllPending, 0);
+
     PosSample local;
     const int localValid = pos_get_current(&local);
 
@@ -595,7 +601,6 @@ static void audio_recompute_all_impl(void) {
         batchCount++;
         audio_clear_client_dirty(cid);
     }
-    InterlockedExchange(&g_recomputeAllPending, 0);
     audio_reconcile_dirty_count();
 
     EnterCriticalSection(&g_writerLock);
