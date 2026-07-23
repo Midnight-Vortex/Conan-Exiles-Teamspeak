@@ -80,6 +80,16 @@ run_suite voice_modes_test \
     src/core/voice/voice_modes.c \
     src/core/proximity/zone_resolve.c
 
+# V8.6c — layering guard (no ts/ or ui/ include under src/core/).
+echo "=== layering_guard ==="
+if bash tests/check_layering.sh; then
+    RESULTS+=("PASS  layering_guard")
+else
+    RESULTS+=("FAIL  layering_guard")
+    FAILED=1
+fi
+echo
+
 echo "=== summary ==="
 for r in "${RESULTS[@]}"; do
     echo "$r"
