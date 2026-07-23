@@ -3,7 +3,7 @@
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/profile/ts3_server_profile.h"
 #include "core/mod_file/pos_file.h"
-#include "core/nick/nick_anonymize.h"
+#include "ts/nick/nick_anonymize.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
 

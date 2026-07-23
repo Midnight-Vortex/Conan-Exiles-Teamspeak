@@ -1,4 +1,4 @@
-#include "core/nick/nick_anonymize.h"
+#include "ts/nick/nick_anonymize.h"
 #include "core/util/log.h"
 #include "ts/adapter/ts3_adapter.h"
 

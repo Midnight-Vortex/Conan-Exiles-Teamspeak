@@ -72,7 +72,7 @@
     <ClInclude Include="..\src\ts\profile\ts3_server_profile.h" />
     <ClInclude Include="..\src\core\proximity\zone_resolve.h" />
     <ClInclude Include="..\src\core\voice\voice_modes.h" />
-    <ClInclude Include="..\src\core\nick\nick_anonymize.h" />
+    <ClInclude Include="..\src\ts\nick\nick_anonymize.h" />
     <ClInclude Include="..\src\plugin.h" />
     <ClInclude Include="..\src\mumble_compat.h" />
     <ClInclude Include="..\src\plugin_modules.h" />
@@ -100,7 +100,7 @@
     <ClCompile Include="..\src\ts\profile\ts3_server_profile.c" />
     <ClCompile Include="..\src\core\proximity\zone_resolve.c" />
     <ClCompile Include="..\src\core\voice\voice_modes.c" />
-    <ClCompile Include="..\src\core\nick\nick_anonymize.c" />
+    <ClCompile Include="..\src\ts\nick\nick_anonymize.c" />
     <ClCompile Include="..\src\ui\overlay\voice_overlay.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_main.c" />
     <ClCompile Include="..\src\ui\dialogs\ui_dynamic.c" />

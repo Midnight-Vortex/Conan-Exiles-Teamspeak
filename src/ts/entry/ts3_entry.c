@@ -22,7 +22,7 @@
 #include "ts/info/ts3_plugin_version.h"
 #include "core/voice/voice_modes.h"
 #include "plugin_modules.h"
-#include "core/nick/nick_anonymize.h"
+#include "ts/nick/nick_anonymize.h"
 #include "ui/overlay/voice_overlay.h"
 #include "ui/plugin_ui_compat.h"
 #include "plugin_modules.h"

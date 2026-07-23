@@ -1,5 +1,5 @@
-#ifndef CORE_NICK_NICK_ANONYMIZE_H
-#define CORE_NICK_NICK_ANONYMIZE_H
+#ifndef TS_NICK_NICK_ANONYMIZE_H
+#define TS_NICK_NICK_ANONYMIZE_H
 
 /*
  * Phase 12 — ingame nickname anonymization.
@@ -12,9 +12,10 @@
  * Thread contract: everything here runs on the TS callback thread ONLY
  * (all functions call the TS API via the adapter). No locks needed.
  *
- * Layering (V8.6): this is a core/ header, so it must NOT pull the ts/ layer.
- * It needs only the SDK integer type uint64; the TS adapter is included by
- * nick_anonymize.c directly (implementation detail, not part of this contract).
+ * Layering (V8.6): this module lives under ts/ because it is fully TS-coupled
+ * (every non-pure function drives the TS API through the adapter), exactly
+ * like channel_manage (doku/015). The header needs only the SDK integer type
+ * uint64; the adapter is pulled by nick_anonymize.c directly.
  */
 
 #include "teamspeak/public_definitions.h"
@@ -44,4 +45,4 @@ void nick_restore_in_hub(void);
 /* Drop saved state without touching the TS API (disconnect / shutdown). */
 void nick_reset(void);
 
-#endif /* CORE_NICK_NICK_ANONYMIZE_H */
+#endif /* TS_NICK_NICK_ANONYMIZE_H */

@@ -74,7 +74,7 @@ SOURCES=(
     src/ts/profile/ts3_server_profile.c
     src/core/proximity/zone_resolve.c
     src/core/voice/voice_modes.c
-    src/core/nick/nick_anonymize.c
+    src/ts/nick/nick_anonymize.c
     src/ui/overlay/voice_overlay.c
     src/ui/dialogs/ui_main.c
     src/ui/dialogs/ui_dynamic.c
