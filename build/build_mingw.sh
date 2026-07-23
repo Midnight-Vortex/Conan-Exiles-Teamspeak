@@ -3,7 +3,7 @@
 # V8.0 — MinGW cross build of the full plugin DLL on Linux.
 #
 # Compiles the exact source list from project/Conan-Exiles-TeamSpeak.vcxproj
-# (29 .c files) plus project/Resource.rc into bin/mingw/conan_exiles.dll.
+# (34 .c files) plus project/Resource.rc into bin/mingw/conan_exiles.dll.
 #
 # This is a BUILD GATE, not the release build: the shipped DLL is still built
 # with MSVC on Windows (build/build_msvc.ps1). The gate is "compiles + links".
@@ -54,7 +54,7 @@ LDLIBS=(
     -lole32 -loleaut32 -luuid -lshell32 -lshlwapi -ladvapi32 -lwinmm
 )
 
-# Exact ClCompile list from project/Conan-Exiles-TeamSpeak.vcxproj (29 files).
+# Exact ClCompile list from project/Conan-Exiles-TeamSpeak.vcxproj (34 files).
 SOURCES=(
     src/ts/entry/ts3_entry.c
     src/ts/entry/ts3_info.c
@@ -77,6 +77,11 @@ SOURCES=(
     src/ts/nick/nick_anonymize.c
     src/ui/overlay/voice_overlay.c
     src/ui/dialogs/ui_main.c
+    src/ui/dialogs/ui_config_dialog.c
+    src/ui/dialogs/ui_config_controls.c
+    src/ui/dialogs/ui_config_draw.c
+    src/ui/dialogs/ui_presets.c
+    src/ui/dialogs/ui_path_steam.c
     src/ui/dialogs/ui_dynamic.c
     src/ui/dialogs/ui_messages.c
     src/ui/input/key_watcher.c
