@@ -25,7 +25,7 @@ static unsigned __stdcall settings_dialog_thread(void* arg) {
     return 0;
 }
 
-static void settings_dialog_thread_start(void) {
+void settings_dialog_open_async(void) {
     /* The previous dialog thread (if any) has released the dialog guard —
        it is exiting; reap its handle before storing a new one. */
     if (g_settingsDialogThread) {
@@ -90,7 +90,7 @@ static unsigned __stdcall keyMonitorThreadFunction(void* arg) {
                     mumbleAPI.log(ownID, msg);
                 }
 
-                settings_dialog_thread_start();
+                settings_dialog_open_async();
             }
         }
 

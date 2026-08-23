@@ -11,6 +11,78 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Plugins → Conan Exiles submenu (PLUGIN_MENU_TYPE_GLOBAL). IDs are ours. */
+enum {
+    MENU_ID_SETTINGS = 1,
+    MENU_ID_OPEN_PLUGINS_FOLDER = 2
+};
+
+static struct PluginMenuItem* menu_item_create(enum PluginMenuType type, int id,
+    const char* text) {
+    struct PluginMenuItem* item = (struct PluginMenuItem*)malloc(sizeof(*item));
+    if (!item) {
+        return NULL;
+    }
+    item->type = type;
+    item->id = id;
+    item->icon[0] = '\0';
+    strncpy_s(item->text, PLUGIN_MENU_BUFSZ, text, _TRUNCATE);
+    return item;
+}
+
+void ts3plugin_initMenus(struct PluginMenuItem*** menuItems, char** menuIcon) {
+    struct PluginMenuItem** items;
+
+    if (!menuItems || !menuIcon) {
+        return;
+    }
+    *menuIcon = NULL; /* no plugin submenu icon */
+
+    /* 2 items + NULL terminator — TeamSpeak frees each entry via freeMemory. */
+    items = (struct PluginMenuItem**)malloc(sizeof(struct PluginMenuItem*) * 3);
+    if (!items) {
+        *menuItems = NULL;
+        return;
+    }
+    items[0] = menu_item_create(PLUGIN_MENU_TYPE_GLOBAL, MENU_ID_SETTINGS,
+        "Einstellungen");
+    items[1] = menu_item_create(PLUGIN_MENU_TYPE_GLOBAL, MENU_ID_OPEN_PLUGINS_FOLDER,
+        "Plugins-Ordner oeffnen");
+    items[2] = NULL;
+    if (!items[0] || !items[1]) {
+        free(items[0]);
+        free(items[1]);
+        free(items);
+        *menuItems = NULL;
+        return;
+    }
+    *menuItems = items;
+}
+
+void ts3plugin_onMenuItemEvent(uint64 serverConnectionHandlerID, enum PluginMenuType type,
+    int menuItemID, uint64 selectedItemID) {
+    (void)serverConnectionHandlerID;
+    (void)selectedItemID;
+
+    if (pluginShuttingDown || type != PLUGIN_MENU_TYPE_GLOBAL) {
+        return;
+    }
+
+    switch (menuItemID) {
+    case MENU_ID_SETTINGS:
+        /* Must not block the UI/callback thread with showConfigInterface(). */
+        if (config_dialog_try_open()) {
+            settings_dialog_open_async();
+        }
+        break;
+    case MENU_ID_OPEN_PLUGINS_FOLDER:
+        open_ts3_plugins_folder();
+        break;
+    default:
+        break;
+    }
+}
+
 void ts3plugin_freeMemory(void* data) {
     if (data) {
         free(data);

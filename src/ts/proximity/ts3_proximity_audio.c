@@ -49,8 +49,12 @@
 /* Must match ts3_unmute_clients_for_pcm cap (63 clients + API zero sentinel). */
 #define TS3_UNMUTE_BATCH_MAX   64
 #define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue */
-#define TS3_AUDIO_CULL_MARGIN  1.25f /* hear-range multiplier for recompute culling */
-#define TS3_AUDIO_CULL_PAD_M   2.0f  /* meters beyond nominal range */
+/* §8 enter/exit hysteresis: a speaker becomes an audible candidate at its
+   nominal hear range (enter) and is only culled again once this many meters
+   beyond it (exit). Holds the previous decision inside the band so a speaker
+   hovering at the boundary no longer flips compute/neutral (and mute/unmute)
+   every recompute. See doku/aenderungen/036-proximity-hysterese.md. */
+#define TS3_AUDIO_EXIT_MARGIN_M 10.0f
 #define TS3_AUDIBLE_GAIN       0.001f
 #define TS3_SILENT_GAIN        0.00001f
 #define TS3_CEPOS_PI           3.14159265f
@@ -97,6 +101,11 @@ static volatile long g_unmuteRingWrite = 0;
 static volatile long g_unmuteRingRead = 0;
 static char g_clientUnlocked[TS3_MAX_CLIENT_ID];       /* callback thread only */
 static ULONGLONG g_lastUnmuteMs[TS3_MAX_CLIENT_ID];    /* callback thread only */
+
+/* §8 hysteresis latch: 1 = this speaker is currently inside the audible range.
+   Callback thread only (written from audio_recompute_all_impl via the cull test,
+   cleared on invalidate/reset) — same convention as g_clientUnlocked above. */
+static char g_hearInRange[TS3_MAX_CLIENT_ID];
 
 /* Phase 4.1 — throttle full recomputes on local position polls (atomics). */
 static volatile long g_lastLocalSeq = -1;
@@ -395,7 +404,9 @@ static int audio_local_zone(const HubSettings* hub, const PosSample* local,
     return zone_resolve(hub, local->x / 100.0f, local->y / 100.0f, local->z / 100.0f);
 }
 
-static int audio_in_hear_range(const PosSample* local, int localValid,
+/* Callback thread only (updates the per-client hysteresis latch). enter =
+   nominal hear range, exit = enter + TS3_AUDIO_EXIT_MARGIN_M. */
+static int audio_in_hear_range(anyID clientID, const PosSample* local, int localValid,
     const PlayerEntry* remote, float listenAdd) {
     if (!localValid || !remote) {
         return 1;
@@ -404,8 +415,15 @@ static int audio_in_hear_range(const PosSample* local, int localValid,
     const float ly = local->y / 100.0f;
     const float lz = local->z / 100.0f;
     const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
-    const float hearRange = remote->voiceDistance + listenAdd;
-    return dist <= hearRange * TS3_AUDIO_CULL_MARGIN + TS3_AUDIO_CULL_PAD_M;
+    const float enterDist = remote->voiceDistance + listenAdd;
+    const float exitDist = enterDist + TS3_AUDIO_EXIT_MARGIN_M;
+
+    const int prev = ts3_client_id_valid(clientID) ? g_hearInRange[clientID] : 0;
+    const int inRange = prox_hysteresis_in_range(dist, enterDist, exitDist, prev);
+    if (ts3_client_id_valid(clientID)) {
+        g_hearInRange[clientID] = (char)inRange;
+    }
+    return inRange;
 }
 
 typedef struct AudioPublishParams {
@@ -561,9 +579,21 @@ static void audio_recompute_client_impl(anyID clientID) {
     const int hubActive = server_profile_get(&hub);
     const int localZone = audio_local_zone(&hub, &local, localValid, hubActive);
 
+    /* Same §8 enter/exit gate as audio_recompute_all_impl — CEPOS dirty drains
+       must not republish (and unmute) speakers the full pass would keep culled. */
+    PlayerEntry remote;
+    const float listenAdd = server_profile_get_listen_add_distance();
     AudioPublishParams params;
-    audio_compute_client(clientID, &local, localValid,
-        hubActive ? &hub : NULL, localZone, &params);
+    if (!player_table_get(clientID, &remote)
+        || !audio_in_hear_range(clientID, &local, localValid, &remote, listenAdd)) {
+        memset(&params, 0, sizeof(params));
+        params.neutral = 1;
+        params.valid = 0;
+    }
+    else {
+        audio_compute_client(clientID, &local, localValid,
+            hubActive ? &hub : NULL, localZone, &params);
+    }
 
     EnterCriticalSection(&g_writerLock);
     audio_publish_client(clientID, &params);
@@ -600,7 +630,7 @@ static void audio_recompute_all_impl(void) {
             continue;
         }
         AudioPublishParams* params = &batch[batchCount];
-        if (!audio_in_hear_range(&local, localValid, &players[i], listenAdd)) {
+        if (!audio_in_hear_range(cid, &local, localValid, &players[i], listenAdd)) {
             memset(params, 0, sizeof(*params));
             params->neutral = 1;
             params->valid = 0;
@@ -1170,6 +1200,7 @@ void ts3_audio_invalidate_client(anyID clientID) {
     }
     g_clientUnlocked[clientID] = 0;
     g_lastUnmuteMs[clientID] = 0;
+    g_hearInRange[clientID] = 0; /* §8 latch: a fresh/reused ID starts out of range */
     /* Render ramp + LPF are audio-thread-owned. Signal invalidation via the
        generation counter; the audio thread resets the ramp/LPF itself on its
        next buffer for this ID (same values this used to write directly). */
@@ -1230,6 +1261,7 @@ void ts3_audio_reset(void) {
         InterlockedExchange(&g_pendingUnmute[i], 0);
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);
+    memset(g_hearInRange, 0, sizeof(g_hearInRange)); /* §8 latch: all out of range */
     while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
         YieldProcessor();
     }

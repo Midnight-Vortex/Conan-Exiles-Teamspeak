@@ -11,7 +11,7 @@ Meaningful changes (features, fixes, architecture, performance) should be **taug
 
 ## Documentation Folder
 
-Use `/docs` in the project root. Organize by topic or feature. Do not scatter docs unless the project explicitly uses another layout.
+**This repo:** use `doku/` (see `doku-pflicht.mdc`) — especially `doku/aenderungen/` for every code change, plus `doku/module/` and architecture notes as needed. Do not use `/docs` here; that path is for other projects that still use it.
 
 ## What to Document
 

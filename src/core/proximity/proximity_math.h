@@ -19,6 +19,15 @@ float prox_distance(float x1, float y1, float z1, float x2, float y2, float z2);
 float prox_volume_from_distance(float distanceMeters, float voiceDistanceMeters,
     float maxVolume);
 
+/* Enter/exit hysteresis for the audible-range cull decision (pure, no state).
+   A speaker becomes an audible candidate at enterDistanceMeters and is only
+   culled again once past exitDistanceMeters; inside [enter, exit] the previous
+   decision (prevInRange, 0/1) is held. This stops a speaker hovering at the
+   boundary from flipping compute/neutral (and mute/unmute) every recompute.
+   exitDistanceMeters is expected >= enterDistanceMeters. Returns 0 or 1. */
+int prox_hysteresis_in_range(float distanceMeters, float enterDistanceMeters,
+    float exitDistanceMeters, int prevInRange);
+
 /* Equal-power stereo pan from listener orientation.
    localDir{X,Z} = listener look direction (horizontal plane),
    to remote = remote minus listener position.

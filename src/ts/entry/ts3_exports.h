@@ -42,6 +42,8 @@ PLUGINS_EXPORTDLL void ts3plugin_freeMemory(void* data);
 PLUGINS_EXPORTDLL int ts3plugin_requestAutoload(void);
 PLUGINS_EXPORTDLL int ts3plugin_offersConfigure(void);
 PLUGINS_EXPORTDLL void ts3plugin_configure(void* handle, void* qParentWidget);
+PLUGINS_EXPORTDLL void ts3plugin_initMenus(struct PluginMenuItem*** menuItems, char** menuIcon);
+PLUGINS_EXPORTDLL void ts3plugin_onMenuItemEvent(uint64 serverConnectionHandlerID, enum PluginMenuType type, int menuItemID, uint64 selectedItemID);
 PLUGINS_EXPORTDLL void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int newStatus, unsigned int errorNumber);
 PLUGINS_EXPORTDLL void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID);
 PLUGINS_EXPORTDLL void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char* pluginName, const char* pluginCommand, anyID invokerClientID, const char* invokerName, const char* invokerUniqueIdentity);

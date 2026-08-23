@@ -121,6 +121,9 @@ void installKeyMonitoring(void);
 void removeKeyMonitoring(void);
 void startKeyMonitorThread(void);
 void stopKeyMonitorThread(void);
+/* Open settings on a dedicated UI thread (F10 / Plugins menu). Caller must
+   have already succeeded at config_dialog_try_open(). */
+void settings_dialog_open_async(void);
 /* Close the F10 dialog (WM_CLOSE) and join its thread — shutdown only. */
 void settings_dialog_shutdown(void);
 

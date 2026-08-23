@@ -78,6 +78,17 @@ float prox_volume_from_distance(float distanceMeters, float voiceDistanceMeters,
     return volume;
 }
 
+int prox_hysteresis_in_range(float distanceMeters, float enterDistanceMeters,
+    float exitDistanceMeters, int prevInRange) {
+    if (distanceMeters <= enterDistanceMeters) {
+        return 1;
+    }
+    if (distanceMeters > exitDistanceMeters) {
+        return 0;
+    }
+    return prevInRange ? 1 : 0;
+}
+
 float proximity_calculate_volume_with_hub(float distanceMeters, float voiceDistanceMeters,
     const ProximityVolumeContext* ctx) {
     if (!ctx) {

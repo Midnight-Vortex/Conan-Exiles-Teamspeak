@@ -15,6 +15,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <process.h>
+#include <shellapi.h>
 
 static mumble_error_t compat_mumble_log(mumble_plugin_id_t callerID, const char* message) {
     (void)callerID;
@@ -188,6 +189,20 @@ void config_dialog_close(void) {
 
 int config_dialog_is_open(void) {
     return InterlockedCompareExchange(&g_configDialogOpen, 0, 0) != 0;
+}
+
+void open_ts3_plugins_folder(void) {
+    wchar_t path[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"APPDATA", path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        return;
+    }
+    /* "%APPDATA%\TS3Client\plugins" — same deploy target as build_msvc.ps1 */
+    if (wcslen(path) + 22 >= MAX_PATH) {
+        return;
+    }
+    wcscat_s(path, MAX_PATH, L"\\TS3Client\\plugins");
+    ShellExecuteW(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL);
 }
 
 double hubMinimumWhisper = 0.0;

@@ -105,7 +105,7 @@ Bisher entstandene Dateien (alle neu geschrieben, Build via `project\Conan-Exile
 | Voice-Modes | `src\core\voice\voice_modes.c/.h` (Whisper/Normal/Shout, Zonen-Override + Profil-Clamp, entprellte Hotkeys, Chat-Notify auf Callback-Thread) | 11 |
 | Nickname-Anonymisierung | `src\core\nick\nick_anonymize.c/.h` (8–10 Zufallsziffern, Rename VOR dem Ingame-Move, Kollisionscheck im Zielchannel, Hub-Restore) | 12 |
 | Voice-Overlay (HUD) | `src\ui\overlay\voice_overlay.c/.h` (eigener UI-Thread + Message-Loop, Click-Through, Modus + Zone, Themes/Position/Größe aus plugin.cfg) | 13 |
-| Einstellungs-Dialog | `src\ui\dialogs\ui_settings.c/.h` (F10, Pfad/Distanzen/Hotkeys/Toggles/HUD; Staging-Config, Anwendung auf Callback-Thread via CEDRAIN) | 13 |
+| Einstellungs-Dialog | `src\ui\dialogs\ui_main.c` → `showConfigInterface()` (F10 + Extras; `ui_settings.c` ist **nicht** im Build — siehe V8 / vibecoding pitfalls) | 13 |
 | Cleanup / Härtung | in `ts3_entry.c` (dokumentierte Shutdown-Sequenz 14.1, Reconnect-/Serverwechsel-Reset aller Caches, Multi-Tab-Guard: fremde Verbindungen werden ignoriert) | 14 |
 
 Hinweis für neuen Chat / anderen PC: Phase 0–14 sind fertig gebaut — es bleibt

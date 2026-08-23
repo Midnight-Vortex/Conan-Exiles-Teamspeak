@@ -92,6 +92,41 @@ static void test_volume_curve(void) {
     CHECK(monotonicFull, "curve monotonically non-increasing 0..fadeEnd");
 }
 
+static void test_hysteresis_in_range(void) {
+    printf("[2b] prox_hysteresis_in_range\n");
+    const float enter = 15.0f;      /* nominal hear range */
+    const float exit = enter + 10.0f; /* §8: cull only 10 m beyond enter */
+
+    /* Hard decisions outside the band ignore the previous state. */
+    CHECK(prox_hysteresis_in_range(10.0f, enter, exit, 0) == 1,
+        "inside enter -> audible even if previously out");
+    CHECK(prox_hysteresis_in_range(enter, enter, exit, 0) == 1,
+        "exactly at enter -> audible");
+    CHECK(prox_hysteresis_in_range(30.0f, enter, exit, 1) == 0,
+        "beyond exit -> culled even if previously in");
+    CHECK(prox_hysteresis_in_range(exit, enter, exit, 1) == 1,
+        "exactly at exit -> still held (not yet culled)");
+
+    /* Inside the [enter, exit] band the previous decision is held. */
+    CHECK(prox_hysteresis_in_range(20.0f, enter, exit, 1) == 1,
+        "in band, was audible -> stays audible");
+    CHECK(prox_hysteresis_in_range(20.0f, enter, exit, 0) == 0,
+        "in band, was culled -> stays culled");
+
+    /* Approach then retreat: no flicker across the band (plan §8 sequence). */
+    int state = 0;
+    state = prox_hysteresis_in_range(26.0f, enter, exit, state); /* far */
+    CHECK(state == 0, "approach: 26m still culled");
+    state = prox_hysteresis_in_range(20.0f, enter, exit, state); /* in band */
+    CHECK(state == 0, "approach: 20m holds culled (not yet at enter)");
+    state = prox_hysteresis_in_range(14.0f, enter, exit, state); /* crossed enter */
+    CHECK(state == 1, "approach: 14m turns audible");
+    state = prox_hysteresis_in_range(20.0f, enter, exit, state); /* back in band */
+    CHECK(state == 1, "retreat: 20m holds audible (below exit)");
+    state = prox_hysteresis_in_range(26.0f, enter, exit, state); /* crossed exit */
+    CHECK(state == 0, "retreat: 26m turns culled");
+}
+
 static void test_stereo_pan(void) {
     printf("[3] prox_stereo_pan\n");
     float l, r;
@@ -301,6 +336,7 @@ static void test_apply_diffuse_samples(void) {
 int main(void) {
     test_distance();
     test_volume_curve();
+    test_hysteresis_in_range();
     test_stereo_pan();
     test_lowpass_cutoff();
     test_direct_reverb_ratio();
