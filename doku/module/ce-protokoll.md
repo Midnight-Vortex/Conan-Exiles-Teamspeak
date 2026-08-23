@@ -40,8 +40,8 @@ entscheidet, welches Modul die Nachricht bekommt.
 | `CEDRAIN:` | 8 | `1` (Dummy) | Intern: Aufweck-Signal an den Callback-Thread | `ts3_entry.c` |
 | `CEVER:` | 6 | Versionstext, z. B. `8.0.4` | Beim Verbinden + einmalige Antwort pro Peer | `ts3_plugin_version.c` |
 | `CEMODE:` | 7 | `1;<mode>;<distanzDm>` | **Nur bei Moduswechsel** (Flanke) + Connect | `ts3_cemode.c` |
-| `CEPING:` | — | reserviert | *(noch nicht implementiert)* | — |
-| `CEAUTH:` | — | reserviert | *(noch nicht implementiert)* | — |
+| `CEPING:` | 7 | `1;<seq>` | Liveness-Heartbeat, ~1 Hz waehrend Positionsupdates | `ts3_ceping.c` |
+| `CEAUTH:` | 7 | `1;<steamID64>` | Weiche Identitaet: Connect + einmalige Antwort pro Peer | `ts3_ceauth.c` |
 
 ### 2.1 Warum die Praefixe nicht kollidieren
 
@@ -61,6 +61,8 @@ die Kette.
 onPluginCommandEvent
   ├─ ts3_version_on_plugin_command   -> CEVER:
   ├─ ts3_cemode_on_plugin_command    -> CEMODE:
+  ├─ ts3_ceping_on_plugin_command    -> CEPING:
+  ├─ ts3_ceauth_on_plugin_command    -> CEAUTH:
   ├─ cepos_on_plugin_command         -> CEPOS:
   └─ (Rest) CEDRAIN: -> Sammel-Abarbeitung aller offenen Arbeiten
 ```
@@ -164,6 +166,111 @@ weiterhin ausschliesslich `voiceDistance` aus CEPOS. Faellt `CEMODE` aus
 (alter Client, Paketverlust), klingt alles exakt wie vorher — nur die Anzeige
 des Modus fehlt. Das ist bewusst so: **Anzeige-Feature darf Audio nie
 gefaehrden.**
+
+---
+
+## 4a. `CEPING:` im Detail
+
+**Zweck:** Ein Empfaenger soll merken, wenn von einem Peer **Updates verloren
+gehen** oder dessen Datenstrom **veraltet** ist — reine Diagnose, kein Audio.
+
+### 4a.1 Format
+
+```text
+CEPING:1;<seq>
+        │  └── Heartbeat-Zaehler, uint32, laeuft bei 2^32 ueber
+        └───── Nutzlast-Version (aktuell immer 1)
+```
+
+Beispiel: `CEPING:1;42`.
+
+### 4a.2 Wann gesendet wird
+
+Der Sender erhoeht bei jedem tatsaechlichen Senden seinen Zaehler und schickt
+**hoechstens ~1× pro Sekunde** einen Heartbeat, angetrieben vom Positions-Tick
+(dem gleichen Auslöser wie CEPOS). Bewegt sich der Spieler nicht bzw. kommen
+keine Positionen, wird auch kein CEPING gesendet — im Leerlauf entsteht kein
+Zusatzverkehr.
+
+### 4a.3 Verlusterkennung (wraparound-sicher)
+
+Der Empfaenger merkt sich pro Peer die zuletzt gesehene `seq`. Bei der naechsten
+Nachricht:
+
+```text
+Sprung um 1        -> nichts verloren
+Sprung um N (>1)   -> N-1 Heartbeats verloren  -> log_debug("peer X lost N-1")
+gleiche seq        -> Duplikat                 -> 0
+kleinere seq       -> Reihenfolge vertauscht   -> 0 (kein Phantomverlust)
+```
+
+Die Differenz wird als **uint32 mit Ueberlauf** gerechnet (`ceping_seq_gap`),
+damit der Zaehlerwechsel von `0xFFFFFFFF` auf `0` korrekt als „consecutive"
+gilt und kein riesiger Scheinverlust entsteht.
+
+### 4a.4 Kein Ersatz fuer irgendetwas
+
+CEPING transportiert **keine Position und keinen Modus**. Faellt es aus (alter
+Client, Paketverlust), fehlt nur die Verlust-/Liveness-Diagnose im Log — Audio,
+Position und Modus laufen unveraendert weiter. Der Heartbeat ist die Grundlage
+fuer die spaetere Kandidaten-/Stale-Optimierung (Hybrid-Plan), zwingt aber
+heute noch nichts.
+
+---
+
+## 4b. `CEAUTH:` im Detail
+
+**Zweck:** Ein Peer soll wissen, **welcher Conan-Spieler** hinter einem
+TeamSpeak-Client steckt (SteamID64). Das erleichtert die **Zuordnung von
+Spielern** im Info-Panel und legt die Grundlage fuer spaetere,
+identitaetsabhaengige Features (z. B. Rassen/Rechte, die heute nur lokal
+aufgeloest werden).
+
+> **Weiche Identitaet — niemals Vertrauensanker.** Die SteamID ist
+> selbst gemeldet, **nicht authentifiziert und trivial faelschbar**. Sie darf
+> ausschliesslich zur Anzeige/Zuordnung dienen, **nie** fuer Rechte-, Trust-
+> oder Anti-Cheat-Entscheidungen (Wire-Regel 7). Wo Rechte zaehlen, gilt weiter
+> die vom Admin gepflegte Hub-Beschreibung.
+
+### 4b.1 Format
+
+```text
+CEAUTH:1;<steamID64>
+        │  └── oeffentliche SteamID64 (dezimal, ungleich 0)
+        └───── Nutzlast-Version (aktuell immer 1)
+```
+
+Beispiel: `CEAUTH:1;76561197960265728`.
+
+Die lokale SteamID64 stammt aus der Registry
+(`server_profile_get_local_steam_id()`, `HKCU\...\ActiveProcess\ActiveUser`
+plus Public-Universe-Offset). Laeuft Steam nicht (`0`), wird **nichts**
+gesendet.
+
+**Wo der Codec lebt:** `src/ts/proximity/ts3_ceauth_wire.h` — reine Funktionen
+(Bauen, strenges Parsen), ohne Win32 und ohne TS-SDK. `tests/ceauth_wire_test.c`
+prueft damit genau den ausgelieferten Code. Empfangene Daten gelten als
+feindlich: leere/nicht-numerische/`0`-IDs und unbekannte Versionen werden
+verworfen; ein additives Zusatzfeld hinten wird ignoriert.
+
+### 4b.2 Wann gesendet wird
+
+| Ausloeser | Grund |
+|---|---|
+| Verbindung hergestellt / Tab-Wechsel | Peers kennen unsere Identitaet sonst nicht |
+| Erstkontakt mit einem Peer | Einmalige Antwort, damit ein *spaeter* verbundener Client uns auch kennt |
+
+Genau wie `CEVER:`/`CEMODE:`: Wer ein `CEAUTH:` von einem bisher unbekannten
+Client bekommt, antwortet **genau einmal** mit der eigenen Identitaet. Die
+Antwort wird in den naechsten CEDRAIN gebuendelt — N gleichzeitig beitretende
+Peers kosten **einen** Broadcast, nicht N. Da die Identitaet konstant ist, gibt
+es keinen periodischen Verkehr.
+
+### 4b.3 Kein Ersatz fuer irgendetwas
+
+CEAUTH beeinflusst **weder Audio noch Position noch Modus**. Faellt es aus
+(alter Client, Steam offline, Paketverlust), fehlt nur die SteamID-Zeile im
+Info-Panel — alles andere laeuft unveraendert.
 
 ---
 

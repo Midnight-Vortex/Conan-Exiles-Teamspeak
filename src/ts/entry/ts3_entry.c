@@ -16,6 +16,8 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_cemode.h"
+#include "ts/proximity/ts3_ceping.h"
+#include "ts/proximity/ts3_ceauth.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
 #include "ts/channel/channel_manage.h"
@@ -121,6 +123,7 @@ static void ts3_on_local_position_update(void) {
     plugin_ui_on_position_tick();
     chan_signal_position_update();
     cepos_signal_send_pending();
+    ts3_ceping_signal_send_pending();
     ts3_audio_on_local_position_update();
 }
 
@@ -362,6 +365,8 @@ void ts3plugin_shutdown(void) {
     player_table_clear();
     cepos_reset();
     ts3_cemode_reset();
+    ts3_ceping_reset();
+    ts3_ceauth_reset();
     ts3d_reset();
     chan_reset();
     server_profile_reset();
@@ -401,6 +406,8 @@ static void ts3_reset_connection_state(void) {
     player_table_clear();
     cepos_reset();
     ts3_cemode_reset();
+    ts3_ceping_reset();
+    ts3_ceauth_reset();
     ts3_audio_reset();
     ts3d_reset();
     chan_reset();
@@ -446,6 +453,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         ts3_sync_overlay_channel_state(0);
         ts3_version_broadcast();
         ts3_cemode_signal_send_pending();
+        ts3_ceauth_signal_send_pending();
         /* Drop stale offline chat (e.g. voice keys pressed before connect). */
         ts3_plugin_clear_pending_chat();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
@@ -477,6 +485,7 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
             ts3_sync_overlay_channel_state(0);
             ts3_version_broadcast();
             ts3_cemode_signal_send_pending();
+            ts3_ceauth_signal_send_pending();
             ts3_request_wakeup();
         }
     }
@@ -493,6 +502,8 @@ static int ts3_pending_work_any(void) {
         || ts3_plugin_has_pending_chat()
         || cepos_send_pending()
         || ts3_cemode_send_pending()
+        || ts3_ceping_send_pending()
+        || ts3_ceauth_send_pending()
         || ts3_audio_has_pending_unmutes()
         || ts3_audio_has_pending_recompute()
         || chan_has_pending_work();
@@ -517,6 +528,18 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     if (ts3_cemode_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
         /* May have armed a one-time reply — send it in the next drain. */
         if (ts3_cemode_send_pending()) {
+            ts3_request_wakeup();
+        }
+        return;
+    }
+
+    if (ts3_ceping_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
+        return;
+    }
+
+    if (ts3_ceauth_on_plugin_command(pluginName, pluginCommand, invokerClientID)) {
+        /* May have armed a one-time reply — send it in the next drain. */
+        if (ts3_ceauth_send_pending()) {
             ts3_request_wakeup();
         }
         return;
@@ -552,6 +575,12 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         }
         if (ts3_cemode_send_pending()) {
             ts3_cemode_flush();
+        }
+        if (ts3_ceping_send_pending()) {
+            ts3_ceping_flush();
+        }
+        if (ts3_ceauth_send_pending()) {
+            ts3_ceauth_flush();
         }
         if (ts3_audio_has_pending_recompute()) {
             ts3_audio_flush_recomputes();
@@ -612,6 +641,8 @@ static void ts3_on_client_move(uint64 serverConnectionHandlerID, anyID clientID,
     if (newChannelID == 0 && clientID != 0) {
         ts3_version_clear_client(clientID);
         ts3_cemode_clear_client(clientID);
+        ts3_ceping_clear_client(clientID);
+        ts3_ceauth_clear_client(clientID);
         player_table_remove(clientID);
         ts3_audio_invalidate_client(clientID);
     }

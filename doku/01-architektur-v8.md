@@ -119,7 +119,7 @@ Budget abgearbeitet. Die Natur der Arbeit entscheidet den Kanal:
   Dirty-Bit pro Client) und fordert einen Wakeup an. Der Dispatcher fragt **eine** zentrale
   Checkliste `ts3_pending_work_any()` und fuehrt den jeweiligen Schritt **einmal** ueber den
   aktuellen Zustand aus. Das bleiben Flags: Audio-Recompute-all / Dirty-Client-Recompute,
-  CEPOS-Send, CEMODE-Send, Unmute, Channel-Positions-Update, Voice-Mode-Notify, Chat.
+  CEPOS-Send, CEMODE-Send, CEPING-Send, CEAUTH-Send, Unmute, Channel-Positions-Update, Voice-Mode-Notify, Chat.
 - **(B) Die typisierte Command-Queue** (`Ts3Command` / `Ts3CmdType`, ein Ringpuffer) — nur
   fuer **diskrete Einmal-Aktionen**, die nicht koaleszieren und **nicht** in Paketfrequenz
   auftreten koennen: z. B. das einmalige „Kanalliste ins Log“ (Self-Test) oder eine
@@ -163,8 +163,8 @@ Producer (irgendein Thread)
                        CEDRAIN-Dispatcher (Callback-Thread, EINZIGE Stelle):
                          ts3_pending_work_any()? ── nein ─► return
                          feste Reihenfolge + Budget:
-                           Queue → Voice → Chat → CEPOS → CEMODE →
-                           Recompute → 3D → Profil/Channel → Unmutes
+                           Queue → Voice → Chat → CEPOS → CEMODE → CEPING →
+                           CEAUTH → Recompute → 3D → Profil/Channel → Unmutes
                          Rest offen? ── ja ─► erneuter Wakeup (naechster Durchlauf)
 ```
 
@@ -195,8 +195,8 @@ So arbeitet `ts3plugin_shutdown()` (`src/ts/entry/ts3_entry.c`) es heute ab
    Settings-Dialog (WM_CLOSE + Join) → Pos-Watcher (Event + Join) →
    Overlay-Monitor (Join) + Overlay-UI (WM_QUIT + Join; zerstoert sein HWND
    selbst) → `overlayTextLock` erst nach dem Join loeschen.
-3. **Modul-Zustand zuruecksetzen:** Player-Tabelle, CEPOS, CEMODE, 3D, Channel,
-   Profil, Nick, Version, Audio-Snapshots (pure Resets, keine TS-API).
+3. **Modul-Zustand zuruecksetzen:** Player-Tabelle, CEPOS, CEMODE, CEPING, CEAUTH, 3D,
+   Channel, Profil, Nick, Version, Audio-Snapshots (pure Resets, keine TS-API).
 4. **Adapter schliessen:** joint den Wakeup-Thread, loescht die
    Verbindungs-Identitaet — danach ist jeder API-Call ein Programmierfehler
    (die Guards loggen ihn).

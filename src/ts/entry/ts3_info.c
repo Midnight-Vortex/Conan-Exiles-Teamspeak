@@ -2,6 +2,7 @@
 
 #include "ts/info/ts3_plugin_version.h"
 #include "ts/proximity/ts3_cemode.h"
+#include "ts/proximity/ts3_ceauth.h"
 #include "plugin_modules.h"
 #include "ui/plugin_ui_compat.h"
 #include "plugin.h"
@@ -76,6 +77,17 @@ void ts3plugin_infoData(uint64 serverConnectionHandlerID, uint64 id, enum Plugin
             char mode[64];
             if (ts3_cemode_format_peer(clientID, mode, sizeof(mode))) {
                 snprintf(info + used, infoSize - used, "\n%s", mode);
+            }
+        }
+    }
+
+    /* Peer soft identity (CEAUTH) — SteamID64, display only, never trusted. */
+    if (clientID != 0) {
+        const size_t used = strlen(info);
+        if (infoSize - used > 48) {
+            char ident[64];
+            if (ts3_ceauth_format_peer(clientID, ident, sizeof(ident))) {
+                snprintf(info + used, infoSize - used, "\n%s", ident);
             }
         }
     }

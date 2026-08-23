@@ -68,6 +68,8 @@ SOURCES=(
     src/core/proximity/proximity_math.c
     src/ts/proximity/ts3_cepos.c
     src/ts/proximity/ts3_cemode.c
+    src/ts/proximity/ts3_ceping.c
+    src/ts/proximity/ts3_ceauth.c
     src/ts/proximity/ts3_proximity_audio.c
     src/ts/proximity/ts3_3d.c
     src/ts/channel/channel_manage.c

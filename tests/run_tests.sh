@@ -76,6 +76,14 @@ run_suite wakeup_policy_test \
 run_suite cemode_wire_test \
     tests/cemode_wire_test.c
 
+# V8.15 — CEPING wire codec (format, strict parse, wraparound-safe seq gap).
+# Header-only in ts3_ceping_wire.h, pure C, no Win32/TS coupling.
+run_suite ceping_wire_test \
+    tests/ceping_wire_test.c
+
+run_suite ceauth_wire_test \
+    tests/ceauth_wire_test.c
+
 # V8.4 — typed command ring (control-plane channel B). Pure mechanics in
 # ts3_cmd_ring.h; needs -Isdk/include for the Ts3Command type (SDK uint64).
 run_suite cmd_queue_test \
