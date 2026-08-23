@@ -71,6 +71,11 @@ run_suite render_state_test \
 run_suite wakeup_policy_test \
     tests/wakeup_policy_test.c
 
+# V8.14 — CEMODE wire codec (meters->decimeters, format, strict parse).
+# Header-only in ts3_cemode_wire.h, pure C, no Win32/TS coupling.
+run_suite cemode_wire_test \
+    tests/cemode_wire_test.c
+
 # V8.4 — typed command ring (control-plane channel B). Pure mechanics in
 # ts3_cmd_ring.h; needs -Isdk/include for the Ts3Command type (SDK uint64).
 run_suite cmd_queue_test \

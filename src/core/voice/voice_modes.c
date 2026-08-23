@@ -206,6 +206,11 @@ void voice_mode_apply(VoiceMode mode) {
     if (g_hooks.overlay_sync) {
         g_hooks.overlay_sync();
     }
+    /* Edge only: reached exactly once per real switch (the early-out above
+       filters repeated hotkey presses of the already active mode). */
+    if (g_hooks.mode_changed) {
+        g_hooks.mode_changed();
+    }
 }
 
 void voice_mode_toggle(void) {

@@ -60,3 +60,28 @@ Dieses Modul lebt an der Grenze zweier Threads. Wer was darf:
   O(aktive)-Scan aus Phase 5.2.
 - `render_state_needs_reinit` (Header, `static inline`) — reine Entscheidung
   „Generation geaendert?“; host-unit-getestet in `tests/render_state_test.c`.
+
+## Hub-Key `FilterIntensity` — Stand geprueft 2026-08-23
+
+Aeltere Notizen (u. a. `vergleichs.md`, Projektregeln) behaupten, der Hub-Key
+sei zwar geparst, aber **nicht** mit dem Audio-Pfad verbunden. Das stimmt so
+**nicht mehr**. Der Weg ist vollstaendig:
+
+```text
+[GLOBAL] FilterIntensity=…   (Root-Kanalbeschreibung)
+  → hub_parser.c            → HubSettings.filterIntensity
+  → ts3_server_profile.c    → server_profile_apply()
+  → server_profile_get_filter_intensity()
+  → ts3_proximity_audio.c   → filterIntensity (0…1) blendet Lowpass-Cutoff,
+                              Direkt-/Reverb-Verhaeltnis und Richtungs-
+                              lautstaerke zwischen „aus“ und „voll“
+```
+
+Bei `RealisticAudio=0` oder `FilterIntensity=0` bleibt der realistische Zweig
+inaktiv — das ist gewollt, kein fehlender Anschluss.
+
+**Was wirklich tot ist:** die Legacy-Globale `hubAudioFilterIntensity`
+(`src/plugin.h`, `src/ui/plugin_ui_compat.c`). Sie wird nirgends geschrieben und
+nirgends gelesen; `hub_parser.c` kennt den Namen nur noch als **Alias** beim
+Parsen. Wer den Audio-Pfad sucht, darf sich davon nicht in die Irre fuehren
+lassen — die Globale ist ein Ueberbleibsel, kein Schalter.

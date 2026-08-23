@@ -57,6 +57,7 @@ typedef struct VoiceModeHooks {
     int  (*get_profile)(VoiceModeProfile* out);  /* 1 when out was filled */
     int  (*has_pending_chat)(void);              /* 1 when a chat line waits */
     void (*flush_pending_chat)(void);            /* print waiting chat lines */
+    void (*mode_changed)(void);                  /* edge: mode really switched */
 } VoiceModeHooks;
 
 /* Wire the real ts/ui functions (plugin init, callback thread). Passing NULL

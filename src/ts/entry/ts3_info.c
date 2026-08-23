@@ -1,12 +1,14 @@
 #include "ts3_exports.h"
 
 #include "ts/info/ts3_plugin_version.h"
+#include "ts/proximity/ts3_cemode.h"
 #include "plugin_modules.h"
 #include "ui/plugin_ui_compat.h"
 #include "plugin.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void ts3plugin_freeMemory(void* data) {
     if (data) {
@@ -65,6 +67,17 @@ void ts3plugin_infoData(uint64 serverConnectionHandlerID, uint64 id, enum Plugin
 
     if (!ts3_version_format_info(clientID, info, infoSize)) {
         snprintf(info, infoSize, "Conan Exiles Proximity Voice %s", ts3plugin_version());
+    }
+
+    /* Peer voice mode (CEMODE) — only shown once that client announced one. */
+    if (clientID != 0) {
+        const size_t used = strlen(info);
+        if (infoSize - used > 48) {
+            char mode[64];
+            if (ts3_cemode_format_peer(clientID, mode, sizeof(mode))) {
+                snprintf(info + used, infoSize - used, "\n%s", mode);
+            }
+        }
     }
 
     *data = info;
