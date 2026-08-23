@@ -156,6 +156,52 @@ static int http_parse_body(const char* body, PosSample* out) {
     return 1;
 }
 
+/* Log raw inbound request for Workshop-mod debugging (HTTP thread → log lock only).
+   Body is single-line + truncated so a high POST rate does not explode the log file. */
+static void http_log_raw_in(const char* method, const char* path,
+    const char* body, int bodyLen, int httpStatus) {
+    char raw[420];
+    int n = 0;
+    int i;
+
+    if (!method || !path) {
+        return;
+    }
+    if (!body) {
+        body = "";
+        bodyLen = 0;
+    }
+    if (bodyLen < 0) {
+        bodyLen = (int)strlen(body);
+    }
+
+    /* Copy body, collapse CR/LF/TAB to spaces for one log line. */
+    for (i = 0; i < bodyLen && n < (int)sizeof(raw) - 1; i++) {
+        const unsigned char c = (unsigned char)body[i];
+        if (c == '\r' || c == '\n' || c == '\t') {
+            raw[n++] = ' ';
+        }
+        else if (c >= 32 && c < 127) {
+            raw[n++] = (char)c;
+        }
+        else {
+            raw[n++] = '?'; /* non-printable → visible marker */
+        }
+    }
+    raw[n] = '\0';
+    if (bodyLen > n) {
+        /* Truncation marker if we ran out of buffer space. */
+        if (n >= 3) {
+            raw[n - 3] = '.';
+            raw[n - 2] = '.';
+            raw[n - 1] = '.';
+        }
+    }
+
+    log_write("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"",
+        method, path, httpStatus, bodyLen, raw);
+}
+
 /* Handle one accepted client connection. */
 static void http_handle_client(SOCKET client) {
     /* Per-connection recv timeout — prevents a stuck client from blocking. */
@@ -193,6 +239,7 @@ static void http_handle_client(SOCKET client) {
 
     /* GET /health */
     if (strcmp(method, "GET") == 0 && strcmp(path, "/health") == 0) {
+        http_log_raw_in(method, path, "", 0, 200);
         http_send(client, 200,
             "{\"ok\":true,\"service\":\"conan_exiles_ts\",\"url\":\"" POS_HTTP_BASE_URL "\"}");
         return;
@@ -227,16 +274,26 @@ static void http_handle_client(SOCKET client) {
         }
         buf[total] = '\0';
 
-        PosSample sample;
-        if (http_parse_body(buf + header_end, &sample)
-            && pos_inject_sample(&sample)) {
-            http_send(client, 200, "{\"ok\":true}");
-        } else {
-            http_send(client, 400, "{\"ok\":false,\"error\":\"invalid position\"}");
+        {
+            const char* body = buf + header_end;
+            const int bodyLen = (content_length > 0) ? content_length : (total - header_end);
+            PosSample sample;
+            int ok = http_parse_body(body, &sample) && pos_inject_sample(&sample);
+            const int status = ok ? 200 : 400;
+
+            http_log_raw_in(method, path, body, bodyLen, status);
+
+            if (ok) {
+                http_send(client, 200, "{\"ok\":true}");
+            }
+            else {
+                http_send(client, 400, "{\"ok\":false,\"error\":\"invalid position\"}");
+            }
         }
         return;
     }
 
+    http_log_raw_in(method, path, "", 0, 404);
     http_send(client, 404, "{\"ok\":false,\"error\":\"not found\"}");
 }
 

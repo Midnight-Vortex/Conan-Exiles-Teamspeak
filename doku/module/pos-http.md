@@ -160,3 +160,13 @@ Meter senden.
 4. Optional `Content-Type: application/json`
 5. Keine reservierten Header setzen
 6. In `OnSuccess`: `IsOK` prüfen
+
+## 9. Rohdaten im Plugin-Log
+
+Jeder Request erscheint im Plugin-Log als:
+
+```text
+HTTP: IN POST /v1/position status=200 cl=72 raw="{"seq":1,"x":12345.0,"y":67890.0,"z":200.0,"yaw":45.0}"
+```
+
+So siehst du **genau**, was der Mod gesendet hat (`raw=`), und ob das Plugin es akzeptiert hat (`status=200`) oder abgelehnt (`400`).

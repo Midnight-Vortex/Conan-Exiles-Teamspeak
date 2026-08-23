@@ -157,6 +157,16 @@ pwsh -NoProfile -File build\build_msvc.ps1 -SkipDeploy
 # → Build OK: conan_exiles.dll, 7.02 MB, 0 Fehler, 0 Warnungen
 ```
 
+**Rohdaten im Plugin-Log (Debugging Workshop-Mod):**
+Jeder eingehende Request schreibt eine Zeile:
+```text
+HTTP: IN POST /v1/position status=200 cl=72 raw="{"seq":1,"x":12345.0,...}"
+```
+- `status` = Antwortcode (200/400/404)
+- `cl` = Body-Länge
+- `raw` = empfangener Body (einzeilig, ggf. gekürzt)
+Pfad: übliches Plugin-Log unter dem TS3-Log-Ordner / konfigurierter Log-Pfad.
+
 **Manueller Funktionstest (nach Deploy + TS-Neustart):**
 ```powershell
 # Health-Check
