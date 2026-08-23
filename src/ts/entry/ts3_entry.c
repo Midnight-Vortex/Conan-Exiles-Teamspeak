@@ -24,6 +24,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/info/ts3_plugin_version.h"
 #include "core/voice/voice_modes.h"
+#include "core/http/pos_http_server.h"
 #include "plugin_modules.h"
 #include "ts/nick/nick_anonymize.h"
 #include "ui/overlay/voice_overlay.h"
@@ -121,6 +122,15 @@ static void overlay_request_immediate_start(void) {
    audio snapshots for all known speakers. No TS API calls in here. */
 static void ts3_on_local_position_update(void) {
     plugin_ui_on_position_tick();
+    chan_signal_position_update();
+    cepos_signal_send_pending();
+    ts3_ceping_signal_send_pending();
+    ts3_audio_on_local_position_update();
+}
+
+/* HTTP inject callback (HTTP listener thread): same as local update but
+   without plugin_ui_on_position_tick — overlay is NOT safe from HTTP thread. */
+static void ts3_on_http_position_update(void) {
     chan_signal_position_update();
     cepos_signal_send_pending();
     ts3_ceping_signal_send_pending();
@@ -316,6 +326,8 @@ int ts3plugin_init(void) {
     /* No tick callback: voice hotkeys are polled ONLY by the key-watcher
        thread (single owner of the arming/debounce state — see voice_modes.h). */
     pos_watcher_start();
+    pos_inject_set_notify_callback(ts3_on_http_position_update);
+    pos_http_server_start();
     overlay_schedule_start();
     if (log_is_enabled()) {
         prox_math_self_test();
@@ -357,6 +369,7 @@ void ts3plugin_shutdown(void) {
     /* 2: stop + join all plugin threads */
     removeKeyMonitoring();
     settings_dialog_shutdown();
+    pos_http_server_stop();
     pos_watcher_stop();
     overlay_stop();
     overlay_join_ui_thread();

@@ -52,6 +52,7 @@ CFLAGS=(
 LDLIBS=(
     -lkernel32 -luser32 -lgdi32 -lcomctl32 -lcomdlg32 -luxtheme
     -lole32 -loleaut32 -luuid -lshell32 -lshlwapi -ladvapi32 -lwinmm
+    -lws2_32
 )
 
 # Exact ClCompile list from project/Conan-Exiles-TeamSpeak.vcxproj (34 files).
@@ -63,6 +64,7 @@ SOURCES=(
     src/core/config/config.c
     src/core/mod_file/path_detect.c
     src/core/mod_file/pos_file.c
+    src/core/http/pos_http_server.c
     src/ts/adapter/ts3_adapter.c
     src/core/proximity/player_table.c
     src/core/proximity/proximity_math.c

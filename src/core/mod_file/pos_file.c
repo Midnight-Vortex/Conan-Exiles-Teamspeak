@@ -29,6 +29,11 @@ static HANDLE g_stopEvent = NULL;
 static volatile long g_watcherRunning = 0;
 static void (*g_updateCallback)(void) = NULL;
 static void (*g_tickCallback)(void) = NULL;
+static void (*g_injectNotifyCallback)(void) = NULL;
+/* Hold window: when an HTTP-injected position is active the watcher skips file
+   reads and does not invalidate coordinates. Written by any thread (x64 aligned
+   volatile ULONGLONG write is atomic); read only by the watcher thread. */
+static volatile ULONGLONG g_httpHoldUntilMs = 0;
 
 void pos_watcher_set_update_callback(void (*callback)(void)) {
     g_updateCallback = callback;
@@ -130,6 +135,37 @@ static int pos_sample_is_plausible(const PosSample* sample) {
     }
     if (fabsf(sample->x) < 1.0f && fabsf(sample->y) < 1.0f && fabsf(sample->z) < 1.0f) {
         return 0;
+    }
+    return 1;
+}
+
+/* ---- inject from external source --------------------------------------- */
+
+void pos_inject_set_notify_callback(void (*callback)(void)) {
+    g_injectNotifyCallback = callback;
+}
+
+int pos_inject_sample(const PosSample* sample) {
+    if (!sample || !pos_sample_is_plausible(sample)) {
+        return 0;
+    }
+    /* Guard: lock only exists while the watcher is running. */
+    if (InterlockedCompareExchange(&g_watcherRunning, 0, 0) == 0) {
+        return 0;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+
+    EnterCriticalSection(&g_posLock);
+    g_currentSample = *sample;
+    LeaveCriticalSection(&g_posLock);
+
+    InterlockedExchange(&g_coordinatesValid, 1);
+    g_lastValidTick = now;
+    g_httpHoldUntilMs = now + 2000ULL;
+
+    if (g_injectNotifyCallback) {
+        g_injectNotifyCallback();
     }
     return 1;
 }
@@ -298,6 +334,10 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 || age <= POS_FRESH_ACCEPT_MS
                 || (lastSeq >= 0 && sample.seq != lastSeq);
         }
+        /* HTTP hold: injected position is authoritative; block file overwrites. */
+        if (acceptRead && now < g_httpHoldUntilMs) {
+            acceptRead = 0;
+        }
 
         if (acceptRead) {
             EnterCriticalSection(&g_posLock);
@@ -330,9 +370,10 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             const int inGrace = currentlyValid
                 && g_lastValidTick != 0
                 && now - g_lastValidTick < POS_COORD_GRACE_MS;
+            const int httpHold = (now < g_httpHoldUntilMs);
 
-            if (inGrace) {
-                /* File stale/missing briefly — keep last good coords (login tolerance). */
+            if (inGrace || httpHold) {
+                /* Keep coords — file temporarily stale/missing (grace) or HTTP hold active. */
             }
             else if (currentlyValid) {
                 log_write("POS: coordinates invalid (file %s, age=%llums, grace=%llums)",

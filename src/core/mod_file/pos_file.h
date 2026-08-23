@@ -58,4 +58,14 @@ int pos_get_current(PosSample* out);
 /* 1 while Pos.txt is actively written or within the post-read grace window. */
 int pos_coordinates_valid(void);
 
+/* Inject a position sample from an external source (e.g. HTTP thread).
+   Callable from any thread; must NOT call the TS API.
+   Returns 1 if accepted (sample is plausible and watcher is running).
+   Accepted injections suppress Pos.txt overwrite for ~2 s (HTTP hold window). */
+int pos_inject_sample(const PosSample* sample);
+
+/* Register a callback invoked once after each successful pos_inject_sample.
+   Must be fast and must NOT call the TS API. Register before pos_watcher_start. */
+void pos_inject_set_notify_callback(void (*callback)(void));
+
 #endif /* CORE_MOD_FILE_POS_FILE_H */

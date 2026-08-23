@@ -61,6 +61,7 @@
     <ClInclude Include="..\src\core\config\config.h" />
     <ClInclude Include="..\src\core\mod_file\path_detect.h" />
     <ClInclude Include="..\src\core\mod_file\pos_file.h" />
+    <ClInclude Include="..\src\core\http\pos_http_server.h" />
     <ClInclude Include="..\src\ts\adapter\ts3_adapter.h" />
     <ClInclude Include="..\src\core\proximity\player_table.h" />
     <ClInclude Include="..\src\core\proximity\proximity_math.h" />
@@ -96,6 +97,7 @@
     <ClCompile Include="..\src\core\config\config.c" />
     <ClCompile Include="..\src\core\mod_file\path_detect.c" />
     <ClCompile Include="..\src\core\mod_file\pos_file.c" />
+    <ClCompile Include="..\src\core\http\pos_http_server.c" />
     <ClCompile Include="..\src\ts\adapter\ts3_adapter.c" />
     <ClCompile Include="..\src\core\proximity\player_table.c" />
     <ClCompile Include="..\src\core\proximity\proximity_math.c" />
@@ -168,7 +170,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
-      <AdditionalDependencies>comctl32.lib;Msimg32.lib;uxtheme.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>comctl32.lib;Msimg32.lib;uxtheme.lib;shell32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -193,7 +195,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
-      <AdditionalDependencies>comctl32.lib;Msimg32.lib;uxtheme.lib;shell32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>comctl32.lib;Msimg32.lib;uxtheme.lib;shell32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
