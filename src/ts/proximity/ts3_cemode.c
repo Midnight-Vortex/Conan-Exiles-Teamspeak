@@ -5,13 +5,15 @@
 #include "ts/proximity/ts3_client_limits.h"
 #include "core/voice/voice_modes.h"
 #include "core/util/log.h"
+#include "core/util/poll_interval.h"
 #include "plugin.h"
 
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
 
-#define CEMODE_SEND_MIN_MS      250
+/* Same 30 ms floor as CEPOS / CEDRAIN. Edge-triggered; this only caps bursts. */
+#define CEMODE_SEND_MIN_MS      PLUGIN_POLL_INTERVAL_MS
 
 /* One slot per client ID (sparse, bounded by TS3_MAX_CLIENT_ID). Written by
    the callback thread, read by the info panel — which TeamSpeak may call from

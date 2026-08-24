@@ -4,14 +4,15 @@
 #include "ts/proximity/ts3_ceping_wire.h"
 #include "ts/proximity/ts3_client_limits.h"
 #include "core/util/log.h"
+#include "core/util/poll_interval.h"
 #include "plugin.h"
 
 #include <windows.h>
 #include <string.h>
 
-/* One heartbeat per second is enough to spot lost update bursts without adding
-   noticeable traffic (CEPOS already runs at up to ~30 Hz while moving). */
-#define CEPING_SEND_MIN_MS      1000
+/* Same 30 ms floor as CEPOS / CEDRAIN: important wire traffic rides the
+   plugin poll tick. Still no idle traffic — only armed by a position update. */
+#define CEPING_SEND_MIN_MS      PLUGIN_POLL_INTERVAL_MS
 
 /* Per-client last seen sequence. Callback thread is the only owner (send,
    receive, clear and reset all run there), so no lock is needed — same
@@ -73,8 +74,9 @@ void ts3_ceping_flush(void) {
     now = GetTickCount64();
     if (g_lastSendMs != 0 && now - g_lastSendMs < CEPING_SEND_MIN_MS) {
         /* Not yet time. Drop the flag instead of re-arming a wakeup: the pos
-           watcher re-signals on its next tick, so a heartbeat is never lost
-           and the callback thread is never spun just to wait out the rate. */
+           watcher re-signals on its next 30 ms tick, so a heartbeat is never
+           lost and the callback thread is never spun just to wait out the
+           rate. */
         InterlockedExchange(&g_sendPending, 0);
         return;
     }

@@ -39,9 +39,9 @@ entscheidet, welches Modul die Nachricht bekommt.
 | `CEPOS:` | 6 | Base64 von `CeposPacket` (**56 Byte, eingefroren**) | Bewegung (gedrosselt) + 1 Hz Keepalive | `ts3_cepos.c` |
 | `CEDRAIN:` | 8 | `1` (Dummy) | Intern: Aufweck-Signal an den Callback-Thread | `ts3_entry.c` |
 | `CEVER:` | 6 | Versionstext, z. B. `8.0.4` | Beim Verbinden + einmalige Antwort pro Peer | `ts3_plugin_version.c` |
-| `CEMODE:` | 7 | `1;<mode>;<distanzDm>` | **Nur bei Moduswechsel** (Flanke) + Connect | `ts3_cemode.c` |
-| `CEPING:` | 7 | `1;<seq>` | Liveness-Heartbeat, ~1 Hz waehrend Positionsupdates | `ts3_ceping.c` |
-| `CEAUTH:` | 7 | `1;<steamID64>` | Weiche Identitaet: Connect + einmalige Antwort pro Peer | `ts3_ceauth.c` |
+| `CEMODE:` | 7 | `1;<mode>;<distanzDm>` | **Nur bei Moduswechsel** (Flanke) + Connect; Sende-Boden 30 ms | `ts3_cemode.c` |
+| `CEPING:` | 7 | `1;<seq>` | Liveness-Heartbeat, 30 ms-Tick waehrend Positionsupdates | `ts3_ceping.c` |
+| `CEAUTH:` | 7 | `1;<steamID64>` | Weiche Identitaet: Connect + einmalige Antwort pro Peer; Sende-Boden 30 ms | `ts3_ceauth.c` |
 
 ### 2.1 Warum die Praefixe nicht kollidieren
 
@@ -94,7 +94,9 @@ defekte Nachricht nie doppelt geparst.
    `ts3_client_id_valid()` pruefen, Zahlen auf Wertebereich pruefen
    (`isfinite`, Min/Max), Strings terminieren.
 6. **Drosseln.** Jedes Kommando braucht eine Mindestpause zwischen zwei Sends.
-   Flankenereignisse (Moduswechsel) senden zusaetzlich nur bei echter Aenderung.
+   Wichtige Sends (`CEPOS`, `CEMODE`, `CEPING`, `CEAUTH`) teilen sich denselben
+   Boden `PLUGIN_POLL_INTERVAL_MS` (30 ms). Flankenereignisse (Moduswechsel)
+   senden zusaetzlich nur bei echter Aenderung.
 7. **Keine Geheimnisse.** Alles ist fuer jeden Client lesbar und faelschbar —
    also niemals Passwoerter, Tokens oder Rechte darueber transportieren.
 8. **CEPOS bleibt eingefroren.** Die 56 Byte duerfen nicht wachsen. Neue
@@ -158,6 +160,8 @@ wird.
 Der Erstkontakt-Fall funktioniert wie beim Versions-Austausch (`CEVER:`):
 Wer ein `CEMODE:` von einem bisher unbekannten Client bekommt, antwortet
 **genau einmal** mit dem eigenen Modus. Danach ist der Austausch komplett.
+Zwei Sends liegen mindestens `PLUGIN_POLL_INTERVAL_MS` (30 ms) auseinander —
+derselbe Boden wie CEPOS/CEDRAIN, kein extra 250-ms-Warten.
 
 ### 4.3 Kein Ersatz fuer CEPOS
 
@@ -186,11 +190,13 @@ Beispiel: `CEPING:1;42`.
 
 ### 4a.2 Wann gesendet wird
 
-Der Sender erhoeht bei jedem tatsaechlichen Senden seinen Zaehler und schickt
-**hoechstens ~1× pro Sekunde** einen Heartbeat, angetrieben vom Positions-Tick
-(dem gleichen Auslöser wie CEPOS). Bewegt sich der Spieler nicht bzw. kommen
-keine Positionen, wird auch kein CEPING gesendet — im Leerlauf entsteht kein
-Zusatzverkehr.
+Der Sender erhoeht bei jedem tatsaechlichen Senden seinen Zaehler. Der
+Heartbeat haengt am Positions-Tick (derselbe Ausloeser wie CEPOS) und nutzt
+denselben Sende-Boden **`PLUGIN_POLL_INTERVAL_MS` (30 ms)**. Solange Positionen
+kommen, laeuft CEPING im Gleichschritt mit CEPOS; ein Sequenzsprung von 1
+entspricht damit einem verpassten 30-ms-Tick, nicht einer verpassten Sekunde.
+Bewegt sich der Spieler nicht bzw. kommen keine Positionen, wird auch kein
+CEPING gesendet — im Leerlauf entsteht kein Zusatzverkehr.
 
 ### 4a.3 Verlusterkennung (wraparound-sicher)
 
@@ -263,8 +269,9 @@ verworfen; ein additives Zusatzfeld hinten wird ignoriert.
 Genau wie `CEVER:`/`CEMODE:`: Wer ein `CEAUTH:` von einem bisher unbekannten
 Client bekommt, antwortet **genau einmal** mit der eigenen Identitaet. Die
 Antwort wird in den naechsten CEDRAIN gebuendelt — N gleichzeitig beitretende
-Peers kosten **einen** Broadcast, nicht N. Da die Identitaet konstant ist, gibt
-es keinen periodischen Verkehr.
+Peers kosten **einen** Broadcast, nicht N. Zwei Sends liegen mindestens
+`PLUGIN_POLL_INTERVAL_MS` (30 ms) auseinander. Da die Identitaet konstant ist,
+gibt es keinen periodischen Verkehr.
 
 ### 4b.3 Kein Ersatz fuer irgendetwas
 

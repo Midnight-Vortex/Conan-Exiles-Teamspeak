@@ -13,10 +13,10 @@
  *   payloadVersion  currently 1; a receiver drops what it does not know
  *   seq             uint32 heartbeat counter, wraps around at 2^32
  *
- * CEPING is a low-rate liveness heartbeat. The receiver watches the sequence
- * per peer: a forward jump of more than 1 means heartbeats (and therefore the
- * position stream they accompany) were lost. It never changes how anything
- * sounds — it is diagnostics only.
+ * CEPING is a liveness heartbeat on the same 30 ms poll tick as CEPOS.
+ * The receiver watches the sequence per peer: a forward jump of more than 1
+ * means heartbeats (and therefore the position stream they accompany) were
+ * lost. It never changes how anything sounds — it is diagnostics only.
  */
 
 #include <stddef.h>
