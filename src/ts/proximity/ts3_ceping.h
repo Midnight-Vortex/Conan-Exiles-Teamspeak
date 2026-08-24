@@ -2,16 +2,18 @@
 #define TS3_PROXIMITY_TS3_CEPING_H
 
 /*
- * CEPING — low-rate liveness heartbeat (see doku/module/ce-protokoll.md).
+ * CEPING — liveness heartbeat on the 30 ms plugin poll tick
+ * (see doku/module/ce-protokoll.md).
  *
  * Wire format: plugin command "CEPING:<payloadVersion>;<seq>", e.g.
  * "CEPING:1;42". The codec itself lives in ts3_ceping_wire.h (host-tested).
  *
- * Purpose: each client sends a slowly-increasing sequence number alongside its
- * position stream. A receiver watches the per-peer sequence; a forward jump of
- * more than 1 means heartbeats — and the CEPOS updates they ride with — were
- * lost, which it logs for diagnosis. CEPING never changes how anything sounds;
- * a missing CEPING (old client, packet loss) only means no liveness log.
+ * Purpose: each client sends an increasing sequence number alongside its
+ * position stream (PLUGIN_POLL_INTERVAL_MS, same floor as CEPOS). A receiver
+ * watches the per-peer sequence; a forward jump of more than 1 means
+ * heartbeats — and the CEPOS updates they ride with — were lost, which it
+ * logs for diagnosis. CEPING never changes how anything sounds; a missing
+ * CEPING (old client, packet loss) only means no liveness log.
  *
  * Thread contract:
  *  - ts3_ceping_signal_send_pending / ts3_ceping_send_pending: any thread
