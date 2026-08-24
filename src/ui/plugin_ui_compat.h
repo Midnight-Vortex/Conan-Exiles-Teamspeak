@@ -47,6 +47,9 @@ int config_dialog_is_open(void);
 /* Open %AppData%\\TS3Client\\plugins in Explorer (any thread; non-blocking). */
 void open_ts3_plugins_folder(void);
 
+/* Open Documents\\Conan Exiles TeamSpeak plugin in Explorer (any thread; non-blocking). */
+void open_plugin_log_folder(void);
+
 /* Legacy voice_modes.c symbol used by config_files / UI. */
 float getVoiceDistanceForMode(uint8_t voiceMode);
 

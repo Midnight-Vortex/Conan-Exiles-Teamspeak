@@ -14,7 +14,8 @@
 /* Plugins → Conan Exiles submenu (PLUGIN_MENU_TYPE_GLOBAL). IDs are ours. */
 enum {
     MENU_ID_SETTINGS = 1,
-    MENU_ID_OPEN_PLUGINS_FOLDER = 2
+    MENU_ID_OPEN_PLUGINS_FOLDER = 2,
+    MENU_ID_OPEN_LOG_FOLDER = 3
 };
 
 static struct PluginMenuItem* menu_item_create(enum PluginMenuType type, int id,
@@ -38,8 +39,8 @@ void ts3plugin_initMenus(struct PluginMenuItem*** menuItems, char** menuIcon) {
     }
     *menuIcon = NULL; /* no plugin submenu icon */
 
-    /* 2 items + NULL terminator — TeamSpeak frees each entry via freeMemory. */
-    items = (struct PluginMenuItem**)malloc(sizeof(struct PluginMenuItem*) * 3);
+    /* 3 items + NULL terminator — TeamSpeak frees each entry via freeMemory. */
+    items = (struct PluginMenuItem**)malloc(sizeof(struct PluginMenuItem*) * 4);
     if (!items) {
         *menuItems = NULL;
         return;
@@ -48,10 +49,13 @@ void ts3plugin_initMenus(struct PluginMenuItem*** menuItems, char** menuIcon) {
         "Einstellungen");
     items[1] = menu_item_create(PLUGIN_MENU_TYPE_GLOBAL, MENU_ID_OPEN_PLUGINS_FOLDER,
         "Plugins-Ordner oeffnen");
-    items[2] = NULL;
-    if (!items[0] || !items[1]) {
+    items[2] = menu_item_create(PLUGIN_MENU_TYPE_GLOBAL, MENU_ID_OPEN_LOG_FOLDER,
+        "Log-Ordner oeffnen");
+    items[3] = NULL;
+    if (!items[0] || !items[1] || !items[2]) {
         free(items[0]);
         free(items[1]);
+        free(items[2]);
         free(items);
         *menuItems = NULL;
         return;
@@ -77,6 +81,9 @@ void ts3plugin_onMenuItemEvent(uint64 serverConnectionHandlerID, enum PluginMenu
         break;
     case MENU_ID_OPEN_PLUGINS_FOLDER:
         open_ts3_plugins_folder();
+        break;
+    case MENU_ID_OPEN_LOG_FOLDER:
+        open_plugin_log_folder();
         break;
     default:
         break;

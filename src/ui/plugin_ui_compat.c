@@ -205,6 +205,26 @@ void open_ts3_plugins_folder(void) {
     ShellExecuteW(NULL, L"open", path, NULL, NULL, SW_SHOWNORMAL);
 }
 
+void open_plugin_log_folder(void) {
+    const wchar_t* file = log_get_path();
+    if (!file) {
+        return;
+    }
+    wchar_t folder[MAX_PATH];
+    if (wcscpy_s(folder, MAX_PATH, file) != 0) {
+        return;
+    }
+    wchar_t* slash = wcsrchr(folder, L'\\');
+    if (!slash) {
+        return;
+    }
+    *slash = L'\0';
+    if (folder[0] == L'\0') {
+        return;
+    }
+    ShellExecuteW(NULL, L"open", folder, NULL, NULL, SW_SHOWNORMAL);
+}
+
 double hubMinimumWhisper = 0.0;
 double hubMaximumWhisper = 5.0;
 double hubMinimumNormal = 5.0;
