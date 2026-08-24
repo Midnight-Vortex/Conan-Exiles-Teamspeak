@@ -84,12 +84,12 @@ static int pos_read_raw(const wchar_t* filePath, char* buffer, size_t bufferSize
     return 0;
 }
 
-static int pos_parse_field(const char* buffer, const char* key, float* out) {
+static int pos_parse_field(const char* buffer, const char* key, double* out) {
     const char* p = strstr(buffer, key);
     if (!p) {
         return 0;
     }
-    *out = (float)strtod(p + strlen(key), NULL);
+    *out = strtod(p + strlen(key), NULL);
     return 1;
 }
 
@@ -103,7 +103,7 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
         return 0;
     }
 
-    float seq = 0.0f;
+    double seq = 0.0;
     PosSample sample;
     memset(&sample, 0, sizeof(sample));
 
@@ -118,7 +118,7 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
 
     /* YAWY is optional (older mod versions). */
     if (!pos_parse_field(buffer, "YAWY=", &sample.yawY)) {
-        sample.yawY = 0.0f;
+        sample.yawY = 0.0;
     }
 
     *out = sample;
@@ -133,7 +133,7 @@ static int pos_sample_is_plausible(const PosSample* sample) {
     if (!isfinite(sample->x) || !isfinite(sample->y) || !isfinite(sample->z)) {
         return 0;
     }
-    if (fabsf(sample->x) < 1.0f && fabsf(sample->y) < 1.0f && fabsf(sample->z) < 1.0f) {
+    if (fabs(sample->x) < 1.0 && fabs(sample->y) < 1.0 && fabs(sample->z) < 1.0) {
         return 0;
     }
     return 1;
@@ -321,7 +321,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
         if (readOk && !pos_sample_is_plausible(&sample)) {
             if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
                 lastValidLog = now;
-                log_debug("POS: read rejected (invalid coords seq=%d pos=%.1f/%.1f/%.1f)",
+                log_debug("POS: read rejected (invalid coords seq=%d pos=X=%.6f Y=%.6f Z=%.6f)",
                     sample.seq, sample.x, sample.y, sample.z);
             }
             readOk = 0;
@@ -347,7 +347,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             g_lastValidTick = now;
 
             if (!currentlyValid) {
-                log_write("POS: coordinates valid (seq=%d pos=%.1f/%.1f/%.1f yaw=%.1f)",
+                log_write("POS: coordinates valid (seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f)",
                     sample.seq, sample.x, sample.y, sample.z, sample.yaw);
             }
             InterlockedExchange(&g_coordinatesValid, 1);
@@ -355,7 +355,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             if (sample.seq != lastSeq || now - lastValidLog > POS_LOG_THROTTLE_MS) {
                 if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
                     lastValidLog = now;
-                    log_debug("POS: seq=%d pos=%.1f/%.1f/%.1f yaw=%.1f yawY=%.1f age=%llums",
+                    log_debug("POS: seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f age=%llums",
                         sample.seq, sample.x, sample.y, sample.z,
                         sample.yaw, sample.yawY, (unsigned long long)age);
                 }

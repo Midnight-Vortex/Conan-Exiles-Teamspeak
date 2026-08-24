@@ -6,7 +6,7 @@
  *
  * File format (single line, values may use comma decimals on DE locale):
  *   SEQ=<int> X=<float> Y=<float> Z=<float> YAW=<float> [YAWY=<float>]
- *   X/Y/Z are centimeters; consumers divide by 100 for meters.
+ *   X/Y/Z are centimeters (stored as double internally); consumers divide by 100 for meters.
  *
  * Thread contract:
  *  - pos_file_read_once: pure read, callable from any thread.
@@ -21,11 +21,11 @@
 
 typedef struct PosSample {
     int seq;
-    float x;      /* centimeters */
-    float y;
-    float z;
-    float yaw;    /* degrees */
-    float yawY;   /* degrees, 0 if missing */
+    double x;     /* centimeters — double preserves Pos.txt/HTTP digits until CEPOS float wire */
+    double y;
+    double z;
+    double yaw;   /* degrees */
+    double yawY;  /* degrees, 0 if missing */
 } PosSample;
 
 /* Read + parse Pos.txt once. Returns 1 on success. Shared-access open with

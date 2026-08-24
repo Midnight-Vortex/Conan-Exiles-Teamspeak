@@ -9,6 +9,8 @@
  *   - start/stop:   TS callback thread.
  *   - Listener thread: never calls the TS API; calls pos_inject_sample()
  *     which is safe from any thread. No overlay, no UI.
+ *   - Debug logging (rate summary, POST fields, raw lines): HTTP thread only,
+ *     via log_write / log_debug (log module lock — never TS API).
  *
  * winsock2.h MUST precede windows.h — kept first here.
  */
@@ -39,6 +41,17 @@ static HANDLE        g_httpThread   = NULL;
 static HANDLE        g_stopEvent    = NULL;
 static volatile long g_httpRunning  = 0;
 
+/* POST rate stats — HTTP listener thread only (sequential accept+handle). */
+static ULONGLONG g_httpLastTick     = 0;
+static ULONGLONG g_httpWindowStart  = 0;
+static int       g_httpWindowCount  = 0;
+static int       g_httpWindowOk     = 0;
+static int       g_httpWindowFail   = 0;
+static int       g_httpDtSamples    = 0;
+static ULONGLONG g_httpDtMin        = MAXULONGLONG;
+static ULONGLONG g_httpDtMax        = 0;
+static ULONGLONG g_httpDtSum        = 0;
+
 /* ---- helpers ----------------------------------------------------------- */
 
 /* Send a complete HTTP/1.1 response and close the connection. */
@@ -63,7 +76,7 @@ static void http_send(SOCKET s, int status, const char* body) {
 }
 
 /* Parse a named float field from a JSON body: "key": <number> */
-static int json_float(const char* buf, const char* key, float* out) {
+static int json_float(const char* buf, const char* key, double* out) {
     /* Build search token: "key": */
     char token[48];
     if (snprintf(token, sizeof(token), "\"%s\":", key) >= (int)sizeof(token)) {
@@ -79,19 +92,19 @@ static int json_float(const char* buf, const char* key, float* out) {
         p++;
     }
     char* end;
-    *out = (float)strtod(p, &end);
+    *out = strtod(p, &end);
     return (end != p) ? 1 : 0;
 }
 
 /* Parse a named float field from a Pos.txt line: KEY=<number> */
-static int pos_float(const char* buf, const char* key, float* out) {
+static int pos_float(const char* buf, const char* key, double* out) {
     const char* p = strstr(buf, key);
     if (!p) {
         return 0;
     }
     p += strlen(key);
     char* end;
-    *out = (float)strtod(p, &end);
+    *out = strtod(p, &end);
     return (end != p) ? 1 : 0;
 }
 
@@ -113,7 +126,7 @@ static int http_parse_body(const char* body, PosSample* out) {
 
     if (*body == '{') {
         /* JSON format — lowercase field names per spec. */
-        float seq = 0.0f;
+        double seq = 0.0;
         if (!json_float(body, "x", &out->x)
             || !json_float(body, "y", &out->y)
             || !json_float(body, "z", &out->z)
@@ -122,7 +135,7 @@ static int http_parse_body(const char* body, PosSample* out) {
         }
         json_float(body, "seq", &seq);
         if (!json_float(body, "yawY", &out->yawY)) {
-            out->yawY = 0.0f;
+            out->yawY = 0.0;
         }
         out->seq = (int)seq;
     } else {
@@ -140,7 +153,7 @@ static int http_parse_body(const char* body, PosSample* out) {
             }
         }
 
-        float seq = 0.0f;
+        double seq = 0.0;
         if (!pos_float(normalized, "SEQ=", &seq)
             || !pos_float(normalized, "X=", &out->x)
             || !pos_float(normalized, "Y=", &out->y)
@@ -149,34 +162,30 @@ static int http_parse_body(const char* body, PosSample* out) {
             return 0;
         }
         if (!pos_float(normalized, "YAWY=", &out->yawY)) {
-            out->yawY = 0.0f;
+            out->yawY = 0.0;
         }
         out->seq = (int)seq;
     }
     return 1;
 }
 
-/* Log raw inbound request for Workshop-mod debugging (HTTP thread → log lock only).
-   Body is single-line + truncated so a high POST rate does not explode the log file. */
-static void http_log_raw_in(const char* method, const char* path,
-    const char* body, int bodyLen, int httpStatus) {
-    char raw[420];
+/* Collapse body to a single printable line (truncated). Returns bytes written. */
+static int http_format_raw(const char* body, int bodyLen, char* raw, int rawSize) {
     int n = 0;
     int i;
 
-    if (!method || !path) {
-        return;
+    if (!raw || rawSize <= 0) {
+        return 0;
     }
+    raw[0] = '\0';
     if (!body) {
         body = "";
-        bodyLen = 0;
     }
     if (bodyLen < 0) {
         bodyLen = (int)strlen(body);
     }
 
-    /* Copy body, collapse CR/LF/TAB to spaces for one log line. */
-    for (i = 0; i < bodyLen && n < (int)sizeof(raw) - 1; i++) {
+    for (i = 0; i < bodyLen && n < rawSize - 1; i++) {
         const unsigned char c = (unsigned char)body[i];
         if (c == '\r' || c == '\n' || c == '\t') {
             raw[n++] = ' ';
@@ -185,21 +194,87 @@ static void http_log_raw_in(const char* method, const char* path,
             raw[n++] = (char)c;
         }
         else {
-            raw[n++] = '?'; /* non-printable → visible marker */
+            raw[n++] = '?';
         }
     }
     raw[n] = '\0';
-    if (bodyLen > n) {
-        /* Truncation marker if we ran out of buffer space. */
-        if (n >= 3) {
-            raw[n - 3] = '.';
-            raw[n - 2] = '.';
-            raw[n - 1] = '.';
+    if (bodyLen > n && n >= 3) {
+        raw[n - 3] = '.';
+        raw[n - 2] = '.';
+        raw[n - 1] = '.';
+    }
+    return n;
+}
+
+/* Log raw inbound request. 200 → log_debug; 400/404 → log_write. */
+static void http_log_raw_in(const char* method, const char* path,
+    const char* body, int bodyLen, int httpStatus) {
+    char raw[420];
+
+    if (!method || !path) {
+        return;
+    }
+    http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
+
+    if (httpStatus == 200) {
+        log_debug("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"",
+            method, path, httpStatus, bodyLen, raw);
+    }
+    else {
+        log_write("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"",
+            method, path, httpStatus, bodyLen, raw);
+    }
+}
+
+/* Update POST rate stats; emit ~1 Hz summary via log_write. */
+static void http_post_rate_tick(int injected, ULONGLONG dtMs) {
+    const ULONGLONG now = GetTickCount64();
+
+    if (g_httpLastTick != 0) {
+        if (dtMs < g_httpDtMin) {
+            g_httpDtMin = dtMs;
         }
+        if (dtMs > g_httpDtMax) {
+            g_httpDtMax = dtMs;
+        }
+        g_httpDtSum += dtMs;
+        g_httpDtSamples++;
+    }
+    g_httpLastTick = now;
+
+    if (g_httpWindowStart == 0) {
+        g_httpWindowStart = now;
+    }
+    g_httpWindowCount++;
+    if (injected) {
+        g_httpWindowOk++;
+    }
+    else {
+        g_httpWindowFail++;
     }
 
-    log_write("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"",
-        method, path, httpStatus, bodyLen, raw);
+    if (now - g_httpWindowStart >= 1000ULL) {
+        const ULONGLONG dtMinOut = (g_httpDtMin == MAXULONGLONG) ? 0ULL : g_httpDtMin;
+        const ULONGLONG dtAvgOut = (g_httpDtSamples > 0)
+            ? (g_httpDtSum / (ULONGLONG)g_httpDtSamples) : 0ULL;
+
+        log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d",
+            g_httpWindowCount,
+            (unsigned long long)dtMinOut,
+            (unsigned long long)dtAvgOut,
+            (unsigned long long)g_httpDtMax,
+            g_httpWindowOk,
+            g_httpWindowFail);
+
+        g_httpWindowStart = now;
+        g_httpWindowCount = 0;
+        g_httpWindowOk = 0;
+        g_httpWindowFail = 0;
+        g_httpDtSamples = 0;
+        g_httpDtMin = MAXULONGLONG;
+        g_httpDtMax = 0;
+        g_httpDtSum = 0;
+    }
 }
 
 /* Handle one accepted client connection. */
@@ -278,12 +353,44 @@ static void http_handle_client(SOCKET client) {
             const char* body = buf + header_end;
             const int bodyLen = (content_length > 0) ? content_length : (total - header_end);
             PosSample sample;
-            int ok = http_parse_body(body, &sample) && pos_inject_sample(&sample);
-            const int status = ok ? 200 : 400;
+            const int parsed = http_parse_body(body, &sample);
+            const int injected = parsed && pos_inject_sample(&sample);
+            const int status = injected ? 200 : 400;
+            const ULONGLONG now = GetTickCount64();
+            ULONGLONG dtMs = 0;
 
-            http_log_raw_in(method, path, body, bodyLen, status);
+            if (g_httpLastTick != 0) {
+                dtMs = now - g_httpLastTick;
+            }
 
-            if (ok) {
+            http_post_rate_tick(injected, dtMs);
+
+            if (parsed) {
+                log_debug("HTTP: POST seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f dt=%llums status=%d",
+                    sample.seq,
+                    sample.x, sample.y, sample.z,
+                    sample.yaw, sample.yawY,
+                    (unsigned long long)dtMs,
+                    status);
+            }
+            else {
+                char raw[420];
+                http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
+                log_write("HTTP: POST status=400 reason=parse cl=%d raw=\"%s\"",
+                    bodyLen, raw);
+            }
+
+            if (parsed && !injected) {
+                char raw[420];
+                http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
+                log_write("HTTP: POST status=400 reason=reject seq=%d pos=X=%.6f Y=%.6f Z=%.6f cl=%d raw=\"%s\"",
+                    sample.seq,
+                    sample.x, sample.y, sample.z,
+                    bodyLen, raw);
+            }
+
+            if (injected) {
+                http_log_raw_in(method, path, body, bodyLen, 200);
                 http_send(client, 200, "{\"ok\":true}");
             }
             else {

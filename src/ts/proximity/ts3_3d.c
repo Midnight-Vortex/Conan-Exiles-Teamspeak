@@ -182,9 +182,9 @@ void ts3d_on_custom_rolloff(anyID clientID, float distance, float* volume) {
 /* ---- apply (callback thread driver) --------------------------------------------- */
 
 static int ts3d_in_hear_range(const PosSample* local, const PlayerEntry* remote) {
-    const float lx = local->x / 100.0f;
-    const float ly = local->y / 100.0f;
-    const float lz = local->z / 100.0f;
+    const float lx = (float)(local->x / 100.0);
+    const float ly = (float)(local->y / 100.0);
+    const float lz = (float)(local->z / 100.0);
     const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
     const float hearRange = remote->voiceDistance + server_profile_get_listen_add_distance();
     return dist <= hearRange * TS3D_CULL_MARGIN + TS3D_CULL_PAD_M;
@@ -210,12 +210,12 @@ void ts3d_apply(void) {
     ts3d_init();
 
     /* Same yaw -> direction mapping as the CEPOS packet (cepos_build_local). */
-    const float yawRad = local.yaw * TS3D_PI / 180.0f;
+    const float yawRad = (float)(local.yaw * TS3D_PI / 180.0);
     const float fwdX = -cosf(yawRad);
-    const float fwdY = sinf(-local.yawY * TS3D_PI / 180.0f);
+    const float fwdY = sinf((float)(-local.yawY * TS3D_PI / 180.0));
     const float fwdZ = -sinf(yawRad);
 
-    ts3d_set_listener(local.x / 100.0f, local.y / 100.0f, local.z / 100.0f,
+    ts3d_set_listener((float)(local.x / 100.0), (float)(local.y / 100.0), (float)(local.z / 100.0),
         fwdX, fwdY, fwdZ);
 
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];

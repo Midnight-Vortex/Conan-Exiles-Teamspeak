@@ -401,7 +401,7 @@ static int audio_local_zone(const HubSettings* hub, const PosSample* local,
     if (!hubActive || !localValid || hub->zoneCount <= 0) {
         return -1;
     }
-    return zone_resolve(hub, local->x / 100.0f, local->y / 100.0f, local->z / 100.0f);
+    return zone_resolve(hub, (float)(local->x / 100.0), (float)(local->y / 100.0), (float)(local->z / 100.0));
 }
 
 /* Callback thread only (updates the per-client hysteresis latch). enter =
@@ -411,9 +411,9 @@ static int audio_in_hear_range(anyID clientID, const PosSample* local, int local
     if (!localValid || !remote) {
         return 1;
     }
-    const float lx = local->x / 100.0f;
-    const float ly = local->y / 100.0f;
-    const float lz = local->z / 100.0f;
+    const float lx = (float)(local->x / 100.0);
+    const float ly = (float)(local->y / 100.0);
+    const float lz = (float)(local->z / 100.0);
     const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
     const float enterDist = remote->voiceDistance + listenAdd;
     const float exitDist = enterDist + TS3_AUDIO_EXIT_MARGIN_M;
@@ -461,9 +461,9 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         return;
     }
 
-    const float lx = local->x / 100.0f;
-    const float ly = local->y / 100.0f;
-    const float lz = local->z / 100.0f;
+    const float lx = (float)(local->x / 100.0);
+    const float ly = (float)(local->y / 100.0);
+    const float lz = (float)(local->z / 100.0);
     const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
 
     int soundproof = 0;
@@ -488,9 +488,9 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     float gain = soundproof ? 0.0f
         : prox_volume_from_distance(distance, hearRange, maxVolume);
 
-    const float yawRad = local->yaw * TS3_CEPOS_PI / 180.0f;
+    const float yawRad = (float)(local->yaw * TS3_CEPOS_PI / 180.0);
     const float dirX = -cosf(yawRad);
-    const float dirY = sinf(-local->yawY * TS3_CEPOS_PI / 180.0f);
+    const float dirY = sinf((float)(-local->yawY * TS3_CEPOS_PI / 180.0));
     const float dirZ = -sinf(yawRad);
     const float toRemoteX = remote.x - lx;
     const float toRemoteY = remote.y - ly;

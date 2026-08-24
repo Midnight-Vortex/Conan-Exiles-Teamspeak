@@ -311,12 +311,12 @@ void plugin_ui_sync_live_state(void) {
 
     PosSample localPos;
     if (pos_get_current(&localPos)) {
-        axe_x = localPos.x;
-        axe_y = localPos.y;
-        axe_z = localPos.z;
-        localPlayerPosition.x = localPos.x / 100.0f;
-        localPlayerPosition.y = localPos.y / 100.0f;
-        localPlayerPosition.z = localPos.z / 100.0f;
+        axe_x = (float)localPos.x;
+        axe_y = (float)localPos.y;
+        axe_z = (float)localPos.z;
+        localPlayerPosition.x = (float)(localPos.x / 100.0);
+        localPlayerPosition.y = (float)(localPos.y / 100.0);
+        localPlayerPosition.z = (float)(localPos.z / 100.0);
     }
 
     /* V8.5: channel_manage (ts/channel) is the SINGLE source of the hub/ingame
@@ -369,7 +369,8 @@ void plugin_ui_sync_live_state(void) {
         }
         PosSample local;
         if (pos_get_current(&local)) {
-            currentZoneIndex = zone_resolve(&hub, local.x / 100.0f, local.y / 100.0f, local.z / 100.0f);
+            currentZoneIndex = zone_resolve(&hub,
+                (float)(local.x / 100.0), (float)(local.y / 100.0), (float)(local.z / 100.0));
         }
         else {
             currentZoneIndex = -1;

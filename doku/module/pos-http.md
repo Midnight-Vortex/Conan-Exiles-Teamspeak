@@ -163,10 +163,58 @@ Meter senden.
 
 ## 9. Rohdaten im Plugin-Log
 
-Jeder Request erscheint im Plugin-Log als:
+Bei hoher POST-Rate (~30 ms) würde jede Zeile das Log überfluten. Deshalb gibt es **zwei Stufen**:
+
+| Stufe | Wann | Sichtbar |
+|---|---|---|
+| **Rate-Zusammenfassung** | ~1× pro Sekunde bei aktivem POST | immer (`log_write`) |
+| **Einzel-Sample** | jeder erfolgreiche POST | nur mit `debug=1` in `plugin.cfg` (`log_debug`) |
+| **Fehler** | jeder 400 (Parse oder Reject) | immer (`log_write`) |
+
+### Rate-Zeile (immer)
 
 ```text
-HTTP: IN POST /v1/position status=200 cl=72 raw="{"seq":1,"x":12345.0,"y":67890.0,"z":200.0,"yaw":45.0}"
+HTTP: rate n=33/s dt=min/avg/max=28/30/35ms ok=33 fail=0
 ```
 
-So siehst du **genau**, was der Mod gesendet hat (`raw=`), und ob das Plugin es akzeptiert hat (`status=200`) oder abgelehnt (`400`).
+- `n` — POST-Anzahl in diesem 1-Sekunden-Fenster  
+- `dt` — Abstand zwischen zwei POSTs (Minimum / Durchschnitt / Maximum in ms)  
+- `ok` / `fail` — wie viele Inject-Erfolge vs. Fehler (400)
+
+### Erfolg — DBG-Zeile (`debug=1` in plugin.cfg)
+
+```text
+DBG HTTP: POST seq=42 pos=X=12345.000000 Y=67890.000000 Z=200.000000 YAW=45.000000 YAWY=0.000000 dt=30ms status=200
+```
+
+(Hinweis ab Änderung 041: Koordinaten werden intern als `double` gehalten; Debug-Logs zeigen `%.6f` mit `X=`/`Y=`/`Z=` — volle geparste Ziffern, nicht mehr `%.1f`.)
+
+Optional zusätzlich (ebenfalls nur DBG):
+
+```text
+DBG HTTP: IN POST /v1/position status=200 cl=72 raw="{"seq":42,...}"
+```
+
+### Fehler — immer sichtbar
+
+**Body nicht parsebar** (fehlende Pflichtfelder, kein JSON/Pos-Zeile):
+
+```text
+HTTP: POST status=400 reason=parse cl=12 raw="..."
+```
+
+**Body parsebar, aber Plugin lehnt ab** (z. B. Koordinaten nahe `(0,0,0)` oder Pos-Watcher nicht aktiv):
+
+```text
+HTTP: POST status=400 reason=reject seq=1 pos=X=0.000000 Y=0.000000 Z=0.000000 cl=58 raw="..."
+```
+
+### Debug aktivieren
+
+In `%AppData%\TS3Client\plugins\conan_exiles\plugin.cfg` (oder Plugin-Config-Pfad):
+
+```ini
+debug=1
+```
+
+Ohne `debug=1` siehst du weiterhin Rate-Zeilen und alle 400-Fehler — aber keine einzelne Erfolgs-Zeile pro Sample.

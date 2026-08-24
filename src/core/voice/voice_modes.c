@@ -124,7 +124,7 @@ float voice_mode_get_distance(VoiceMode mode) {
         PosSample local;
         if (pos_get_current(&local)) {
             const int zone = zone_resolve(hub,
-                local.x / 100.0f, local.y / 100.0f, local.z / 100.0f);
+                (float)(local.x / 100.0), (float)(local.y / 100.0), (float)(local.z / 100.0));
             if (zone >= 0) {
                 const HubZone* z = &hub->zones[zone];
                 float zoneDist = 0.0f;

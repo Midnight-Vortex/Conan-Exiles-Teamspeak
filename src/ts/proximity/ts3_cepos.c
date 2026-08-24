@@ -107,13 +107,13 @@ static size_t base64_decode(const char* input, uint8_t* output, size_t outputMax
 static void cepos_build_local(const PosSample* sample, CeposPacket* out) {
     memset(out, 0, sizeof(*out));
 
-    out->x = sample->x / 100.0f;
-    out->y = sample->y / 100.0f;
-    out->z = sample->z / 100.0f;
+    out->x = (float)(sample->x / 100.0);
+    out->y = (float)(sample->y / 100.0);
+    out->z = (float)(sample->z / 100.0);
 
-    const float yawRad = sample->yaw * CEPOS_PI / 180.0f;
+    const float yawRad = (float)(sample->yaw * CEPOS_PI / 180.0);
     out->dirX = -cosf(yawRad);
-    out->dirY = sinf(-sample->yawY * CEPOS_PI / 180.0f);
+    out->dirY = sinf((float)(-sample->yawY * CEPOS_PI / 180.0));
     out->dirZ = -sinf(yawRad);
 
     out->axisX = 0.0f;
@@ -213,7 +213,7 @@ void cepos_flush(void) {
         static ULONGLONG s_lastSendLog = 0;
         if (now - s_lastSendLog >= 10000) {
             s_lastSendLog = now;
-            log_debug("CEPOS: SEND name='%.15s' pos=(%.1f,%.1f,%.1f) voiceDist=%.1f",
+            log_debug("CEPOS: SEND name='%.15s' pos=X=%.6f Y=%.6f Z=%.6f voiceDist=%.6f",
                 packet.playerName, packet.x, packet.y, packet.z, packet.voiceDistance);
         }
     }
@@ -313,7 +313,7 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
             || now - s_recvLog[slot].lastLog >= 10000) {
             s_recvLog[slot].clientID = invokerClientID;
             s_recvLog[slot].lastLog = now;
-            log_debug("CEPOS: RECV from=%u name='%s' pos=(%.1f,%.1f,%.1f) voiceDist=%.1f",
+            log_debug("CEPOS: RECV from=%u name='%s' pos=X=%.6f Y=%.6f Z=%.6f voiceDist=%.6f",
                 (unsigned)invokerClientID, safeName,
                 packet->x, packet->y, packet->z, packet->voiceDistance);
         }
