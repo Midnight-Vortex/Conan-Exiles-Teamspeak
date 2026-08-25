@@ -11,7 +11,9 @@
  *     which is safe from any thread. No overlay, no UI.
  *   - Logging (rate summary, POST success, errors, raw IN for GET/404): HTTP
  *     thread only, via log_write / log_debug (log module lock — never TS API).
- *     Successful POST /v1/position → one log_write line (always visible).
+ *     Successful POST /v1/position → http_send first, then log_debug per sample
+ *     (visible with debug=1); ~1 Hz log_write rate line includes last ok seq/pos.
+ *     POST 400 (parse/reject) → http_send first, then log_write (always visible).
  *     Dropped connections (recv fail / incomplete headers) → throttled drop log
  *     (~1 Hz max). Per-connection recv timeout: 100 ms (fail-fast).
  *
@@ -55,6 +57,10 @@ static int       g_httpDtSamples    = 0;
 static ULONGLONG g_httpDtMin        = MAXULONGLONG;
 static ULONGLONG g_httpDtMax        = 0;
 static ULONGLONG g_httpDtSum        = 0;
+static int       g_httpWindowLastSeq = 0;
+static double    g_httpWindowLastX   = 0.0;
+static double    g_httpWindowLastY   = 0.0;
+static double    g_httpWindowLastZ   = 0.0;
 
 /* Drop log throttle — HTTP listener thread only (sequential accept+handle). */
 static ULONGLONG g_httpLastDropLog  = 0;
@@ -251,7 +257,7 @@ static void http_log_raw_in(const char* method, const char* path,
 }
 
 /* Update POST rate stats; emit ~1 Hz summary via log_write. */
-static void http_post_rate_tick(int injected, ULONGLONG dtMs) {
+static void http_post_rate_tick(int injected, ULONGLONG dtMs, const PosSample* okSample) {
     const ULONGLONG now = GetTickCount64();
 
     if (g_httpLastTick != 0) {
@@ -272,6 +278,12 @@ static void http_post_rate_tick(int injected, ULONGLONG dtMs) {
     g_httpWindowCount++;
     if (injected) {
         g_httpWindowOk++;
+        if (okSample) {
+            g_httpWindowLastSeq = okSample->seq;
+            g_httpWindowLastX = okSample->x;
+            g_httpWindowLastY = okSample->y;
+            g_httpWindowLastZ = okSample->z;
+        }
     }
     else {
         g_httpWindowFail++;
@@ -282,13 +294,28 @@ static void http_post_rate_tick(int injected, ULONGLONG dtMs) {
         const ULONGLONG dtAvgOut = (g_httpDtSamples > 0)
             ? (g_httpDtSum / (ULONGLONG)g_httpDtSamples) : 0ULL;
 
-        log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d",
-            g_httpWindowCount,
-            (unsigned long long)dtMinOut,
-            (unsigned long long)dtAvgOut,
-            (unsigned long long)g_httpDtMax,
-            g_httpWindowOk,
-            g_httpWindowFail);
+        if (g_httpWindowOk > 0) {
+            log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d last_seq=%d last=X=%.6f Y=%.6f Z=%.6f",
+                g_httpWindowCount,
+                (unsigned long long)dtMinOut,
+                (unsigned long long)dtAvgOut,
+                (unsigned long long)g_httpDtMax,
+                g_httpWindowOk,
+                g_httpWindowFail,
+                g_httpWindowLastSeq,
+                g_httpWindowLastX,
+                g_httpWindowLastY,
+                g_httpWindowLastZ);
+        }
+        else {
+            log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d",
+                g_httpWindowCount,
+                (unsigned long long)dtMinOut,
+                (unsigned long long)dtAvgOut,
+                (unsigned long long)g_httpDtMax,
+                g_httpWindowOk,
+                g_httpWindowFail);
+        }
 
         g_httpWindowStart = now;
         g_httpWindowCount = 0;
@@ -395,10 +422,17 @@ static void http_handle_client(SOCKET client) {
                 dtMs = now - g_httpLastTick;
             }
 
-            http_post_rate_tick(injected, dtMs);
+            if (injected) {
+                http_send(client, 200, "{\"ok\":true}");
+            }
+            else {
+                http_send(client, 400, "{\"ok\":false,\"error\":\"invalid position\"}");
+            }
+
+            http_post_rate_tick(injected, dtMs, injected ? &sample : NULL);
 
             if (injected) {
-                log_write("HTTP: POST seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f dt=%llums status=%d",
+                log_debug("HTTP: POST seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f dt=%llums status=%d",
                     sample.seq,
                     sample.x, sample.y, sample.z,
                     sample.yaw, sample.yawY,
@@ -411,21 +445,13 @@ static void http_handle_client(SOCKET client) {
                 log_write("HTTP: POST status=400 reason=parse cl=%d raw=\"%s\"",
                     bodyLen, raw);
             }
-
-            if (parsed && !injected) {
+            else {
                 char raw[420];
                 http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
                 log_write("HTTP: POST status=400 reason=reject seq=%d pos=X=%.6f Y=%.6f Z=%.6f cl=%d raw=\"%s\"",
                     sample.seq,
                     sample.x, sample.y, sample.z,
                     bodyLen, raw);
-            }
-
-            if (injected) {
-                http_send(client, 200, "{\"ok\":true}");
-            }
-            else {
-                http_send(client, 400, "{\"ok\":false,\"error\":\"invalid position\"}");
             }
         }
         return;

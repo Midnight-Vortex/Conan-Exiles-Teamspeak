@@ -173,15 +173,15 @@ TS-Client danach neu starten. Der Pos-Watcher liest dann keine `Pos.txt` mehr; K
 
 ## 9. Rohdaten im Plugin-Log
 
-Bei hoher POST-Rate (~30 ms) schreibt das Plugin **eine Zeile pro erfolgreichem POST** plus **eine Rate-Zusammenfassung pro Sekunde** — kein zweites raw-IN bei HTTP 200 (siehe Änderung 042).
+Bei hoher POST-Rate (~30 ms) antwortet der Server **zuerst** (HTTP 200/400), **danach** wird geloggt (Änderung 047). Erfolgreiche Proben sind standardmäßig nur `log_debug`; die **Rate-Zeile** (~1×/s) bleibt immer sichtbar und enthält das letzte ok-Sample im Fenster.
 
 | Stufe | Wann | Sichtbar |
 |---|---|---|
-| **Einzel-Sample (Erfolg)** | jeder erfolgreicher Inject (HTTP 200) | immer (`log_write`) |
-| **Rate-Zusammenfassung** | ~1× pro Sekunde bei aktivem POST | immer (`log_write`) |
-| **Fehler** | jeder 400 (Parse oder Reject) | immer (`log_write`) |
+| **Einzel-Sample (Erfolg)** | jeder erfolgreicher Inject (HTTP 200) | nur mit `debug=1` (`log_debug`) |
+| **Rate-Zusammenfassung** | ~1× pro Sekunde bei aktivem POST | immer (`log_write`); bei `ok>0` mit `last_seq` + Position |
+| **Fehler** | jeder 400 (Parse oder Reject) | immer (`log_write`, nach Send) |
 
-### Erfolg — immer sichtbar (eine Zeile pro POST)
+### Erfolg — nur mit debug=1 (eine Zeile pro POST)
 
 ```text
 HTTP: POST seq=42 pos=X=12345.000000 Y=67890.000000 Z=200.000000 YAW=45.000000 YAWY=0.000000 dt=30ms status=200
@@ -191,15 +191,24 @@ Koordinaten intern als `double`; Log zeigt `%.6f` mit `X=`/`Y=`/`Z=`/`YAW=`/`YAW
 
 ### Rate-Zeile (immer, ~1×/s)
 
+Mit mindestens einem erfolgreichen Inject im Fenster:
+
 ```text
-HTTP: rate n=33/s dt=min/avg/max=28/30/35ms ok=33 fail=0
+HTTP: rate n=33/s dt=min/avg/max=28/30/35ms ok=33 fail=0 last_seq=42 last=X=12345.000000 Y=67890.000000 Z=200.000000
+```
+
+Nur Fehler im Fenster (`ok=0`):
+
+```text
+HTTP: rate n=5/s dt=min/avg/max=28/30/35ms ok=0 fail=5
 ```
 
 - `n` — POST-Anzahl in diesem 1-Sekunden-Fenster  
 - `dt` — Abstand zwischen zwei POSTs (Minimum / Durchschnitt / Maximum in ms)  
-- `ok` / `fail` — wie viele Inject-Erfolge vs. Fehler (400)
+- `ok` / `fail` — wie viele Inject-Erfolge vs. Fehler (400)  
+- `last_seq` / `last=X/Y/Z` — **letzter** erfolgreicher POST **in diesem Fenster**; fehlt wenn `ok=0`
 
-### Fehler — immer sichtbar
+### Fehler — immer sichtbar (nach HTTP-Antwort)
 
 **Body nicht parsebar** (fehlende Pflichtfelder, kein JSON/Pos-Zeile):
 
@@ -213,4 +222,4 @@ HTTP: POST status=400 reason=parse cl=12 raw="..."
 HTTP: POST status=400 reason=reject seq=1 pos=X=0.000000 Y=0.000000 Z=0.000000 cl=58 raw="..."
 ```
 
-GET `/health` und unbekannte Pfade (404) loggen weiterhin optional eine `HTTP: IN … raw=` Zeile (selten). Erfolgreiche POSTs brauchen **kein** `debug=1` mehr (seit Änderung 042).
+GET `/health` und unbekannte Pfade (404) loggen weiterhin optional eine `HTTP: IN … raw=` Zeile (selten). Erfolgreiche POSTs brauchen **`debug=1`** für Einzelzeilen (seit Änderung 047; vorher 042: immer sichtbar).
