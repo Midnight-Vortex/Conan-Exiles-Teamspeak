@@ -12,12 +12,15 @@
  *   - Logging (rate summary, POST success, errors, raw IN for GET/404): HTTP
  *     thread only, via log_write / log_debug (log module lock — never TS API).
  *     Successful POST /v1/position → one log_write line (always visible).
+ *     Dropped connections (recv fail / incomplete headers) → throttled drop log
+ *     (~1 Hz max). Per-connection recv timeout: 100 ms (fail-fast).
  *
  * winsock2.h MUST precede windows.h — kept first here.
  */
 
 /* winsock2.h must come before windows.h */
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <process.h>
 #include <stdio.h>
@@ -33,7 +36,7 @@
 
 #define HTTP_BUF_SIZE    4096   /* header + body combined recv buffer */
 #define HTTP_BODY_MAX    1024   /* max body bytes we care about */
-#define HTTP_RECV_TMO_MS 5000   /* per-connection recv timeout */
+#define HTTP_RECV_TMO_MS 100    /* per-connection recv timeout (fail-fast) */
 
 /* ---- module state ------------------------------------------------------ */
 
@@ -53,7 +56,27 @@ static ULONGLONG g_httpDtMin        = MAXULONGLONG;
 static ULONGLONG g_httpDtMax        = 0;
 static ULONGLONG g_httpDtSum        = 0;
 
+/* Drop log throttle — HTTP listener thread only (sequential accept+handle). */
+static ULONGLONG g_httpLastDropLog  = 0;
+
 /* ---- helpers ----------------------------------------------------------- */
+
+/* Throttled drop log (~1 Hz max) for recv failures and incomplete headers. */
+static void http_drop_log(const char* reason, int err) {
+    const ULONGLONG now = GetTickCount64();
+
+    if (g_httpLastDropLog != 0 && (now - g_httpLastDropLog) < 1000ULL) {
+        return;
+    }
+    g_httpLastDropLog = now;
+
+    if (reason && strcmp(reason, "recv") == 0) {
+        log_write("HTTP: drop reason=recv err=%d", err);
+    }
+    else {
+        log_write("HTTP: drop reason=%s", reason ? reason : "unknown");
+    }
+}
 
 /* Send a complete HTTP/1.1 response and close the connection. */
 static void http_send(SOCKET s, int status, const char* body) {
@@ -280,9 +303,15 @@ static void http_post_rate_tick(int injected, ULONGLONG dtMs) {
 
 /* Handle one accepted client connection. */
 static void http_handle_client(SOCKET client) {
-    /* Per-connection recv timeout — prevents a stuck client from blocking. */
+    /* Per-connection recv timeout — fail fast on dead/cancelled CEE sockets. */
     DWORD tmo = HTTP_RECV_TMO_MS;
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, (int)sizeof(tmo));
+
+    {
+        const int nodelay = 1;
+        setsockopt(client, IPPROTO_TCP, TCP_NODELAY,
+            (const char*)&nodelay, (int)sizeof(nodelay));
+    }
 
     char buf[HTTP_BUF_SIZE];
     int total = 0;
@@ -292,6 +321,7 @@ static void http_handle_client(SOCKET client) {
     while (total < (int)(sizeof(buf) - 1)) {
         const int n = recv(client, buf + total, (int)(sizeof(buf) - 1 - total), 0);
         if (n <= 0) {
+            http_drop_log("recv", (n < 0) ? (int)WSAGetLastError() : 0);
             return;
         }
         total += n;
@@ -303,6 +333,7 @@ static void http_handle_client(SOCKET client) {
         }
     }
     if (header_end < 0) {
+        http_drop_log("incomplete", 0);
         return;
     }
 

@@ -161,6 +161,16 @@ Meter senden.
 5. Keine reservierten Header setzen
 6. In `OnSuccess`: `IsOK` prüfen
 
+### HTTP-only-Test (Pos.txt abschalten)
+
+Für reine HTTP-Tests ohne Pos.txt-Fallback in `Documents\Conan Exiles TeamSpeak plugin\plugin.cfg`:
+
+```ini
+EnablePosFile=false
+```
+
+TS-Client danach neu starten. Der Pos-Watcher liest dann keine `Pos.txt` mehr; Koordinaten kommen nur noch über `POST /v1/position` (siehe Änderung 044).
+
 ## 9. Rohdaten im Plugin-Log
 
 Bei hoher POST-Rate (~30 ms) schreibt das Plugin **eine Zeile pro erfolgreichem POST** plus **eine Rate-Zusammenfassung pro Sekunde** — kein zweites raw-IN bei HTTP 200 (siehe Änderung 042).

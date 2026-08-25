@@ -1,0 +1,6 @@
+Name = Conan Exiles
+Type = Plugin
+Author = Dino_Rex (TeamSpeak port)
+Version = @VERSION@
+Platforms = win64
+Description = "Proximity voice for Conan Exiles."

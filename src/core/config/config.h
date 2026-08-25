@@ -45,6 +45,9 @@ typedef struct PluginConfig {
     /* Debug logging (log_debug on/off). */
     int debugMode;
 
+    /* Pos.txt file reader: 1 = read Pos.txt (default), 0 = HTTP-only (skip file). */
+    int enablePosFile;
+
     /* Server whose [DEFAULT_SETTINGS] were already applied (virtual server
        unique identifier). Defaults are applied ONCE per server; afterwards
        the user's own key/distance changes are never overridden again. */

@@ -137,8 +137,8 @@ void ts3d_set_listener(float x, float y, float z,
     const ULONGLONG now = GetTickCount64();
     if (now - s_lastLog >= 10000) {
         s_lastLog = now;
-        log_debug("TS-3D: listener pos=(%.1f,%.1f,%.1f) fwd=(%.2f,%.2f,%.2f)",
-            x, y, z, fx, fy, fz);
+        log_debug("TS-3D: listener pos=X=%.6f Y=%.6f Z=%.6f fwd=X=%.6f Y=%.6f Z=%.6f",
+            (double)x, (double)y, (double)z, (double)fx, (double)fy, (double)fz);
     }
 }
 

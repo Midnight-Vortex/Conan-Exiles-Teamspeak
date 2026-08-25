@@ -1,12 +1,16 @@
-# Build Release x64 and deploy conan_exiles.dll to %APPDATA%\TS3Client\plugins
+# Build Release x64, wrap a .ts3_plugin package, deploy DLL to %APPDATA%\TS3Client\plugins
 # Usage:
-#   .\build.ps1              build + deploy
-#   .\build.ps1 -SkipDeploy   build only
-#   .\build.ps1 -DeployOnly   deploy existing bin\conan_exiles.dll
-#   .\build.ps1 -Pause        wait for keypress before exit
+#   .\build.ps1                  build + .ts3_plugin + Package Installer + deploy
+#   .\build.ps1 -SkipDeploy       build + .ts3_plugin + Package Installer (no AppData copy)
+#   .\build.ps1 -SkipPackage      build + deploy (no .ts3_plugin)
+#   .\build.ps1 -SkipInstaller    write .ts3_plugin but do not start Package Installer
+#   .\build.ps1 -DeployOnly       deploy existing bin\conan_exiles.dll
+#   .\build.ps1 -Pause            wait for keypress before exit
 
 param(
     [switch]$SkipDeploy,
+    [switch]$SkipPackage,
+    [switch]$SkipInstaller,
     [switch]$DeployOnly,
     [switch]$Pause
 )
@@ -59,6 +63,71 @@ Bitte TeamSpeak komplett beenden (Tray -> Quit) und erneut ausfuehren:
     Log "  Deploy OK"
     Log "  Size: $($deployed.Length) bytes"
     Log "  Time: $($deployed.LastWriteTime)"
+}
+
+# .ts3_plugin = ZIP at archive root: package.ini + plugins/conan_exiles.dll
+# Double-click / browser "Open with" launches TeamSpeak 3 Package Installer.
+function New-Ts3PluginPackage {
+    param(
+        [string]$SourceDll,
+        [switch]$OpenInstaller
+    )
+
+    $entryC = Join-Path $RootDir "src\ts\entry\ts3_entry.c"
+    $template = Join-Path $RootDir "packaging\package.ini.in"
+    if (-not (Test-Path $entryC)) {
+        throw "Missing $entryC"
+    }
+    if (-not (Test-Path $template)) {
+        throw "Missing $template"
+    }
+    if (-not (Test-Path $SourceDll)) {
+        throw "DLL not found: $SourceDll"
+    }
+
+    $entryText = Get-Content -Raw -Path $entryC
+    if ($entryText -notmatch 'ts3plugin_version\s*\(\s*void\s*\)\s*\{[^}]*return\s*"([^"]+)"') {
+        throw "Could not parse ts3plugin_version() from ts3_entry.c"
+    }
+    $version = $Matches[1]
+
+    $binDir = Split-Path $SourceDll -Parent
+    $pkgName = "conan_exiles-$version-win64.ts3_plugin"
+    $pkgPath = Join-Path $binDir $pkgName
+    $zipPath = Join-Path $binDir ($pkgName + ".zip")
+
+    $stage = Join-Path $env:TEMP ("ce-ts3-pkg-" + [guid]::NewGuid().ToString("N"))
+    $pluginsDir = Join-Path $stage "plugins"
+    New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
+    Copy-Item -Force $SourceDll (Join-Path $pluginsDir "conan_exiles.dll")
+
+    $ini = (Get-Content -Raw -Path $template) -replace '@VERSION@', $version
+    $iniPath = Join-Path $stage "package.ini"
+    [System.IO.File]::WriteAllText($iniPath, $ini.TrimEnd() + "`r`n")
+
+    Remove-Item -Force -ErrorAction SilentlyContinue $pkgPath, $zipPath
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $stage,
+        $zipPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false)
+
+    Move-Item -Force $zipPath $pkgPath
+    Remove-Item -Recurse -Force $stage
+
+    $pkg = Get-Item $pkgPath
+    Log ""
+    Log "Package OK: $($pkg.FullName)"
+    Log "Size:       $($pkg.Length) bytes"
+    Log "Doppelklick oeffnet TeamSpeak 3 Package Installer."
+
+    if ($OpenInstaller) {
+        Log "Starting TeamSpeak 3 Package Installer..."
+        Start-Process -FilePath $pkgPath | Out-Null
+    }
+
+    return $pkgPath
 }
 
 $RootDir = $PSScriptRoot
@@ -164,6 +233,10 @@ Open Visual Studio Installer -> Modify -> Desktopentwicklung mit C++
         Log "Build OK: $($info.FullName)"
         Log "Size:     $([math]::Round($info.Length / 1MB, 2)) MB"
         Log "Time:     $($info.LastWriteTime)"
+
+        if (-not $SkipPackage) {
+            New-Ts3PluginPackage -SourceDll $BinDll -OpenInstaller:(-not $SkipInstaller) | Out-Null
+        }
     }
     else {
         Log "Deploy only (skip build)"

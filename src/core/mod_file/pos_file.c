@@ -282,6 +282,9 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
     int lastSeq = -1;
 
     log_write("POS: watcher started");
+    if (!g_config.enablePosFile) {
+        log_write("POS: Pos.txt disabled (EnablePosFile=false, HTTP-only)");
+    }
 
     for (;;) {
         if (WaitForSingleObject(g_stopEvent, PLUGIN_POLL_INTERVAL_MS) != WAIT_TIMEOUT) {
@@ -289,119 +292,148 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
         }
 
         const ULONGLONG now = GetTickCount64();
-        if (now - lastAutodetectMs >= POS_AUTODETECT_RETRY_MS) {
+        const int posFileEnabled = g_config.enablePosFile;
+
+        if (posFileEnabled && now - lastAutodetectMs >= POS_AUTODETECT_RETRY_MS) {
             lastAutodetectMs = now;
             pos_autodetect_saved_path();
         }
 
-        pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
+        if (posFileEnabled) {
+            pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
 
-        if (!filePath[0]) {
-            if (now - lastMissingLog > POS_LOG_THROTTLE_MS) {
-                lastMissingLog = now;
-                log_debug("POS: no Pos.txt path configured");
+            if (!filePath[0]) {
+                if (now - lastMissingLog > POS_LOG_THROTTLE_MS) {
+                    lastMissingLog = now;
+                    log_debug("POS: no Pos.txt path configured");
+                }
+                InterlockedExchange(&g_coordinatesValid, 0);
+                goto pos_watcher_tick;
             }
-            InterlockedExchange(&g_coordinatesValid, 0);
-            continue;
-        }
 
-        const ULONGLONG age = pos_file_write_age_ms(filePath);
-        const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
+            const ULONGLONG age = pos_file_write_age_ms(filePath);
+            const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
 
-        ULONGLONG writeQuad = 0;
-        int writeChanged = 0;
-        if (pos_get_file_write_quad(filePath, &writeQuad)) {
-            writeChanged = (g_lastFileWriteQuad != 0 && writeQuad != g_lastFileWriteQuad);
-            g_lastFileWriteQuad = writeQuad;
-        }
-
-        PosSample sample;
-        memset(&sample, 0, sizeof(sample));
-        int readOk = fileActive && pos_file_read_once(filePath, &sample);
-        if (readOk && !pos_sample_is_plausible(&sample)) {
-            if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
-                lastValidLog = now;
-                log_debug("POS: read rejected (invalid coords seq=%d pos=X=%.6f Y=%.6f Z=%.6f)",
-                    sample.seq, sample.x, sample.y, sample.z);
+            ULONGLONG writeQuad = 0;
+            int writeChanged = 0;
+            if (pos_get_file_write_quad(filePath, &writeQuad)) {
+                writeChanged = (g_lastFileWriteQuad != 0 && writeQuad != g_lastFileWriteQuad);
+                g_lastFileWriteQuad = writeQuad;
             }
-            readOk = 0;
-        }
-        const int currentlyValid = InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
-        int acceptRead = readOk;
-        if (readOk && !currentlyValid) {
-            /* Reject leftover Pos.txt from a previous session (old plugin rule). */
-            acceptRead = writeChanged
-                || age <= POS_FRESH_ACCEPT_MS
-                || (lastSeq >= 0 && sample.seq != lastSeq);
-        }
-        /* HTTP hold: injected position is authoritative; block file overwrites. */
-        if (acceptRead && now < g_httpHoldUntilMs) {
-            acceptRead = 0;
-        }
 
-        if (acceptRead) {
-            EnterCriticalSection(&g_posLock);
-            g_currentSample = sample;
-            LeaveCriticalSection(&g_posLock);
-
-            g_lastValidTick = now;
-
-            if (!currentlyValid) {
-                log_write("POS: coordinates valid (seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f)",
-                    sample.seq, sample.x, sample.y, sample.z, sample.yaw);
-            }
-            InterlockedExchange(&g_coordinatesValid, 1);
-
-            if (sample.seq != lastSeq || now - lastValidLog > POS_LOG_THROTTLE_MS) {
+            PosSample sample;
+            memset(&sample, 0, sizeof(sample));
+            int readOk = fileActive && pos_file_read_once(filePath, &sample);
+            if (readOk && !pos_sample_is_plausible(&sample)) {
                 if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
                     lastValidLog = now;
-                    log_debug("POS: seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f age=%llums",
-                        sample.seq, sample.x, sample.y, sample.z,
-                        sample.yaw, sample.yawY, (unsigned long long)age);
+                    log_debug("POS: read rejected (invalid coords seq=%d pos=X=%.6f Y=%.6f Z=%.6f)",
+                        sample.seq, sample.x, sample.y, sample.z);
                 }
-                lastSeq = sample.seq;
+                readOk = 0;
+            }
+            const int currentlyValid = InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
+            int acceptRead = readOk;
+            if (readOk && !currentlyValid) {
+                /* Reject leftover Pos.txt from a previous session (old plugin rule). */
+                acceptRead = writeChanged
+                    || age <= POS_FRESH_ACCEPT_MS
+                    || (lastSeq >= 0 && sample.seq != lastSeq);
+            }
+            /* HTTP hold: injected position is authoritative; block file overwrites. */
+            if (acceptRead && now < g_httpHoldUntilMs) {
+                acceptRead = 0;
             }
 
-            if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
-                g_updateCallback();
+            if (acceptRead) {
+                EnterCriticalSection(&g_posLock);
+                g_currentSample = sample;
+                LeaveCriticalSection(&g_posLock);
+
+                g_lastValidTick = now;
+
+                if (!currentlyValid) {
+                    log_write("POS: coordinates valid (seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f)",
+                        sample.seq, sample.x, sample.y, sample.z, sample.yaw);
+                }
+                InterlockedExchange(&g_coordinatesValid, 1);
+
+                if (sample.seq != lastSeq || now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                    if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                        lastValidLog = now;
+                        log_debug("POS: seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f age=%llums",
+                            sample.seq, sample.x, sample.y, sample.z,
+                            sample.yaw, sample.yawY, (unsigned long long)age);
+                    }
+                    lastSeq = sample.seq;
+                }
+
+                if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+                    g_updateCallback();
+                }
+            }
+            else {
+                const int inGrace = currentlyValid
+                    && g_lastValidTick != 0
+                    && now - g_lastValidTick < POS_COORD_GRACE_MS;
+                const int httpHold = (now < g_httpHoldUntilMs);
+
+                if (inGrace || httpHold) {
+                    /* Keep coords — file temporarily stale/missing (grace) or HTTP hold active. */
+                }
+                else if (currentlyValid) {
+                    log_write("POS: coordinates invalid (file %s, age=%llums, grace=%llums)",
+                        age == MAXULONGLONG ? "missing" : "stale",
+                        age == MAXULONGLONG ? 0ULL : (unsigned long long)age,
+                        g_lastValidTick != 0 ? (unsigned long long)(now - g_lastValidTick) : 0ULL);
+                    InterlockedExchange(&g_coordinatesValid, 0);
+                    g_lastValidTick = 0;
+                    if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+                        g_updateCallback(); /* one shot on the valid->invalid edge */
+                    }
+                }
+                else {
+                    InterlockedExchange(&g_coordinatesValid, 0);
+                }
+
+                if (readOk && !acceptRead && now - lastValidLog > POS_LOG_THROTTLE_MS) {
+                    lastValidLog = now;
+                    log_debug("POS: read rejected (stale leftover? age=%llums seq=%d writeChanged=%d)",
+                        (unsigned long long)age, sample.seq, writeChanged);
+                }
+
+                if (age == MAXULONGLONG && now - lastMissingLog > POS_LOG_THROTTLE_MS) {
+                    lastMissingLog = now;
+                    log_debug("POS: Pos.txt missing at %ls", filePath);
+                }
             }
         }
         else {
+            /* HTTP-only: skip Pos.txt reads; keep coords via inject hold + grace. */
+            const int currentlyValid = InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
             const int inGrace = currentlyValid
                 && g_lastValidTick != 0
                 && now - g_lastValidTick < POS_COORD_GRACE_MS;
             const int httpHold = (now < g_httpHoldUntilMs);
 
             if (inGrace || httpHold) {
-                /* Keep coords — file temporarily stale/missing (grace) or HTTP hold active. */
+                /* Keep coords — HTTP hold active or grace after last inject. */
             }
             else if (currentlyValid) {
-                log_write("POS: coordinates invalid (file %s, age=%llums, grace=%llums)",
-                    age == MAXULONGLONG ? "missing" : "stale",
-                    age == MAXULONGLONG ? 0ULL : (unsigned long long)age,
+                log_write("POS: coordinates invalid (HTTP-only, grace=%llums)",
                     g_lastValidTick != 0 ? (unsigned long long)(now - g_lastValidTick) : 0ULL);
                 InterlockedExchange(&g_coordinatesValid, 0);
                 g_lastValidTick = 0;
                 if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
-                    g_updateCallback(); /* one shot on the valid->invalid edge */
+                    g_updateCallback();
                 }
             }
             else {
                 InterlockedExchange(&g_coordinatesValid, 0);
             }
-
-            if (readOk && !acceptRead && now - lastValidLog > POS_LOG_THROTTLE_MS) {
-                lastValidLog = now;
-                log_debug("POS: read rejected (stale leftover? age=%llums seq=%d writeChanged=%d)",
-                    (unsigned long long)age, sample.seq, writeChanged);
-            }
-
-            if (age == MAXULONGLONG && now - lastMissingLog > POS_LOG_THROTTLE_MS) {
-                lastMissingLog = now;
-                log_debug("POS: Pos.txt missing at %ls", filePath);
-            }
         }
 
+    pos_watcher_tick:
         if (g_tickCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
             g_tickCallback();
         }

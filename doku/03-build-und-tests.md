@@ -14,12 +14,22 @@ sind das **Sicherheitsnetz**, damit Aenderungen nicht blind passieren.
 
 ```powershell
 powershell -File build\build_msvc.ps1
-# Deploy: build-deploy.ps1  →  %AppData%\TS3Client\plugins\conan_exiles.dll
+# oder direkt: .\build.ps1
+# Deploy: kopiert die DLL nach %AppData%\TS3Client\plugins\conan_exiles.dll
+# Paket:  schreibt bin\conan_exiles-<Version>-win64.ts3_plugin
 ```
 
 Baut `project/Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) mit Visual
-Studio. Nach dem Deploy den TS-Client neu starten, damit die DLL neu
-geladen wird. An diesem Weg hat V8.0 nichts geaendert.
+Studio. Nach jedem erfolgreichen Rebuild liegt zusätzlich ein
+**`.ts3_plugin`** in `bin\` — ein ZIP mit `package.ini` und
+`plugins\conan_exiles.dll`. Der Build startet danach den **TeamSpeak 3
+Package Installer** (wie Doppelklick / Firefox „Öffnen mit“) — denselben
+Weg wie Plugins von addons.teamspeak.com. `-SkipInstaller` unterdrückt
+nur den Start, nicht die Datei.
+
+TeamSpeak vorher beenden, wenn der Installer die DLL ersetzen soll.
+Nach der Installation den TS-Client neu starten, damit die DLL geladen
+wird. `-SkipPackage` unterdrückt nur das Paket, nicht den DLL-Build.
 
 ## 2. Linux: Cross-Build mit MinGW
 
