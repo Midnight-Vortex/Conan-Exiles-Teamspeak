@@ -22,9 +22,8 @@ powershell -File build\build_msvc.ps1
 Baut `project/Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) mit Visual
 Studio. Nach jedem erfolgreichen Rebuild liegt zusätzlich ein
 **`.ts3_plugin`** in `bin\` — ein ZIP mit `package.ini` und
-`plugins\conan_exiles.dll`. Der Build **startet den Package Installer
-nicht** (Änderung 048): paralleles Deploy + Installer hat die AppData-DLL
-auf 0 Bytes gekürzt, wenn TeamSpeak die Datei noch hielt.
+`plugins/conan_exiles.dll` (Forward-Slash im ZIP, Änderung 049). Der Build
+**startet den Package Installer nicht** (Änderung 048).
 
 Endnutzer: `.ts3_plugin` doppelklicken, **TeamSpeak vorher beenden**
 (Tray → Quit). Entwickler: `.\build.ps1` kopiert die DLL direkt.

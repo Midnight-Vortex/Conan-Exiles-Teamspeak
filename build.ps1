@@ -104,7 +104,7 @@ function New-Ts3PluginPackage {
     $binDir = Split-Path $SourceDll -Parent
     $pkgName = "conan_exiles-$version-win64.ts3_plugin"
     $pkgPath = Join-Path $binDir $pkgName
-    $zipPath = Join-Path $binDir ($pkgName + ".zip")
+    $zipPath = Join-Path $env:TEMP ("ce-ts3-" + [guid]::NewGuid().ToString("N") + ".zip")
 
     $stage = Join-Path $env:TEMP ("ce-ts3-pkg-" + [guid]::NewGuid().ToString("N"))
     $pluginsDir = Join-Path $stage "plugins"
@@ -115,15 +115,31 @@ function New-Ts3PluginPackage {
     $iniPath = Join-Path $stage "package.ini"
     [System.IO.File]::WriteAllText($iniPath, $ini.TrimEnd() + "`r`n")
 
-    Remove-Item -Force -ErrorAction SilentlyContinue $pkgPath, $zipPath
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $stage,
-        $zipPath,
-        [System.IO.Compression.CompressionLevel]::Optimal,
-        $false)
+    # ZIP spec + TeamSpeak package_inst require forward slashes. .NET ZipFile on
+    # Windows stores plugins\conan_exiles.dll (0x5C); installer then writes a 0-byte DLL.
+    # Windows tar (bsdtar) stores plugins/conan_exiles.dll.
+    Push-Location $stage
+    try {
+        & tar.exe -a -cf $zipPath -- package.ini plugins/conan_exiles.dll
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $zipPath)) {
+            throw "tar failed to write $zipPath (exit $LASTEXITCODE)"
+        }
+    }
+    finally {
+        Pop-Location
+    }
 
-    Move-Item -Force $zipPath $pkgPath
+    try {
+        if (Test-Path $pkgPath) {
+            Remove-Item -Force $pkgPath
+        }
+        Move-Item -Force $zipPath $pkgPath
+    }
+    catch {
+        $pkgPath = Join-Path $binDir ("conan_exiles-$version-win64-new.ts3_plugin")
+        Log ("Target package locked; writing " + $pkgPath)
+        Move-Item -Force $zipPath $pkgPath
+    }
     Remove-Item -Recurse -Force $stage
 
     $pkg = Get-Item $pkgPath
@@ -249,7 +265,7 @@ Open Visual Studio Installer -> Modify -> Desktopentwicklung mit C++
             # plugins\conan_exiles.dll to 0 bytes if TeamSpeak still holds the file.
             $launchInstaller = $OpenPackage -and -not $SkipInstaller -and $SkipDeploy
             if ($OpenPackage -and -not $SkipDeploy) {
-                Log "OpenPackage ignored while deploying — installer would overwrite AppData. Use -SkipDeploy -OpenPackage, or double-click the .ts3_plugin after Quit."
+                Log 'OpenPackage ignored while deploying (installer would overwrite AppData). Use -SkipDeploy -OpenPackage after Quit, or double-click the .ts3_plugin.'
             }
             New-Ts3PluginPackage -SourceDll $BinDll -OpenInstaller:$launchInstaller | Out-Null
         }

@@ -53,7 +53,7 @@ MSVC Rebuild  →  bin\conan_exiles.dll
               TeamSpeak 3 Package Installer
 ```
 
-**Wichtig:** Im ZIP müssen `package.ini` und `plugins/` direkt im Wurzelverzeichnis liegen — nicht in einem Unterordner `conan_exiles-…\`. Sonst findet der Installer die Dateien nicht.
+**Wichtig:** Im ZIP müssen `package.ini` und `plugins/conan_exiles.dll` direkt im Wurzelverzeichnis liegen — nicht in einem Unterordner `conan_exiles-…\`. ZIP-Pfade mit **Forward-Slash** (`plugins/conan_exiles.dll`); Windows-Backslash erzeugt eine 0-Byte-DLL im Installer (Änderung 049).
 
 `bin/` bleibt gitignored; das Paket ist ein Build-Artefakt, kein Commit.
 
