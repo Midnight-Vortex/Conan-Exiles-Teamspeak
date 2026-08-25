@@ -152,7 +152,7 @@ Open Visual Studio Installer -> Modify -> Desktopentwicklung mit C++
 
         $dllText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($OutDll))
         if ($dllText -notmatch 'nickRand') {
-            throw "Built DLL is missing the nickRand PROFILE marker — source/out of sync or stale tree"
+            throw "Built DLL is missing the nickRand PROFILE marker - source/out of sync or stale tree"
         }
         Log "Verify: nickRand marker present in DLL"
 
