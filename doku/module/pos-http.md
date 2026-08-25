@@ -173,12 +173,12 @@ TS-Client danach neu starten. Der Pos-Watcher liest dann keine `Pos.txt` mehr; K
 
 ## 9. Rohdaten im Plugin-Log
 
-Bei hoher POST-Rate (~30 ms) antwortet der Server **zuerst** (HTTP 200/400), **danach** wird geloggt (Änderung 047). Erfolgreiche Proben sind standardmäßig nur `log_debug`; die **Rate-Zeile** (~1×/s) bleibt immer sichtbar und enthält das letzte ok-Sample im Fenster.
+Bei hoher POST-Rate (~30 ms) antwortet der Server **zuerst** (HTTP 200/400), **danach** wird geloggt (Änderung 047). Erfolgreiche Proben und die **Rate-Zeile bei fail=0** sind nur `log_debug` (Änderung 051). `plugin.log` wird bei **100 MB** geleert.
 
 | Stufe | Wann | Sichtbar |
 |---|---|---|
 | **Einzel-Sample (Erfolg)** | jeder erfolgreicher Inject (HTTP 200) | nur mit `debug=1` (`log_debug`) |
-| **Rate-Zusammenfassung** | ~1× pro Sekunde bei aktivem POST | immer (`log_write`); bei `ok>0` mit `last_seq` + Position |
+| **Rate-Zusammenfassung** | ~1× pro Sekunde bei aktivem POST | `fail=0`: nur `debug=1`; `fail>0`: immer (`log_write`) |
 | **Fehler** | jeder 400 (Parse oder Reject) | immer (`log_write`, nach Send) |
 
 ### Erfolg — nur mit debug=1 (eine Zeile pro POST)
@@ -189,9 +189,9 @@ HTTP: POST seq=42 pos=X=12345.000000 Y=67890.000000 Z=200.000000 YAW=45.000000 Y
 
 Koordinaten intern als `double`; Log zeigt `%.6f` mit `X=`/`Y=`/`Z=`/`YAW=`/`YAWY=` (Änderung 041).
 
-### Rate-Zeile (immer, ~1×/s)
+### Rate-Zeile (~1×/s)
 
-Mit mindestens einem erfolgreichen Inject im Fenster:
+Mit `debug=1` und mindestens einem erfolgreichen Inject im Fenster (`fail=0`):
 
 ```text
 HTTP: rate n=33/s dt=min/avg/max=28/30/35ms ok=33 fail=0 last_seq=42 last=X=12345.000000 Y=67890.000000 Z=200.000000
@@ -207,6 +207,7 @@ HTTP: rate n=5/s dt=min/avg/max=28/30/35ms ok=0 fail=5
 - `dt` — Abstand zwischen zwei POSTs (Minimum / Durchschnitt / Maximum in ms)  
 - `ok` / `fail` — wie viele Inject-Erfolge vs. Fehler (400)  
 - `last_seq` / `last=X/Y/Z` — **letzter** erfolgreicher POST **in diesem Fenster**; fehlt wenn `ok=0`
+- Ohne Debug und `fail=0` erscheint **keine** Rate-Zeile (Änderung 051)
 
 ### Fehler — immer sichtbar (nach HTTP-Antwort)
 
@@ -223,3 +224,29 @@ HTTP: POST status=400 reason=reject seq=1 pos=X=0.000000 Y=0.000000 Z=0.000000 c
 ```
 
 GET `/health` und unbekannte Pfade (404) loggen weiterhin optional eine `HTTP: IN … raw=` Zeile (selten). Erfolgreiche POSTs brauchen **`debug=1`** für Einzelzeilen (seit Änderung 047; vorher 042: immer sichtbar).
+
+## 10. Positionsquelle (HTTP vs Pos.txt)
+
+Der Pos-Watcher schreibt bei jedem **Wechsel** immer (`log_write`, Änderung 050):
+
+```text
+POS: method none -> http
+POS: method http -> file
+POS: method file -> none
+```
+
+`http` = letzter Inject über `POST /v1/position` (Hold ~2 s, Datei wird nicht überschrieben).  
+`file` = Pos.txt wurde übernommen.  
+`none` = Koordinaten ungültig (stale / Grace abgelaufen).
+
+Mit **`debug=1`** zusätzlich ~1×/s:
+
+```text
+DBG POS: method=http valid=1 holdLeft=1800ms posFile=1 fileAge=19999ms seq=42
+```
+
+und wenn eine frische Pos.txt während des HTTP-Holds liegt:
+
+```text
+DBG POS: Pos.txt skipped (HTTP hold left=1800ms seq=12 age=200ms)
+```

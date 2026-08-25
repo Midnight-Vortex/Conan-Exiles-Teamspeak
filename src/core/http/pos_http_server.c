@@ -12,8 +12,8 @@
  *   - Logging (rate summary, POST success, errors, raw IN for GET/404): HTTP
  *     thread only, via log_write / log_debug (log module lock — never TS API).
  *     Successful POST /v1/position → http_send first, then log_debug per sample
- *     (visible with debug=1); ~1 Hz log_write rate line includes last ok seq/pos.
- *     POST 400 (parse/reject) → http_send first, then log_write (always visible).
+ *     (visible with debug=1); ~1 Hz rate line is log_debug when fail=0,
+ *     log_write when the window had failures. POST 400 → log_write.
  *     Dropped connections (recv fail / incomplete headers) → throttled drop log
  *     (~1 Hz max). Per-connection recv timeout: 100 ms (fail-fast).
  *
@@ -295,17 +295,32 @@ static void http_post_rate_tick(int injected, ULONGLONG dtMs, const PosSample* o
             ? (g_httpDtSum / (ULONGLONG)g_httpDtSamples) : 0ULL;
 
         if (g_httpWindowOk > 0) {
-            log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d last_seq=%d last=X=%.6f Y=%.6f Z=%.6f",
-                g_httpWindowCount,
-                (unsigned long long)dtMinOut,
-                (unsigned long long)dtAvgOut,
-                (unsigned long long)g_httpDtMax,
-                g_httpWindowOk,
-                g_httpWindowFail,
-                g_httpWindowLastSeq,
-                g_httpWindowLastX,
-                g_httpWindowLastY,
-                g_httpWindowLastZ);
+            if (g_httpWindowFail > 0) {
+                log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d last_seq=%d last=X=%.6f Y=%.6f Z=%.6f",
+                    g_httpWindowCount,
+                    (unsigned long long)dtMinOut,
+                    (unsigned long long)dtAvgOut,
+                    (unsigned long long)g_httpDtMax,
+                    g_httpWindowOk,
+                    g_httpWindowFail,
+                    g_httpWindowLastSeq,
+                    g_httpWindowLastX,
+                    g_httpWindowLastY,
+                    g_httpWindowLastZ);
+            }
+            else {
+                log_debug("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d last_seq=%d last=X=%.6f Y=%.6f Z=%.6f",
+                    g_httpWindowCount,
+                    (unsigned long long)dtMinOut,
+                    (unsigned long long)dtAvgOut,
+                    (unsigned long long)g_httpDtMax,
+                    g_httpWindowOk,
+                    g_httpWindowFail,
+                    g_httpWindowLastSeq,
+                    g_httpWindowLastX,
+                    g_httpWindowLastY,
+                    g_httpWindowLastZ);
+            }
         }
         else {
             log_write("HTTP: rate n=%d/s dt=min/avg/max=%llu/%llu/%llums ok=%d fail=%d",

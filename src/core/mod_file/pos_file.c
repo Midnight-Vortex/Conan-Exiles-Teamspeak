@@ -16,6 +16,11 @@
 #define POS_FRESH_ACCEPT_MS     2000   /* cold-start: accept without write-change only when very fresh */
 #define POS_LOG_THROTTLE_MS     30000
 #define POS_AUTODETECT_RETRY_MS 15000
+#define POS_DEBUG_STATUS_MS     1000   /* debug=1: method/hold/fileAge snapshot */
+
+#define POS_SOURCE_NONE  0
+#define POS_SOURCE_HTTP  1
+#define POS_SOURCE_FILE  2
 
 /* Private lock guarding g_currentSample. Never shared with other modules. */
 static CRITICAL_SECTION g_posLock;
@@ -34,6 +39,27 @@ static void (*g_injectNotifyCallback)(void) = NULL;
    reads and does not invalidate coordinates. Written by any thread (x64 aligned
    volatile ULONGLONG write is atomic); read only by the watcher thread. */
 static volatile ULONGLONG g_httpHoldUntilMs = 0;
+static volatile long g_posSource = POS_SOURCE_NONE;
+
+static const char* pos_source_name(long src) {
+    switch (src) {
+    case POS_SOURCE_HTTP:
+        return "http";
+    case POS_SOURCE_FILE:
+        return "file";
+    default:
+        return "none";
+    }
+}
+
+/* Log only on change (HTTP thread or watcher). Never TS API. */
+static void pos_set_source(long next) {
+    const long prev = InterlockedExchange(&g_posSource, next);
+    if (prev == next) {
+        return;
+    }
+    log_write("POS: method %s -> %s", pos_source_name(prev), pos_source_name(next));
+}
 
 void pos_watcher_set_update_callback(void (*callback)(void)) {
     g_updateCallback = callback;
@@ -163,6 +189,7 @@ int pos_inject_sample(const PosSample* sample) {
     InterlockedExchange(&g_coordinatesValid, 1);
     g_lastValidTick = now;
     g_httpHoldUntilMs = now + 2000ULL;
+    pos_set_source(POS_SOURCE_HTTP);
 
     if (g_injectNotifyCallback) {
         g_injectNotifyCallback();
@@ -279,6 +306,8 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
     ULONGLONG lastMissingLog = 0;
     ULONGLONG lastValidLog = 0;
     ULONGLONG lastAutodetectMs = 0;
+    ULONGLONG lastStatusMs = 0;
+    ULONGLONG lastHoldSkipLog = 0;
     int lastSeq = -1;
 
     log_write("POS: watcher started");
@@ -293,6 +322,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
 
         const ULONGLONG now = GetTickCount64();
         const int posFileEnabled = g_config.enablePosFile;
+        ULONGLONG dbgFileAge = MAXULONGLONG;
 
         if (posFileEnabled && now - lastAutodetectMs >= POS_AUTODETECT_RETRY_MS) {
             lastAutodetectMs = now;
@@ -308,10 +338,12 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                     log_debug("POS: no Pos.txt path configured");
                 }
                 InterlockedExchange(&g_coordinatesValid, 0);
+                pos_set_source(POS_SOURCE_NONE);
                 goto pos_watcher_tick;
             }
 
             const ULONGLONG age = pos_file_write_age_ms(filePath);
+            dbgFileAge = age;
             const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
 
             ULONGLONG writeQuad = 0;
@@ -342,6 +374,13 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             }
             /* HTTP hold: injected position is authoritative; block file overwrites. */
             if (acceptRead && now < g_httpHoldUntilMs) {
+                if (now - lastHoldSkipLog >= POS_DEBUG_STATUS_MS) {
+                    lastHoldSkipLog = now;
+                    log_debug("POS: Pos.txt skipped (HTTP hold left=%llums seq=%d age=%llums)",
+                        (unsigned long long)(g_httpHoldUntilMs - now),
+                        sample.seq,
+                        (unsigned long long)age);
+                }
                 acceptRead = 0;
             }
 
@@ -353,15 +392,16 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 g_lastValidTick = now;
 
                 if (!currentlyValid) {
-                    log_write("POS: coordinates valid (seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f)",
+                    log_write("POS: coordinates valid source=file (seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f)",
                         sample.seq, sample.x, sample.y, sample.z, sample.yaw);
                 }
                 InterlockedExchange(&g_coordinatesValid, 1);
+                pos_set_source(POS_SOURCE_FILE);
 
                 if (sample.seq != lastSeq || now - lastValidLog > POS_LOG_THROTTLE_MS) {
                     if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
                         lastValidLog = now;
-                        log_debug("POS: seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f age=%llums",
+                        log_debug("POS: method=file seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f age=%llums",
                             sample.seq, sample.x, sample.y, sample.z,
                             sample.yaw, sample.yawY, (unsigned long long)age);
                     }
@@ -382,11 +422,12 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                     /* Keep coords — file temporarily stale/missing (grace) or HTTP hold active. */
                 }
                 else if (currentlyValid) {
-                    log_write("POS: coordinates invalid (file %s, age=%llums, grace=%llums)",
+                    log_write("POS: coordinates invalid source=file (%s, age=%llums, grace=%llums)",
                         age == MAXULONGLONG ? "missing" : "stale",
                         age == MAXULONGLONG ? 0ULL : (unsigned long long)age,
                         g_lastValidTick != 0 ? (unsigned long long)(now - g_lastValidTick) : 0ULL);
                     InterlockedExchange(&g_coordinatesValid, 0);
+                    pos_set_source(POS_SOURCE_NONE);
                     g_lastValidTick = 0;
                     if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
                         g_updateCallback(); /* one shot on the valid->invalid edge */
@@ -420,9 +461,10 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 /* Keep coords — HTTP hold active or grace after last inject. */
             }
             else if (currentlyValid) {
-                log_write("POS: coordinates invalid (HTTP-only, grace=%llums)",
+                log_write("POS: coordinates invalid source=http (HTTP-only, grace=%llums)",
                     g_lastValidTick != 0 ? (unsigned long long)(now - g_lastValidTick) : 0ULL);
                 InterlockedExchange(&g_coordinatesValid, 0);
+                pos_set_source(POS_SOURCE_NONE);
                 g_lastValidTick = 0;
                 if (g_updateCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
                     g_updateCallback();
@@ -434,6 +476,28 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
         }
 
     pos_watcher_tick:
+        if (log_is_enabled() && now - lastStatusMs >= POS_DEBUG_STATUS_MS) {
+            lastStatusMs = now;
+            const ULONGLONG holdLeft = (now < g_httpHoldUntilMs)
+                ? (g_httpHoldUntilMs - now) : 0ULL;
+            if (dbgFileAge == MAXULONGLONG) {
+                log_debug("POS: method=%s valid=%d holdLeft=%llums posFile=%d fileAge=n/a seq=%d",
+                    pos_source_name(InterlockedCompareExchange(&g_posSource, 0, 0)),
+                    InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0,
+                    (unsigned long long)holdLeft,
+                    posFileEnabled,
+                    lastSeq);
+            }
+            else {
+                log_debug("POS: method=%s valid=%d holdLeft=%llums posFile=%d fileAge=%llums seq=%d",
+                    pos_source_name(InterlockedCompareExchange(&g_posSource, 0, 0)),
+                    InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0,
+                    (unsigned long long)holdLeft,
+                    posFileEnabled,
+                    (unsigned long long)dbgFileAge,
+                    lastSeq);
+            }
+        }
         if (g_tickCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
             g_tickCallback();
         }
@@ -453,6 +517,7 @@ void pos_watcher_start(void) {
     InitializeCriticalSection(&g_posLock);
     memset(&g_currentSample, 0, sizeof(g_currentSample));
     InterlockedExchange(&g_coordinatesValid, 0);
+    InterlockedExchange(&g_posSource, POS_SOURCE_NONE);
     g_lastValidTick = 0;
     g_lastFileWriteQuad = 0;
 

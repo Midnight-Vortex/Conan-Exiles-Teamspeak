@@ -13,6 +13,10 @@
  *  - pos_watcher_start/stop: called on the TS callback thread (init/shutdown).
  *  - pos_get_current / pos_coordinates_valid: callable from any thread; the
  *    snapshot is guarded by a private lock inside this module.
+ *  - pos_inject_sample: any thread; logs POS method http->… via log_write
+ *    (log lock only, never TS API).
+ *  - Watcher logs POS method file/none (log_write on change) and, with
+ *    debug=1, a 1 Hz status line.
  */
 
 #include "core/util/poll_interval.h"

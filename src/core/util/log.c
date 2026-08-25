@@ -12,6 +12,8 @@ static volatile long g_logEnabled = 0;
 static wchar_t g_logPath[MAX_PATH];
 static volatile long g_logPathReady = 0;
 
+#define LOG_MAX_BYTES (100ull * 1024ull * 1024ull)
+
 static BOOL CALLBACK log_lock_init_once(PINIT_ONCE initOnce, PVOID param, PVOID* context) {
     (void)initOnce;
     (void)param;
@@ -48,6 +50,18 @@ const wchar_t* log_get_path(void) {
     return g_logPath;
 }
 
+static ULONGLONG log_file_size_bytes(void) {
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    ULARGE_INTEGER sz;
+
+    if (!GetFileAttributesExW(g_logPath, GetFileExInfoStandard, &fad)) {
+        return 0;
+    }
+    sz.LowPart = fad.nFileSizeLow;
+    sz.HighPart = fad.nFileSizeHigh;
+    return sz.QuadPart;
+}
+
 static void log_write_line(const char* prefix, const char* fmt, va_list args) {
     if (!log_resolve_path()) {
         return;
@@ -79,18 +93,32 @@ static void log_write_line(const char* prefix, const char* fmt, va_list args) {
         return;
     }
 
-    /* FILE_SHARE_* so writes succeed while the user has plugin.log open in an editor. */
-    HANDLE h = CreateFileW(g_logPath,
-        FILE_APPEND_DATA,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        NULL,
-        OPEN_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL);
-    if (h != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        WriteFile(h, line, (DWORD)lineLen, &written, NULL);
-        CloseHandle(h);
+    /* FILE_SHARE_* so writes succeed while the user has plugin.log open in an editor.
+       Truncate at 100 MB so debug/rate spam cannot grow the file without bound. */
+    {
+        const int rotate = (log_file_size_bytes() >= LOG_MAX_BYTES);
+        HANDLE h = CreateFileW(g_logPath,
+            FILE_APPEND_DATA,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL,
+            rotate ? CREATE_ALWAYS : OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            if (rotate) {
+                char notice[192];
+                const int noticeLen = snprintf(notice, sizeof(notice),
+                    "%04u-%02u-%02u %02u:%02u:%02u.%03u LOG: cleared (plugin.log exceeded 100 MB)\r\n",
+                    st.wYear, st.wMonth, st.wDay,
+                    st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+                if (noticeLen > 0 && noticeLen < (int)sizeof(notice)) {
+                    WriteFile(h, notice, (DWORD)noticeLen, &written, NULL);
+                }
+            }
+            WriteFile(h, line, (DWORD)lineLen, &written, NULL);
+            CloseHandle(h);
+        }
     }
 
     LeaveCriticalSection(&g_logLock);
