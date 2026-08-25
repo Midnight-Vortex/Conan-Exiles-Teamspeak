@@ -9,8 +9,9 @@
  *   - start/stop:   TS callback thread.
  *   - Listener thread: never calls the TS API; calls pos_inject_sample()
  *     which is safe from any thread. No overlay, no UI.
- *   - Debug logging (rate summary, POST fields, raw lines): HTTP thread only,
- *     via log_write / log_debug (log module lock — never TS API).
+ *   - Logging (rate summary, POST success, errors, raw IN for GET/404): HTTP
+ *     thread only, via log_write / log_debug (log module lock — never TS API).
+ *     Successful POST /v1/position → one log_write line (always visible).
  *
  * winsock2.h MUST precede windows.h — kept first here.
  */
@@ -365,15 +366,15 @@ static void http_handle_client(SOCKET client) {
 
             http_post_rate_tick(injected, dtMs);
 
-            if (parsed) {
-                log_debug("HTTP: POST seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f dt=%llums status=%d",
+            if (injected) {
+                log_write("HTTP: POST seq=%d pos=X=%.6f Y=%.6f Z=%.6f YAW=%.6f YAWY=%.6f dt=%llums status=%d",
                     sample.seq,
                     sample.x, sample.y, sample.z,
                     sample.yaw, sample.yawY,
                     (unsigned long long)dtMs,
                     status);
             }
-            else {
+            else if (!parsed) {
                 char raw[420];
                 http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
                 log_write("HTTP: POST status=400 reason=parse cl=%d raw=\"%s\"",
@@ -390,7 +391,6 @@ static void http_handle_client(SOCKET client) {
             }
 
             if (injected) {
-                http_log_raw_in(method, path, body, bodyLen, 200);
                 http_send(client, 200, "{\"ok\":true}");
             }
             else {

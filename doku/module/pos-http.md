@@ -163,15 +163,23 @@ Meter senden.
 
 ## 9. Rohdaten im Plugin-Log
 
-Bei hoher POST-Rate (~30 ms) würde jede Zeile das Log überfluten. Deshalb gibt es **zwei Stufen**:
+Bei hoher POST-Rate (~30 ms) schreibt das Plugin **eine Zeile pro erfolgreichem POST** plus **eine Rate-Zusammenfassung pro Sekunde** — kein zweites raw-IN bei HTTP 200 (siehe Änderung 042).
 
 | Stufe | Wann | Sichtbar |
 |---|---|---|
+| **Einzel-Sample (Erfolg)** | jeder erfolgreicher Inject (HTTP 200) | immer (`log_write`) |
 | **Rate-Zusammenfassung** | ~1× pro Sekunde bei aktivem POST | immer (`log_write`) |
-| **Einzel-Sample** | jeder erfolgreiche POST | nur mit `debug=1` in `plugin.cfg` (`log_debug`) |
 | **Fehler** | jeder 400 (Parse oder Reject) | immer (`log_write`) |
 
-### Rate-Zeile (immer)
+### Erfolg — immer sichtbar (eine Zeile pro POST)
+
+```text
+HTTP: POST seq=42 pos=X=12345.000000 Y=67890.000000 Z=200.000000 YAW=45.000000 YAWY=0.000000 dt=30ms status=200
+```
+
+Koordinaten intern als `double`; Log zeigt `%.6f` mit `X=`/`Y=`/`Z=`/`YAW=`/`YAWY=` (Änderung 041).
+
+### Rate-Zeile (immer, ~1×/s)
 
 ```text
 HTTP: rate n=33/s dt=min/avg/max=28/30/35ms ok=33 fail=0
@@ -180,20 +188,6 @@ HTTP: rate n=33/s dt=min/avg/max=28/30/35ms ok=33 fail=0
 - `n` — POST-Anzahl in diesem 1-Sekunden-Fenster  
 - `dt` — Abstand zwischen zwei POSTs (Minimum / Durchschnitt / Maximum in ms)  
 - `ok` / `fail` — wie viele Inject-Erfolge vs. Fehler (400)
-
-### Erfolg — DBG-Zeile (`debug=1` in plugin.cfg)
-
-```text
-DBG HTTP: POST seq=42 pos=X=12345.000000 Y=67890.000000 Z=200.000000 YAW=45.000000 YAWY=0.000000 dt=30ms status=200
-```
-
-(Hinweis ab Änderung 041: Koordinaten werden intern als `double` gehalten; Debug-Logs zeigen `%.6f` mit `X=`/`Y=`/`Z=` — volle geparste Ziffern, nicht mehr `%.1f`.)
-
-Optional zusätzlich (ebenfalls nur DBG):
-
-```text
-DBG HTTP: IN POST /v1/position status=200 cl=72 raw="{"seq":42,...}"
-```
 
 ### Fehler — immer sichtbar
 
@@ -209,12 +203,4 @@ HTTP: POST status=400 reason=parse cl=12 raw="..."
 HTTP: POST status=400 reason=reject seq=1 pos=X=0.000000 Y=0.000000 Z=0.000000 cl=58 raw="..."
 ```
 
-### Debug aktivieren
-
-In `%AppData%\TS3Client\plugins\conan_exiles\plugin.cfg` (oder Plugin-Config-Pfad):
-
-```ini
-debug=1
-```
-
-Ohne `debug=1` siehst du weiterhin Rate-Zeilen und alle 400-Fehler — aber keine einzelne Erfolgs-Zeile pro Sample.
+GET `/health` und unbekannte Pfade (404) loggen weiterhin optional eine `HTTP: IN … raw=` Zeile (selten). Erfolgreiche POSTs brauchen **kein** `debug=1` mehr (seit Änderung 042).

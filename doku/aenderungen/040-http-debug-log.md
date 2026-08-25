@@ -1,5 +1,7 @@
 # 040 — HTTP-Debug-Logging (POST /v1/position)
 
+> **Hinweis (042):** Erfolgreiche POSTs (HTTP 200) werden wieder mit `log_write` geloggt — eine Zeile pro Inject, ohne raw-IN-Duplikat. Die unten beschriebene „nur debug=1“-Regel für Erfolg gilt nicht mehr; Rate-Zeile und Fehler-Logging bleiben wie in 040.
+
 ## 1. Was wurde geändert?
 
 | Datei | Änderung |
