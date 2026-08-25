@@ -15,7 +15,9 @@ Neue Schalter:
 - `-SkipPackage` — kein `.ts3_plugin` (nur DLL wie bisher)
 - `-SkipInstaller` — Paket schreiben, aber den **TeamSpeak 3 Package Installer** nicht starten
 
-Nach jedem neuen Rebuild startet das Skript den Installer automatisch (wie Doppelklick / Firefox „Öffnen mit“). TeamSpeak sollte vorher beendet sein, sonst sperrt die alte DLL.
+Nach jedem neuen Rebuild **schreibt** das Skript das Paket. Den Installer
+startet es nicht mehr automatisch (siehe Änderung 048) — sonst kürzt der
+Installer eine noch gesperrte `conan_exiles.dll` auf 0 Bytes.
 
 ---
 

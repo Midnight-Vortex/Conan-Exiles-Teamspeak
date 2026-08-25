@@ -1,9 +1,10 @@
 # Build Release x64, wrap a .ts3_plugin package, deploy DLL to %APPDATA%\TS3Client\plugins
 # Usage:
-#   .\build.ps1                  build + .ts3_plugin + Package Installer + deploy
-#   .\build.ps1 -SkipDeploy       build + .ts3_plugin + Package Installer (no AppData copy)
+#   .\build.ps1                  build + .ts3_plugin + deploy (does NOT start Package Installer)
+#   .\build.ps1 -SkipDeploy       build + .ts3_plugin (no AppData copy)
 #   .\build.ps1 -SkipPackage      build + deploy (no .ts3_plugin)
-#   .\build.ps1 -SkipInstaller    write .ts3_plugin but do not start Package Installer
+#   .\build.ps1 -SkipDeploy -OpenPackage
+#                                 start TeamSpeak 3 Package Installer (TS must be quit)
 #   .\build.ps1 -DeployOnly       deploy existing bin\conan_exiles.dll
 #   .\build.ps1 -Pause            wait for keypress before exit
 
@@ -11,6 +12,7 @@ param(
     [switch]$SkipDeploy,
     [switch]$SkipPackage,
     [switch]$SkipInstaller,
+    [switch]$OpenPackage,
     [switch]$DeployOnly,
     [switch]$Pause
 )
@@ -57,9 +59,17 @@ Bitte TeamSpeak komplett beenden (Tray -> Quit) und erneut ausfuehren:
 "@
     }
 
+    $src = Get-Item $SourceDll
+    if ($src.Length -eq 0) {
+        throw "Deploy aborted: source DLL is 0 bytes ($SourceDll)"
+    }
+
     Copy-Item -Force $SourceDll $targetDll
 
     $deployed = Get-Item $targetDll
+    if ($deployed.Length -eq 0) {
+        throw "Deploy aborted: target DLL is 0 bytes (TeamSpeak still locking the file?)"
+    }
     Log "  Deploy OK"
     Log "  Size: $($deployed.Length) bytes"
     Log "  Time: $($deployed.LastWriteTime)"
@@ -235,7 +245,13 @@ Open Visual Studio Installer -> Modify -> Desktopentwicklung mit C++
         Log "Time:     $($info.LastWriteTime)"
 
         if (-not $SkipPackage) {
-            New-Ts3PluginPackage -SourceDll $BinDll -OpenInstaller:(-not $SkipInstaller) | Out-Null
+            # Never auto-launch Package Installer during a deploy: it truncates
+            # plugins\conan_exiles.dll to 0 bytes if TeamSpeak still holds the file.
+            $launchInstaller = $OpenPackage -and -not $SkipInstaller -and $SkipDeploy
+            if ($OpenPackage -and -not $SkipDeploy) {
+                Log "OpenPackage ignored while deploying — installer would overwrite AppData. Use -SkipDeploy -OpenPackage, or double-click the .ts3_plugin after Quit."
+            }
+            New-Ts3PluginPackage -SourceDll $BinDll -OpenInstaller:$launchInstaller | Out-Null
         }
     }
     else {
