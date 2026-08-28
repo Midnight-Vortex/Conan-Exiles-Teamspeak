@@ -1,32 +1,27 @@
-// Copyright The Mumble Developers. All rights reserved.
+// Copyright The Mumble Developers. All rights reserved. 
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at https://www.mumble.info/LICENSE.
-//
-// The following conditions apply exclusively to code written
-// by Dino_Rex and do not affect, modify, or replace the copyright
-// or licensing terms of the original Mumble code.
-//
-// -----------------------------------------------------------------------------
-// Dino_Rex Code
-// Copyright (c) 2025 Dino_Rex
-//
-// Mozilla Public License Version 2.0 + Network Use Clause
-//
-// This software, insofar as it consists of code written by Dino_Rex,
-// is licensed under the Mozilla Public License 2.0 (MPL-2.0),
-// available at:
-// https://www.mozilla.org/MPL/2.0/
-//
-// Additional Network Use Clause:
-//
-// If you modify the Dino_Rex code and deploy or use the modified version
-// to provide a service accessible to others over a network, including
-// through TeamSpeak, web services, APIs, or remote access, you must make
-// the complete corresponding source code of your modified version
-// publicly available under the same license, including all changes
-// and additions you made.
-//
-// All other terms and conditions of the Mozilla Public License 2.0
-// remain unchanged.
 
+// The following conditions apply exclusively to the code written by Dino_Rex 
+// and do not affect or modify the copyright 
+// or licensing terms of the original Mumble code.
+
+// The following conditions apply exclusively to the code written by Dino_Rex 
+// and do not affect or modify the copyright 
+// or licensing terms of the original Mumble code.
+
+// Mozilla Public License Version 2.0 + Network Use Clause
+
+// Copyright(c) 2025 Dino_Rex
+
+// This software is licensed under the Mozilla Public License 2.0 (MPL - 2.0),
+// available at : https://www.mozilla.org/MPL/2.0/
+
+// Additional Network Use Clause :
+// If you modify this software and deploy or use it to provide a service accessible
+// to others over a network(including via web, API, or remote access),
+// you must make the complete corresponding source code of your modified version
+// publicly available under this same license(MPL - 2.0 + Network Use Clause),
+// including all changes and additions you made.
+// All other terms and conditions of the Mozilla Public License 2.0 remain unchanged.
