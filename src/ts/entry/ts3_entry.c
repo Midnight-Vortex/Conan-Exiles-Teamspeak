@@ -345,6 +345,7 @@ int ts3plugin_init(void) {
 }
 
 /* V8.8 fixed shutdown order (doku/01-architektur-v8.md, "Shutdown-Reihenfolge"):
+   0. Leave ingame for hub (TS API still valid; 057).
    1. Stop accepting work: audio to passthrough (PCM path inert),
       pluginShuttingDown set (UI/overlay code stops touching HWNDs/GDI),
       deferred overlay start disarmed.
@@ -363,6 +364,8 @@ int ts3plugin_init(void) {
    5. Close the log LAST so every step above can still log. */
 void ts3plugin_shutdown(void) {
     log_write("SHUTDOWN: plugin stopping");
+    /* 0: still connected — leave ingame for hub before any teardown. */
+    chan_leave_ingame_on_plugin_disable();
     /* 1: stop accepting work */
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     plugin_ui_shutdown();

@@ -46,6 +46,10 @@ void chan_signal_position_update(void);
    flag and refreshes the playback gate. */
 void chan_on_own_move(uint64 newChannelID);
 
+/* Last TS-API move before plugin unload: if the local client is in
+   ingame, request hub and restore the real nickname. Callback thread. */
+void chan_leave_ingame_on_plugin_disable(void);
+
 /* Drop all state (disconnect / new connection). */
 void chan_reset(void);
 

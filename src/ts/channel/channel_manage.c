@@ -401,6 +401,45 @@ void chan_tick(void) {
     }
 }
 
+void chan_leave_ingame_on_plugin_disable(void) {
+    if (!ts3_thread_is_callback() || !ts3_is_connected()) {
+        return;
+    }
+    if (g_hubChannelID == 0 || g_ingameChannelID == 0) {
+        chan_find_hub_and_ingame();
+    }
+    if (g_hubChannelID == 0) {
+        log_write("CHAN: plugin disable — no hub channel, stay put");
+        return;
+    }
+
+    const anyID localID = ts3_get_local_client_id();
+    if (localID == 0) {
+        return;
+    }
+    const uint64 ownChannel = ts3_get_channel_of_client(localID);
+    if (ownChannel == 0 || !chan_is_ingame_channel(ownChannel)) {
+        return;
+    }
+
+    /* Restore the real name now — onClientMoveEvent will not run after unload. */
+    nick_restore_in_hub();
+
+    /* Last chance: ignore in-flight/cooldown so the request goes out. */
+    g_moveInFlight = 0;
+    g_lastMoveMs = 0;
+    if (ts3_request_client_move(localID, g_hubChannelID, "")) {
+        const ULONGLONG now = GetTickCount64();
+        g_moveInFlight = 1;
+        g_moveInFlightSince = now;
+        g_lastMoveMs = now;
+        log_write("CHAN: plugin disable — move ingame -> hub requested");
+    }
+    else {
+        log_write("CHAN: plugin disable — hub move failed");
+    }
+}
+
 /* ---- events / reset ---------------------------------------------------------------- */
 
 void chan_on_own_move(uint64 newChannelID) {

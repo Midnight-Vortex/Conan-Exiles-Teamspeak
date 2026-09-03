@@ -70,6 +70,8 @@ Vier Luecken, alle vom Typ "Thread lebt noch, waehrend sein Zustand abgebaut wir
 
 `ts3plugin_shutdown()` (Callback-Thread) arbeitet exakt diese Liste ab:
 
+0. **Ingame → Hub** (057): `chan_leave_ingame_on_plugin_disable()`, solange
+   die TS-API noch erlaubt ist.
 1. **Annahme stoppen:** Audio auf Passthrough (PCM-Pfad inert),
    `pluginShuttingDown = TRUE` (UI-/Overlay-Code fasst keine HWNDs/GDI mehr
    an), verzoegerte Overlay-Starts entschaerft (`g_overlay_armed = 0`).

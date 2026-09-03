@@ -189,6 +189,8 @@ Writer, zwei Hotkey-Poller, Reset-Pfad schreibt in Audio-Rampen. Ein Besitzer = 
 So arbeitet `ts3plugin_shutdown()` (`src/ts/entry/ts3_entry.c`) es heute ab
 (Details: `doku/aenderungen/014-shutdown-haertung.md`):
 
+0. **Ingame verlassen:** `chan_leave_ingame_on_plugin_disable()` — eigener
+   Client aus Ingame in den Hub (TS-API noch erlaubt, Aenderung 057).
 1. **Annahme stoppen:** Audio auf Passthrough, `pluginShuttingDown` gesetzt,
    verzoegerte Overlay-Starts entschaerft.
 2. **Threads stoppen + joinen** (Abhaengigkeits-Reihenfolge): Hotkey-Poller →
