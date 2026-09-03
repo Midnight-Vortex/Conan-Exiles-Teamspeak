@@ -305,6 +305,8 @@ void ts3plugin_onHotkeyEvent(const char* keyword) {
     }
 }
 
+static void ts3_bootstrap_connected_session(void);
+
 int ts3plugin_init(void) {
     ts3_thread_mark_callback();
     log_write("BOOT: plugin version %s starting", ts3plugin_version());
