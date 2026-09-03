@@ -16,6 +16,8 @@
  *     log_write when the window had failures. POST 400 → log_write.
  *     Dropped connections (recv fail / incomplete headers) → throttled drop log
  *     (~1 Hz max). Per-connection recv timeout: 100 ms (fail-fast).
+ *     accept() errors rebind the listen socket unless stop is signalled
+ *     (file fallback can return to HTTP when POSTs resume).
  *
  * winsock2.h MUST precede windows.h — kept first here.
  */
@@ -476,6 +478,39 @@ static void http_handle_client(SOCKET client) {
     http_send(client, 404, "{\"ok\":false,\"error\":\"not found\"}");
 }
 
+/* Bind 127.0.0.1:POS_HTTP_PORT and listen. Caller owns WSAStartup. */
+static int http_open_listen_socket(void) {
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) {
+        log_write("HTTP: socket() failed (%d)", WSAGetLastError());
+        return 0;
+    }
+
+    const int opt = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, (int)sizeof(opt));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(POS_HTTP_PORT);
+
+    if (bind(s, (struct sockaddr*)&addr, (int)sizeof(addr)) == SOCKET_ERROR) {
+        log_write("HTTP: bind() failed (%d) — port %d already in use?",
+            WSAGetLastError(), POS_HTTP_PORT);
+        closesocket(s);
+        return 0;
+    }
+    if (listen(s, SOMAXCONN) == SOCKET_ERROR) {
+        log_write("HTTP: listen() failed (%d)", WSAGetLastError());
+        closesocket(s);
+        return 0;
+    }
+
+    g_listenSocket = s;
+    return 1;
+}
+
 /* ---- listener thread --------------------------------------------------- */
 
 static unsigned __stdcall http_server_thread(void* arg) {
@@ -491,8 +526,31 @@ static unsigned __stdcall http_server_thread(void* arg) {
         SOCKET client = accept(g_listenSocket,
             (struct sockaddr*)&client_addr, &addr_len);
         if (client == INVALID_SOCKET) {
-            /* Stop was signalled (socket closed) or accept error. */
-            break;
+            /* Shutdown closes the listen socket — that is a clean stop. */
+            if (WaitForSingleObject(g_stopEvent, 0) != WAIT_TIMEOUT) {
+                break;
+            }
+            const int err = WSAGetLastError();
+            log_write("HTTP: accept failed (%d) — recovering listener", err);
+            if (g_listenSocket != INVALID_SOCKET) {
+                closesocket(g_listenSocket);
+                g_listenSocket = INVALID_SOCKET;
+            }
+            if (WaitForSingleObject(g_stopEvent, 250) != WAIT_TIMEOUT) {
+                break;
+            }
+            if (http_open_listen_socket()) {
+                /* Stop may have run while we rebound — drop the new socket. */
+                if (WaitForSingleObject(g_stopEvent, 0) != WAIT_TIMEOUT) {
+                    if (g_listenSocket != INVALID_SOCKET) {
+                        closesocket(g_listenSocket);
+                        g_listenSocket = INVALID_SOCKET;
+                    }
+                    break;
+                }
+                log_write("HTTP: listening again on " POS_HTTP_BASE_URL);
+            }
+            continue;
         }
         http_handle_client(client);
         closesocket(client);
@@ -516,40 +574,7 @@ void pos_http_server_start(void) {
         return;
     }
 
-    g_listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (g_listenSocket == INVALID_SOCKET) {
-        log_write("HTTP: socket() failed (%d)", WSAGetLastError());
-        WSACleanup();
-        InterlockedExchange(&g_httpRunning, 0);
-        return;
-    }
-
-    /* Allow quick restart after plugin reload. */
-    const int opt = 1;
-    setsockopt(g_listenSocket, SOL_SOCKET, SO_REUSEADDR,
-        (const char*)&opt, (int)sizeof(opt));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); /* 127.0.0.1 only */
-    addr.sin_port        = htons(POS_HTTP_PORT);
-
-    if (bind(g_listenSocket, (struct sockaddr*)&addr, (int)sizeof(addr))
-            == SOCKET_ERROR) {
-        log_write("HTTP: bind() failed (%d) — port %d already in use?",
-            WSAGetLastError(), POS_HTTP_PORT);
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-        WSACleanup();
-        InterlockedExchange(&g_httpRunning, 0);
-        return;
-    }
-
-    if (listen(g_listenSocket, SOMAXCONN) == SOCKET_ERROR) {
-        log_write("HTTP: listen() failed (%d)", WSAGetLastError());
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
+    if (!http_open_listen_socket()) {
         WSACleanup();
         InterlockedExchange(&g_httpRunning, 0);
         return;
@@ -599,6 +624,11 @@ void pos_http_server_stop(void) {
         }
         CloseHandle(g_httpThread);
         g_httpThread = NULL;
+    }
+    /* Thread may have rebound after our first closesocket. */
+    if (g_listenSocket != INVALID_SOCKET) {
+        closesocket(g_listenSocket);
+        g_listenSocket = INVALID_SOCKET;
     }
     if (g_stopEvent) {
         CloseHandle(g_stopEvent);

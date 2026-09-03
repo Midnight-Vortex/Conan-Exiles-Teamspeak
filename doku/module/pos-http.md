@@ -236,8 +236,12 @@ POS: method file -> none
 ```
 
 `http` = letzter Inject über `POST /v1/position` (Hold ~2 s, Datei wird nicht überschrieben).  
-`file` = Pos.txt wurde übernommen.  
+`file` = Pos.txt-Notfall, nur wenn HTTP ~2 s nichts liefert.  
 `none` = Koordinaten ungültig (stale / Grace abgelaufen).
+
+Nach einer Störung: der nächste gültige POST setzt wieder `file -> http` (Inject
+hat Vorrang). Stirbt `accept()`, bindet der Listener neu statt dauerhaft auf
+Pos.txt zu bleiben (Änderung 056).
 
 Mit **`debug=1`** zusätzlich ~1×/s:
 
