@@ -520,14 +520,15 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         gain *= directionVolume;
     }
     else if (reverbZone) {
+        /* Cave character is LPF + Schroeder wet. Do not apply DRR to gain or
+           drr — prox_direct_reverb_ratio hits ~0.05 at a few meters and would
+           crush others via gain or prox_apply_diffuse_samples. */
         cutoffHz = prox_lowpass_cutoff_hz(distance);
-        drr = prox_direct_reverb_ratio(distance,
-            audio_zone_reference_distance(hub, localZone));
     }
 
     float panL, panR;
     /* Mumble "TRUE stereo" (~4090) — light spatial pan; always in proximity mode.
-       RealisticAudio owns full LPF/diffuse blend; reverb zones add LPF + DRR wet/dry only. */
+       RealisticAudio owns LPF/diffuse blend; reverb zones add LPF + cave only. */
     prox_binaural_stereo_gains(dirX, dirY, dirZ,
         toRemoteX, toRemoteY, toRemoteZ, &panL, &panR);
 

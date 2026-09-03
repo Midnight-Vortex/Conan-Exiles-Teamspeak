@@ -53,8 +53,7 @@ audio_compute_client (Callback-Thread)
         │
         └─ reverbZone?
               ├─ cutoffHz ← prox_lowpass_cutoff_hz   (dumpfer Hoehlenklang)
-              └─ drr ← prox_direct_reverb_ratio      (Wet/Dry fuer Diffuse)
-              (gain unveraendert)
+              └─ (drr bleibt 1.0 — siehe 055; DRR-Mix macht Stimmen wieder leise)
 
 ts3_audio_process_playback (Audio-Thread)
         Lowpass → prox_apply_diffuse_samples(drr) → Cave-Schroeder → Gain/Pan-Rampe
