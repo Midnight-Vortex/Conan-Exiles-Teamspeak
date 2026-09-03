@@ -118,9 +118,11 @@ static void overlay_request_immediate_start(void) {
     overlay_schedule_start();
 }
 
-/* Pos watcher tick (watcher thread): queue own CEPOS send and refresh the
-   audio snapshots for all known speakers. No TS API calls in here. */
-static void ts3_on_local_position_update(void) {
+/* Pos tick (watcher or HTTP inject notify thread): refresh HUD zone via
+   plugin_ui_on_position_tick (pos/hub atomics only; overlay uses PostMessage
+   when not on the overlay thread), then queue CEPOS and audio snapshots.
+   No TS API calls in here. */
+static void ts3_on_position_update_common(void) {
     plugin_ui_on_position_tick();
     chan_signal_position_update();
     cepos_signal_send_pending();
@@ -128,13 +130,12 @@ static void ts3_on_local_position_update(void) {
     ts3_audio_on_local_position_update();
 }
 
-/* HTTP inject callback (HTTP listener thread): same as local update but
-   without plugin_ui_on_position_tick — overlay is NOT safe from HTTP thread. */
+static void ts3_on_local_position_update(void) {
+    ts3_on_position_update_common();
+}
+
 static void ts3_on_http_position_update(void) {
-    chan_signal_position_update();
-    cepos_signal_send_pending();
-    ts3_ceping_signal_send_pending();
-    ts3_audio_on_local_position_update();
+    ts3_on_position_update_common();
 }
 
 /* ---- voice_modes layering hooks (V8.6b) -----------------------------------
@@ -210,7 +211,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.4";
+    return "8.0.6";
 }
 
 int ts3plugin_apiVersion(void) {

@@ -60,6 +60,11 @@ Das verhindert, dass ein gleichzeitig laufender Datei-Watcher die HTTP-Daten
 **aber ohne** `plugin_ui_on_position_tick()`, da UI-Overlay-Zugriff vom HTTP-Thread
 nicht erlaubt ist.
 
+> **Hinweis (053):** Das Auslassen des Position-Ticks war ein Bug — die HUD-Zone
+> blieb auf „Ausserhalb“, solange HTTP die Positionsquelle war. Ab **8.0.6** rufen
+> beide Callbacks dieselbe gemeinsame Funktion inkl. Tick auf; Overlay-Refresh
+> läuft per `PostMessage`, kein GDI vom HTTP-Thread.
+
 ---
 
 ## 4. Wie funktioniert es jetzt?

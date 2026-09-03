@@ -34,7 +34,8 @@ void overlay_ui_mark_thread(void);
 void overlay_ui_clear_thread(void);
 void overlay_ui_signal_quit(void);
 
-/* Called from the pos watcher (PLUGIN_POLL_INTERVAL_MS) to keep legacy flags fresh. */
+/* Called from the pos watcher or HTTP inject notify thread to keep legacy flags
+   fresh. Overlay refresh is PostMessage-only when not on the overlay thread. */
 void plugin_ui_on_position_tick(void);
 
 void plugin_ui_on_settings_saved(void);
