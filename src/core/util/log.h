@@ -13,8 +13,8 @@
  * log_write  — always written (boot, shutdown, errors; low volume).
  * log_debug  — only written when debug mode is enabled in plugin.cfg.
  *
- * plugin.log is truncated when it exceeds 100 MB (safety cap; any thread,
- * under the log lock).
+ * plugin.log is truncated at 250 MB when debug is off, 1 GB when debug
+ * is on (any thread, under the log lock).
  */
 
 void log_set_enabled(int enabled);

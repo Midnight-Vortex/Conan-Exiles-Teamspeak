@@ -53,7 +53,7 @@ Kein TS-API. Nur Log-Lock.
 - Nicht gebaut in diesem Paket.
 - Nach Build, **ohne** Debug: keine `HTTP: rate … ok=33 fail=0`-Flut; 400er und Kanal-Moves bleiben.
 - Mit `debug=1`: Rate + 1-Hz-Status; `POS: method` immer.
-- Cap: nur prüfbar, wenn die Datei künstlich ≥100 MB ist — dann erste neue Zeile nach `LOG: cleared …`.
+- Cap: siehe Änderung 052 (250 MB / 1 GB).
 
 ---
 

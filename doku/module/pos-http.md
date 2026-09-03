@@ -173,7 +173,7 @@ TS-Client danach neu starten. Der Pos-Watcher liest dann keine `Pos.txt` mehr; K
 
 ## 9. Rohdaten im Plugin-Log
 
-Bei hoher POST-Rate (~30 ms) antwortet der Server **zuerst** (HTTP 200/400), **danach** wird geloggt (Änderung 047). Erfolgreiche Proben und die **Rate-Zeile bei fail=0** sind nur `log_debug` (Änderung 051). `plugin.log` wird bei **100 MB** geleert.
+Bei hoher POST-Rate (~30 ms) antwortet der Server **zuerst** (HTTP 200/400), **danach** wird geloggt (Änderung 047). Erfolgreiche Proben und die **Rate-Zeile bei fail=0** sind nur `log_debug` (Änderung 051). `plugin.log` wird bei **250 MB** (Debug aus) bzw. **1 GB** (Debug an) geleert (Änderung 052).
 
 | Stufe | Wann | Sichtbar |
 |---|---|---|

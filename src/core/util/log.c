@@ -12,7 +12,8 @@ static volatile long g_logEnabled = 0;
 static wchar_t g_logPath[MAX_PATH];
 static volatile long g_logPathReady = 0;
 
-#define LOG_MAX_BYTES (100ull * 1024ull * 1024ull)
+#define LOG_MAX_BYTES_NORMAL (250ull * 1024ull * 1024ull)
+#define LOG_MAX_BYTES_DEBUG  (1ull * 1024ull * 1024ull * 1024ull)
 
 static BOOL CALLBACK log_lock_init_once(PINIT_ONCE initOnce, PVOID param, PVOID* context) {
     (void)initOnce;
@@ -94,9 +95,10 @@ static void log_write_line(const char* prefix, const char* fmt, va_list args) {
     }
 
     /* FILE_SHARE_* so writes succeed while the user has plugin.log open in an editor.
-       Truncate at 100 MB so debug/rate spam cannot grow the file without bound. */
+       Cap depends on debug: 250 MB off, 1 GB on. */
     {
-        const int rotate = (log_file_size_bytes() >= LOG_MAX_BYTES);
+        const ULONGLONG cap = log_is_enabled() ? LOG_MAX_BYTES_DEBUG : LOG_MAX_BYTES_NORMAL;
+        const int rotate = (log_file_size_bytes() >= cap);
         HANDLE h = CreateFileW(g_logPath,
             FILE_APPEND_DATA,
             FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -107,11 +109,13 @@ static void log_write_line(const char* prefix, const char* fmt, va_list args) {
         if (h != INVALID_HANDLE_VALUE) {
             DWORD written = 0;
             if (rotate) {
-                char notice[192];
+                char notice[224];
+                const char* capLabel = log_is_enabled() ? "1 GB" : "250 MB";
                 const int noticeLen = snprintf(notice, sizeof(notice),
-                    "%04u-%02u-%02u %02u:%02u:%02u.%03u LOG: cleared (plugin.log exceeded 100 MB)\r\n",
+                    "%04u-%02u-%02u %02u:%02u:%02u.%03u LOG: cleared (plugin.log exceeded %s)\r\n",
                     st.wYear, st.wMonth, st.wDay,
-                    st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+                    st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+                    capLabel);
                 if (noticeLen > 0 && noticeLen < (int)sizeof(notice)) {
                     WriteFile(h, notice, (DWORD)noticeLen, &written, NULL);
                 }
