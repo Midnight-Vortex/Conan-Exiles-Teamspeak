@@ -91,6 +91,10 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
    per-connection caches). TS callback thread ONLY. */
 int ts3_on_active_server_changed(uint64 serverConnectionHandlerID);
 
+/* Plugin re-enabled while TS is already on a server: adopt that tab.
+   Returns 1 when the active connection changed. Callback thread ONLY. */
+int ts3_adopt_current_connection(void);
+
 int ts3_is_connected(void);                 /* any thread */
 uint64 ts3_get_active_connection(void);     /* any thread */
 anyID ts3_get_local_client_id(void);        /* any thread */

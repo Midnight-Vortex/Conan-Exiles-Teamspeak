@@ -330,6 +330,10 @@ int ts3plugin_init(void) {
     pos_inject_set_notify_callback(ts3_on_http_position_update);
     pos_http_server_start();
     overlay_schedule_start();
+    if (ts3_adopt_current_connection() && ts3_is_connected()) {
+        log_write("BOOT: already connected — place hub/ingame from live position");
+        ts3_bootstrap_connected_session();
+    }
     if (log_is_enabled()) {
         prox_math_self_test();
     }
@@ -414,6 +418,23 @@ static void ts3_sync_overlay_channel_state(uint64 knownChannelID) {
     updateVoiceOverlay();
 }
 
+/* Connect, tab switch, or plugin re-enable while already online. */
+static void ts3_bootstrap_connected_session(void) {
+    nick_on_connected();
+    plugin_ui_sync_from_config();
+    plugin_ui_sync_live_state();
+    pos_autodetect_saved_path();
+    plugin_ui_sync_from_config();
+    server_profile_tick();
+    chan_tick();
+    overlay_request_immediate_start();
+    ts3_sync_overlay_channel_state(0);
+    ts3_version_broadcast();
+    ts3_cemode_signal_send_pending();
+    ts3_ceauth_signal_send_pending();
+    ts3_request_wakeup();
+}
+
 /* Reset every per-connection cache (disconnect / server switch / tab change). */
 static void ts3_reset_connection_state(void) {
     /* Quiesce PCM processing first — the audio thread may still be applying
@@ -457,20 +478,7 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
     if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
         /* 14.2 server switch: every per-connection cache starts empty. */
         ts3_reset_connection_state();
-        /* Remember the real name now — needed for the hub restore when the
-           plugin later finds an already-anonymized nickname (relog case). */
-        nick_on_connected();
-        plugin_ui_sync_from_config();
-        plugin_ui_sync_live_state();
-        pos_autodetect_saved_path();
-        plugin_ui_sync_from_config();
-        server_profile_tick();
-        chan_tick();
-        overlay_request_immediate_start();
-        ts3_sync_overlay_channel_state(0);
-        ts3_version_broadcast();
-        ts3_cemode_signal_send_pending();
-        ts3_ceauth_signal_send_pending();
+        ts3_bootstrap_connected_session();
         /* Drop stale offline chat (e.g. voice keys pressed before connect). */
         ts3_plugin_clear_pending_chat();
         /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
@@ -493,17 +501,7 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
     ts3_reset_connection_state();
     if (ts3_on_active_server_changed(serverConnectionHandlerID)) {
         if (ts3_is_connected()) {
-            nick_on_connected();
-            plugin_ui_sync_from_config();
-            plugin_ui_sync_live_state();
-            server_profile_tick();
-            chan_tick();
-            overlay_request_immediate_start();
-            ts3_sync_overlay_channel_state(0);
-            ts3_version_broadcast();
-            ts3_cemode_signal_send_pending();
-            ts3_ceauth_signal_send_pending();
-            ts3_request_wakeup();
+            ts3_bootstrap_connected_session();
         }
     }
 }

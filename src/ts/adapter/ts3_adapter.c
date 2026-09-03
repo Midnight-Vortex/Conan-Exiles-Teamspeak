@@ -162,6 +162,18 @@ int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {
     return 1;
 }
 
+int ts3_adopt_current_connection(void) {
+    if (!ts3_thread_is_callback() || !g_ts3FunctionsSet
+        || !g_ts3.getCurrentServerConnectionHandlerID) {
+        return 0;
+    }
+    const uint64 conn = g_ts3.getCurrentServerConnectionHandlerID();
+    if (conn == 0) {
+        return 0;
+    }
+    return ts3_on_active_server_changed(conn);
+}
+
 int ts3_is_connected(void) {
     return InterlockedCompareExchange(&g_connected, 0, 0) != 0;
 }
