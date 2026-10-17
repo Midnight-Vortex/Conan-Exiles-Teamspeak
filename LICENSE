@@ -1,27 +1,16 @@
-// Copyright The Mumble Developers. All rights reserved. 
-// Use of this source code is governed by a BSD-style license
-// that can be found in the LICENSE file at the root of the
-// Mumble source tree or at https://www.mumble.info/LICENSE.
+## License & Credits
 
-// The following conditions apply exclusively to the code written by Dino_Rex 
-// and do not affect or modify the copyright 
-// or licensing terms of the original Mumble code.
+This project is based on existing open-source work and includes modifications and further development for TeamSpeak and Conan Exiles.
 
-// The following conditions apply exclusively to the code written by Dino_Rex 
-// and do not affect or modify the copyright 
-// or licensing terms of the original Mumble code.
+**Original Authors & Licensing:**
 
-// Mozilla Public License Version 2.0 + Network Use Clause
+- **The Mumble Developers:** Original code licensed under the BSD-style license.
+- **Dino_Rex:** Additional code licensed under the Mozilla Public License 2.0 (MPL 2.0) with an additional Network Use Clause.
 
-// Copyright(c) 2025 Dino_Rex
+All original copyright notices, attribution requirements, and licensing conditions remain in effect.
 
-// This software is licensed under the Mozilla Public License 2.0 (MPL - 2.0),
-// available at : https://www.mozilla.org/MPL/2.0/
+The additional Network Use Clause requires the complete corresponding source code of modified versions to be made publicly available when deployed or used to provide a network-accessible service, as specified in the original license notice.
 
-// Additional Network Use Clause :
-// If you modify this software and deploy or use it to provide a service accessible
-// to others over a network(including via web, API, or remote access),
-// you must make the complete corresponding source code of your modified version
-// publicly available under this same license(MPL - 2.0 + Network Use Clause),
-// including all changes and additions you made.
-// All other terms and conditions of the Mozilla Public License 2.0 remain unchanged.
+This project respects the work of its original developers and aims to build upon their contributions.
+
+Please refer to the repository's license files for the complete terms and conditions.
