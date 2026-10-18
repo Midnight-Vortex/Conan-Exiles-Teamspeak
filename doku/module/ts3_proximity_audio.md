@@ -35,6 +35,19 @@ Dieses Modul lebt an der Grenze zweier Threads. Wer was darf:
   siehe `doku/aenderungen/004-pcm-besitz-generation-counter.md`).
 - TS-Unmutes laufen **nur** als Batch auf dem Callback-Thread.
 
+### HRTF-Erweiterung (Aenderung 062)
+
+| Zustand | Besitzer (einziger Schreiber) | Leser |
+|---|---|---|
+| Richtungs-Snapshot `g_dirSnap` (Azimut/Elevation) | Callback-Thread (`dir_publish` unter `g_writerLock`) | Audio-Thread (`dir_read`, lock-frei) |
+| HRTF-Zustand `g_hrtf`, `g_hrtfGeneration`, `g_hrtfActive` | **Audio-Thread** (Post-Process) | niemand sonst |
+| Diagnose `g_diag*` (Kanal-Layouts) | Audio-Thread (atomar, nur bei Aenderung) | Callback-Thread (`ts3_audio_diag_flush`, loggt) |
+
+- `ts3_audio_process_postprocess` — **Audio-Thread**, aufgerufen von
+  `onEditPostProcessVoiceDataEvent` (nach dem TS-3D). Bei `EnableHrtf`, genau
+  2 Kanaelen und Proximity-Modus: Stereo-Paar → Mono → HRTF → zurueck, Lautstaerke
+  bleibt gleich. Sonst nur Diagnose. Details: `doku/module/hrtf.md`.
+
 ## Wichtigste Funktionen
 
 - `ts3_audio_process_playback` — **Audio-Thread-Hotpath.** Liest den Snapshot,
