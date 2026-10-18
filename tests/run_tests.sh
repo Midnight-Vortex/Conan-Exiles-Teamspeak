@@ -121,6 +121,15 @@ run_suite hrtf_test \
     tests/hrtf_test.c \
     src/core/proximity/hrtf.c
 
+# 067 — talk status for the mod's mouth animation.
+run_suite talk_state_test \
+    -Itests/support/win32_shim \
+    tests/talk_state_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/talk_state.c \
+    src/core/proximity/player_table.c \
+    src/core/proximity/proximity_math.c
+
 # V8.6c — layering guard (no ts/ or ui/ include under src/core/).
 echo "=== layering_guard ==="
 if bash tests/check_layering.sh; then
