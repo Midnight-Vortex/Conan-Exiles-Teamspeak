@@ -325,6 +325,20 @@ static void test_nonfinite_values(void) {
     CHECK(s.audioMinDistance == 0.1f, "negative AudioMinDistance -> clamp 0.1");
 }
 
+static void test_hrtf_switch(void) {
+    printf("[9] EnableHrtf root-channel switch (062/063)\n");
+    HubSettings s;
+
+    hub_parse_settings("[GLOBAL]\nRealisticAudio=True\n", &s);
+    CHECK(s.enableHrtf == 0, "absent EnableHrtf -> off");
+    hub_parse_settings("[GLOBAL]\nEnableHrtf=True\n", &s);
+    CHECK(s.enableHrtf == 1, "EnableHrtf=True -> on");
+    hub_parse_settings("[GLOBAL]<br>enablehrtf = 1<br>", &s);
+    CHECK(s.enableHrtf == 1, "case-insensitive, '1', <br> line breaks");
+    hub_parse_settings("[GLOBAL]\nEnableHrtf=False\n", &s);
+    CHECK(s.enableHrtf == 0, "EnableHrtf=False -> off");
+}
+
 int main(void) {
     test_real_description();
     test_zone_audio_rules();
@@ -335,6 +349,7 @@ int main(void) {
     test_multiple_zones();
     test_partial_and_unknown_sections();
     test_nonfinite_values();
+    test_hrtf_switch();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

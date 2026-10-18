@@ -82,7 +82,6 @@ static void config_set_defaults(PluginConfig* cfg) {
     cfg->hudSize = 0;
     cfg->debugMode = 0;
     cfg->enablePosFile = 1;
-    cfg->enableHrtf = 0;
 }
 
 static int config_file_path(wchar_t* out, size_t outLen) {
@@ -184,9 +183,6 @@ static void config_apply_line(PluginConfig* cfg, wchar_t* line) {
     else if (_wcsicmp(key, L"EnablePosFile") == 0) {
         cfg->enablePosFile = parse_bool(val);
     }
-    else if (_wcsicmp(key, L"EnableHrtf") == 0) {
-        cfg->enableHrtf = parse_bool(val);
-    }
     else if (_wcsicmp(key, L"DefaultsAppliedServer") == 0) {
         /* Server UID is plain ASCII (base64 alphabet). */
         size_t j = 0;
@@ -250,9 +246,9 @@ int config_load(void) {
     config_clamp(&cfg);
     config_apply(&cfg);
     log_set_enabled(g_config.debugMode);
-    log_write("CONFIG: loaded (whisper=%.1f normal=%.1f shout=%.1f debug=%d posFile=%d hrtf=%d)",
+    log_write("CONFIG: loaded (whisper=%.1f normal=%.1f shout=%.1f debug=%d posFile=%d)",
         g_config.distanceWhisper, g_config.distanceNormal, g_config.distanceShout,
-        g_config.debugMode, g_config.enablePosFile, g_config.enableHrtf);
+        g_config.debugMode, g_config.enablePosFile);
     return 1;
 }
 
@@ -291,7 +287,6 @@ int config_save(void) {
     fwprintf(f, L"HudSize=%d\n", cfg.hudSize);
     fwprintf(f, L"DebugMode=%s\n", cfg.debugMode ? L"true" : L"false");
     fwprintf(f, L"EnablePosFile=%s\n", cfg.enablePosFile ? L"true" : L"false");
-    fwprintf(f, L"EnableHrtf=%s\n", cfg.enableHrtf ? L"true" : L"false");
     fwprintf(f, L"DefaultsAppliedServer=%hs\n", cfg.defaultsAppliedServer);
     fclose(f);
 

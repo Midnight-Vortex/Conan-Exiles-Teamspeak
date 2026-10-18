@@ -71,6 +71,10 @@ float server_profile_get_listen_add_distance(void);
    0 without profile or when RealisticAudio=False. Any thread. */
 int server_profile_get_realistic_audio(void);
 
+/* 1 when the root channel enables the binaural HRTF (EnableHrtf=True).
+   0 without profile. Any thread, lock-free (audio-thread safe). */
+int server_profile_get_hrtf_enabled(void);
+
 /* Filter strength 0..100 when realistic audio is on (100 = full path).
    Returns 100.0 without profile. Any thread. */
 float server_profile_get_filter_intensity(void);

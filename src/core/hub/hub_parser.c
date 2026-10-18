@@ -134,6 +134,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     else if ((v = hub_value_for(line, "RealisticAudio")) != NULL) {
         out->realisticAudio = hub_parse_bool(v);
     }
+    else if ((v = hub_value_for(line, "EnableHrtf")) != NULL) {
+        out->enableHrtf = hub_parse_bool(v);
+    }
     else if ((v = hub_value_for(line, "FilterIntensity")) != NULL
         || (v = hub_value_for(line, "hubAudioFilterIntensity")) != NULL) {
         out->filterIntensity = hub_parse_clamped(v, 0.0f, 100.0f);
