@@ -69,6 +69,7 @@ SOURCES=(
     src/core/proximity/player_table.c
     src/core/proximity/hrtf.c
     src/core/proximity/proximity_math.c
+    src/core/proximity/talk_state.c
     src/ts/proximity/ts3_cepos.c
     src/ts/proximity/ts3_cemode.c
     src/ts/proximity/ts3_ceping.c

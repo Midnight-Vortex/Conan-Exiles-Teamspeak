@@ -35,6 +35,7 @@
 #include "core/http/pos_http_server.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/occlusion.h"
+#include "core/proximity/talk_state.h"
 #include "core/util/log.h"
 
 /* ---- constants --------------------------------------------------------- */
@@ -89,7 +90,7 @@ static void http_drop_log(const char* reason, int err) {
 
 /* Send a complete HTTP/1.1 response and close the connection. */
 static void http_send(SOCKET s, int status, const char* body) {
-    char resp[1024]; /* 061: room for the occlusion probe list (<= 640 B body) */
+    char resp[2048]; /* 061 probes (<= 640 B) + 067 talkers (<= ~700 B) + headers */
     const char* status_text =
         status == 200 ? "OK" :
         status == 400 ? "Bad Request" : "Not Found";
@@ -445,19 +446,18 @@ static void http_handle_client(SOCKET client) {
                 dtMs = now - g_httpLastTick;
             }
 
-            if (injected && occOptIn) {
-                char probes[640];
-                if (occlusion_format_probes(probes, (int)sizeof(probes),
-                        (float)(sample.x / 100.0), (float)(sample.y / 100.0),
-                        (float)(sample.z / 100.0)) > 0) {
-                    http_send(client, 200, probes);
+            if (injected) {
+                const float lx = (float)(sample.x / 100.0);
+                const float ly = (float)(sample.y / 100.0);
+                const float lz = (float)(sample.z / 100.0);
+                char reply[1536];
+                if (!occOptIn || occlusion_format_probes(reply, 640, lx, ly, lz) <= 0) {
+                    strcpy_s(reply, sizeof(reply), "{\"ok\":true}");
                 }
-                else {
-                    http_send(client, 200, "{\"ok\":true}");
-                }
-            }
-            else if (injected) {
-                http_send(client, 200, "{\"ok\":true}");
+                /* 067: talk status for the mod's mouth animation (appended last,
+                   so the mod's probe parser - text up to the next quote - is unaffected). */
+                talk_state_append_json(reply, (int)sizeof(reply), lx, ly, lz);
+                http_send(client, 200, reply);
             }
             else {
                 http_send(client, 400, "{\"ok\":false,\"error\":\"invalid position\"}");

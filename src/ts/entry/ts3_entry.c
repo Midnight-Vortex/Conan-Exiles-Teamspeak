@@ -13,6 +13,7 @@
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/proximity_math.h"
 #include "core/proximity/player_table.h"
+#include "core/proximity/talk_state.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_cemode.h"
@@ -386,6 +387,7 @@ void ts3plugin_shutdown(void) {
     overlay_finalize();
     /* 3: reset module state */
     player_table_clear();
+    talk_state_clear(); /* 067 */
     cepos_reset();
     ts3_cemode_reset();
     ts3_ceping_reset();
@@ -444,6 +446,7 @@ static void ts3_reset_connection_state(void) {
        active connection (Bugbot: stale gain/pan on tab switch). */
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     player_table_clear();
+    talk_state_clear(); /* 067 */
     cepos_reset();
     ts3_cemode_reset();
     ts3_ceping_reset();
@@ -671,6 +674,7 @@ static void ts3_on_client_move(uint64 serverConnectionHandlerID, anyID clientID,
         ts3_ceping_clear_client(clientID);
         ts3_ceauth_clear_client(clientID);
         player_table_remove(clientID);
+        talk_state_clear_client(clientID); /* 067 */
         ts3_audio_invalidate_client(clientID);
     }
     chan_tick();
@@ -745,10 +749,16 @@ void ts3plugin_onTalkStatusChangeEvent(uint64 serverConnectionHandlerID, int sta
     if (pluginShuttingDown || serverConnectionHandlerID != ts3_get_active_connection()) {
         return;
     }
-    if (clientID == 0 || clientID != ts3_get_local_client_id()) {
+    if (clientID == 0) {
         return;
     }
-
     const BOOL talking = (status == STATUS_TALKING || status == STATUS_TALKING_WHILE_DISABLED);
+    const int isLocal = (clientID == ts3_get_local_client_id());
+    /* 067: every client's talk status (any PTT key / voice activation) for the
+       mod's mouth animation. */
+    talk_state_set(clientID, talking, isLocal);
+    if (!isLocal) {
+        return;
+    }
     setOverlayHighlightState(clientID, serverConnectionHandlerID, talking);
 }

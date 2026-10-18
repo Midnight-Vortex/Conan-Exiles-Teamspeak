@@ -66,6 +66,7 @@
     <ClInclude Include="..\src\core\proximity\player_table.h" />
     <ClInclude Include="..\src\core\proximity\hrtf.h" />
     <ClInclude Include="..\src\core\proximity\proximity_math.h" />
+    <ClInclude Include="..\src\core\proximity\talk_state.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_cepos.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_cemode.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_cemode_wire.h" />
@@ -104,6 +105,7 @@
     <ClCompile Include="..\src\core\proximity\player_table.c" />
     <ClCompile Include="..\src\core\proximity\hrtf.c" />
     <ClCompile Include="..\src\core\proximity\proximity_math.c" />
+    <ClCompile Include="..\src\core\proximity\talk_state.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_cepos.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_cemode.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_ceping.c" />
