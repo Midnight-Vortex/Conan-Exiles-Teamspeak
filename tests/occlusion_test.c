@@ -15,6 +15,15 @@
 #include <stdio.h>
 #include <string.h>
 
+/* player_table.c / proximity_math.c log through the plugin log module — stub
+   both for the host build (the suite did not link without them). */
+void log_debug(const char* fmt, ...) {
+    (void)fmt;
+}
+void log_write(const char* fmt, ...) {
+    (void)fmt;
+}
+
 static int g_failures = 0;
 
 #define CHECK(cond, name) do { \
