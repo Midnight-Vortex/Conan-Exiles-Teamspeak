@@ -34,6 +34,7 @@
 
 #include "core/http/pos_http_server.h"
 #include "core/mod_file/pos_file.h"
+#include "core/proximity/occlusion.h"
 #include "core/util/log.h"
 
 /* ---- constants --------------------------------------------------------- */
@@ -88,7 +89,7 @@ static void http_drop_log(const char* reason, int err) {
 
 /* Send a complete HTTP/1.1 response and close the connection. */
 static void http_send(SOCKET s, int status, const char* body) {
-    char resp[512];
+    char resp[1024]; /* 061: room for the occlusion probe list (<= 640 B body) */
     const char* status_text =
         status == 200 ? "OK" :
         status == 400 ? "Bad Request" : "Not Found";
@@ -430,6 +431,11 @@ static void http_handle_client(SOCKET client) {
             const int bodyLen = (content_length > 0) ? content_length : (total - header_end);
             PosSample sample;
             const int parsed = http_parse_body(body, &sample);
+            /* PROTOTYPE occlusion (061): store before inject so the recompute
+               triggered by this sample already sees the new values. Server
+               switch off (064) -> no store, no probes: the mod traces nothing. */
+            const int occOptIn = parsed && occlusion_is_enabled()
+                && occlusion_store_from_text(body, GetTickCount64()) >= 0;
             const int injected = parsed && pos_inject_sample(&sample);
             const int status = injected ? 200 : 400;
             const ULONGLONG now = GetTickCount64();
@@ -439,7 +445,18 @@ static void http_handle_client(SOCKET client) {
                 dtMs = now - g_httpLastTick;
             }
 
-            if (injected) {
+            if (injected && occOptIn) {
+                char probes[640];
+                if (occlusion_format_probes(probes, (int)sizeof(probes),
+                        (float)(sample.x / 100.0), (float)(sample.y / 100.0),
+                        (float)(sample.z / 100.0)) > 0) {
+                    http_send(client, 200, probes);
+                }
+                else {
+                    http_send(client, 200, "{\"ok\":true}");
+                }
+            }
+            else if (injected) {
                 http_send(client, 200, "{\"ok\":true}");
             }
             else {

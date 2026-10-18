@@ -41,6 +41,7 @@
 #include "core/proximity/player_table.h"
 #include "core/proximity/proximity_math.h"
 #include "core/proximity/zone_resolve.h"
+#include "core/proximity/occlusion.h"
 #include "core/mod_file/pos_file.h"
 #include "core/util/log.h"
 
@@ -598,6 +599,12 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
            drr — prox_direct_reverb_ratio hits ~0.05 at a few meters and would
            crush others via gain or prox_apply_diffuse_samples. */
         cutoffHz = prox_lowpass_cutoff_hz(distance);
+    }
+
+    /* PROTOTYPE occlusion (061): mod-reported wall/foundation blocking.
+       Only when the root channel enables it (EnableOcclusion=True, 064). */
+    if (!soundproof && occlusion_is_enabled()) {
+        occlusion_apply(occlusion_get(clientID, GetTickCount64()), &gain, &cutoffHz);
     }
 
     float panL, panR;

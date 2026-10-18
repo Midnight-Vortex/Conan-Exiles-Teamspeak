@@ -337,6 +337,11 @@ static void test_hrtf_switch(void) {
     CHECK(s.enableHrtf == 1, "case-insensitive, '1', <br> line breaks");
     hub_parse_settings("[GLOBAL]\nEnableHrtf=False\n", &s);
     CHECK(s.enableHrtf == 0, "EnableHrtf=False -> off");
+
+    hub_parse_settings("[GLOBAL]\nEnableHrtf=True\n", &s);
+    CHECK(s.enableOcclusion == 0, "absent EnableOcclusion -> off (064)");
+    hub_parse_settings("[GLOBAL]\nEnableOcclusion=True\nEnableHrtf=False\n", &s);
+    CHECK(s.enableOcclusion == 1 && s.enableHrtf == 0, "EnableOcclusion=True independent of EnableHrtf");
 }
 
 int main(void) {

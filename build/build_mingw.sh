@@ -79,6 +79,7 @@ SOURCES=(
     src/core/hub/hub_parser.c
     src/ts/profile/ts3_server_profile.c
     src/core/proximity/zone_resolve.c
+    src/core/proximity/occlusion.c
     src/core/voice/voice_modes.c
     src/ts/nick/nick_anonymize.c
     src/ui/overlay/voice_overlay.c

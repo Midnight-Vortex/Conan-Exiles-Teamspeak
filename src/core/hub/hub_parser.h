@@ -17,6 +17,7 @@
  *   RealisticAudio=True
  *   FilterIntensity=100
  *   EnableHrtf=True             (binaural HRTF for headphones, default off)
+ *   EnableOcclusion=True        (mod-reported wall occlusion prototype, default off)
  *   NicknameRandomizer=True
  *   IngameChannelPassword=secret
  *   [ZONES]
@@ -86,6 +87,7 @@ typedef struct HubSettings {
     int realisticAudio;          /* 1 = Mumble-style spatial filter in open world */
     float filterIntensity;       /* 0..100 scales filter when realisticAudio=1 */
     int enableHrtf;              /* 1 = binaural HRTF in the post-process stage (default 0) */
+    int enableOcclusion;         /* 1 = use mod-reported wall occlusion (prototype, default 0) */
     char ingameChannelPassword[HUB_PASSWORD_LEN];
 
     int zoneCount;
