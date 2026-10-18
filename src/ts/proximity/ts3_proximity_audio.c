@@ -37,7 +37,6 @@
 #include "ts/proximity/ts3_3d.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
-#include "core/config/config.h"
 #include "core/proximity/hrtf.h"
 #include "core/proximity/player_table.h"
 #include "core/proximity/proximity_math.h"
@@ -1156,7 +1155,7 @@ void ts3_audio_process_postprocess(anyID clientID, short* samples, int sampleCou
     }
 
     /* Headphones / stereo only: HRTF is a two-ear rendering. 4.0/5.1 keep TS 3D. */
-    if (!g_config.enableHrtf || channels != 2
+    if (!server_profile_get_hrtf_enabled() || channels != 2
         || InterlockedCompareExchange(&g_audioMode, 0, 0) != TS3_AUDIO_PROXIMITY) {
         g_hrtfActive[clientID] = 0;
         return;
@@ -1204,7 +1203,7 @@ void ts3_audio_diag_flush(void) {
     lastSpeakers = speakers;
     log_write("AUDIO-DIAG: playback channels=%ld | postprocess channels=%ld speakers=0x%lX fill=0x%lX | hrtf=%d",
         (long)playback, (long)post, (unsigned long)speakers,
-        (unsigned long)InterlockedCompareExchange(&g_diagPostFill, 0, 0), g_config.enableHrtf);
+        (unsigned long)InterlockedCompareExchange(&g_diagPostFill, 0, 0), server_profile_get_hrtf_enabled());
 }
 
 /* ---- 6.3 unmute signal ------------------------------------------------------ */

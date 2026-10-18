@@ -33,6 +33,7 @@ static char g_ingamePassword[HUB_PASSWORD_LEN] = "";
    Written on the callback thread during apply, read from any thread. */
 static volatile long g_localRaceIndex = -1;
 static volatile long g_listenAddBits = 0; /* float stored as raw bits */
+static volatile long g_hrtfEnabled = 0;   /* EnableHrtf, read lock-free by the audio thread */
 
 /* Chat confirmation is shown once per connection (reset on reconnect). */
 static int g_announced = 0;
@@ -252,6 +253,7 @@ void server_profile_apply(const HubSettings* settings) {
     long bits;
     memcpy(&bits, &listenAdd, sizeof(bits));
     InterlockedExchange(&g_listenAddBits, bits);
+    InterlockedExchange(&g_hrtfEnabled, settings->enableHrtf ? 1 : 0);
     InterlockedExchange(&g_profileActive, 1);
     LeaveCriticalSection(&g_profileLock);
 
@@ -268,7 +270,7 @@ void server_profile_apply(const HubSettings* settings) {
     }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
-        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f "
+        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d "
         "pw=%s zones=%d races=%d localRace=%d defaults=%d",
         settings->audioMaxVolume,
         settings->minWhisper, settings->maxWhisper,
@@ -276,7 +278,7 @@ void server_profile_apply(const HubSettings* settings) {
         settings->minShout, settings->maxShout,
         settings->forceDistanceMuting, settings->forceAutoChannelSwitch,
         settings->nicknameRandomizer,
-        settings->realisticAudio, settings->filterIntensity,
+        settings->realisticAudio, settings->filterIntensity, settings->enableHrtf,
         settings->ingameChannelPassword[0] ? "yes" : "no",
         settings->zoneCount, settings->raceCount, raceIndex,
         settings->defaults.enabled);
@@ -386,6 +388,11 @@ int server_profile_get_realistic_audio(void) {
         return 0;
     }
     return settings.realisticAudio;
+}
+
+int server_profile_get_hrtf_enabled(void) {
+    return InterlockedCompareExchange(&g_profileActive, 0, 0) != 0
+        && InterlockedCompareExchange(&g_hrtfEnabled, 0, 0) != 0;
 }
 
 float server_profile_get_filter_intensity(void) {
@@ -560,5 +567,6 @@ void server_profile_reset(void) {
     InterlockedExchange(&g_profileActive, 0);
     InterlockedExchange(&g_localRaceIndex, -1);
     InterlockedExchange(&g_listenAddBits, 0);
+    InterlockedExchange(&g_hrtfEnabled, 0);
     LeaveCriticalSection(&g_profileLock);
 }

@@ -48,10 +48,6 @@ typedef struct PluginConfig {
     /* Pos.txt file reader: 1 = read Pos.txt (default), 0 = HTTP-only (skip file). */
     int enablePosFile;
 
-    /* Binaural HRTF for headphones: 1 = render speaker direction with the
-       generic HRTF in the post-process stage, 0 = TeamSpeak's own 3D (default). */
-    int enableHrtf;
-
     /* Server whose [DEFAULT_SETTINGS] were already applied (virtual server
        unique identifier). Defaults are applied ONCE per server; afterwards
        the user's own key/distance changes are never overridden again. */

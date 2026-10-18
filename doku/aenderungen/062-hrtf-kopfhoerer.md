@@ -2,6 +2,10 @@
 
 **Branch:** `feature/hrtf` · **Schalter:** `EnableHrtf` in `plugin.cfg` (Standard: aus)
 
+> **Nachtrag 063:** Der Schalter liegt inzwischen **nicht mehr in `plugin.cfg`**, sondern
+> in der Root-Channel-Beschreibung des Servers (`[GLOBAL]` → `EnableHrtf=True`).
+> Siehe `doku/aenderungen/063-hrtf-schalter-root-channel.md`.
+
 ## 1. Was wurde geaendert?
 
 | Datei | Aenderung |

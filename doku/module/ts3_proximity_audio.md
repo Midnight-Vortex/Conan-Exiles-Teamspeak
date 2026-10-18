@@ -44,7 +44,8 @@ Dieses Modul lebt an der Grenze zweier Threads. Wer was darf:
 | Diagnose `g_diag*` (Kanal-Layouts) | Audio-Thread (atomar, nur bei Aenderung) | Callback-Thread (`ts3_audio_diag_flush`, loggt) |
 
 - `ts3_audio_process_postprocess` — **Audio-Thread**, aufgerufen von
-  `onEditPostProcessVoiceDataEvent` (nach dem TS-3D). Bei `EnableHrtf`, genau
+  `onEditPostProcessVoiceDataEvent` (nach dem TS-3D). Bei `EnableHrtf=True` in der
+  Root-Channel-Beschreibung (lock-frei ueber `server_profile_get_hrtf_enabled`, 063), genau
   2 Kanaelen und Proximity-Modus: Stereo-Paar → Mono → HRTF → zurueck, Lautstaerke
   bleibt gleich. Sonst nur Diagnose. Details: `doku/module/hrtf.md`.
 

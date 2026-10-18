@@ -16,6 +16,7 @@
  *   ForceAutomaticChanelSwitching=True
  *   RealisticAudio=True
  *   FilterIntensity=100
+ *   EnableHrtf=True             (binaural HRTF for headphones, default off)
  *   NicknameRandomizer=True
  *   IngameChannelPassword=secret
  *   [ZONES]
@@ -84,6 +85,7 @@ typedef struct HubSettings {
     int nicknameRandomizer;      /* 1 = assign random digit nick ingame (default) */
     int realisticAudio;          /* 1 = Mumble-style spatial filter in open world */
     float filterIntensity;       /* 0..100 scales filter when realisticAudio=1 */
+    int enableHrtf;              /* 1 = binaural HRTF in the post-process stage (default 0) */
     char ingameChannelPassword[HUB_PASSWORD_LEN];
 
     int zoneCount;

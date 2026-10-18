@@ -18,6 +18,11 @@ Modell: Brown & Duda, *A Structural Model for Binaural Sound Synthesis* (1998).
 
 Reihenfolge: Mono → Kopfschatten → Echos → ITD-Verzoegerung → Ohr.
 
+## Einschalten
+
+Server-Admin, Root-Channel-Beschreibung: `[GLOBAL]` → `EnableHrtf=True` (Standard aus,
+Aenderung 063). Wirkt nur bei Stereo-/Kopfhoerer-Ausgabe.
+
 ## Funktionen
 
 - `hrtf_listener_angles(yaw, pitch, dx, dy, dz, &az, &el)` — Richtung aus den
