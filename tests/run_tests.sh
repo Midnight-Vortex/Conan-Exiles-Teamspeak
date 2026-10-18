@@ -60,6 +60,15 @@ run_suite player_table_test \
     tests/support/win32_shim/win32_shim.c \
     src/core/proximity/player_table.c
 
+# 061 PROTOTYPE — occlusion values from the mod (parse, stale, apply, probes).
+run_suite occlusion_test \
+    -Itests/support/win32_shim \
+    tests/occlusion_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/occlusion.c \
+    src/core/proximity/player_table.c \
+    src/core/proximity/proximity_math.c
+
 # V8.3 — pure PCM-ownership decision helper (render_state_needs_reinit).
 # Includes ts3_proximity_audio.h only; the TS SDK header needs -Isdk/include.
 run_suite render_state_test \
