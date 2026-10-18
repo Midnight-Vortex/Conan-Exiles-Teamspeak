@@ -64,6 +64,16 @@ void ts3_audio_recompute_all(void);
 /* 6.2 PCM hot path — apply gain ramp + pan. Audio thread; lock-free. */
 void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount, int channels);
 
+/* 6.2b post-process stage (after TS 3D): binaural HRTF on the stereo /
+   headphone pair when EnableHrtf is on; records the step-0 channel layout
+   either way. Audio thread; lock-free, no TS API. */
+void ts3_audio_process_postprocess(anyID clientID, short* samples, int sampleCount,
+    int channels, const unsigned int* channelSpeakerArray, unsigned int* channelFillMask);
+
+/* Step-0 diagnostics: log playback/post-process channel layouts when they
+   change. Callback thread (CEDRAIN). */
+void ts3_audio_diag_flush(void);
+
 /* 6.3 flag a client as needing a TS temporary unmute. Any thread. */
 void ts3_audio_signal_unmute(anyID clientID);
 

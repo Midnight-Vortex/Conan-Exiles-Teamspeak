@@ -72,6 +72,7 @@ ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 | `zone_resolve_test` | `src/core/proximity/zone_resolve.c` | 46 | Punkt-in-Zone (innen/aussen/Kante/Ecke), Hoehenband ±1m, Skalen-Sonden, UE-Layout, Soundproof-Einbahnregel, Reverb, Ueberlappung |
 | `player_table_test` | `src/core/proximity/player_table.c` | 30 | put/get, Namens-Abschneidung, Snapshot, 120-s-Verfall, LRU-Verdraengung bei voller Tabelle |
 | `render_state_test` | `ts3_proximity_audio.h` (inline) | 9 | PCM-Generation-Counter: wann Render-State neu initialisiert wird |
+| `hrtf_test` | `src/core/proximity/hrtf.c` | 22 | Richtung aus Yaw/Pitch, Pegel- und Laufzeitunterschied, Symmetrie, vorne≠hinten, NaN-Sicherheit, Lautstaerke-Erhalt, fremde Kanaele unberuehrt (Aenderung 062; laeuft auch mit MSVC, Befehl im Testkopf) |
 
 **Stand Checks:** 241 gesamt (V8.1-Erweiterung in `doku/aenderungen/008`).
 
