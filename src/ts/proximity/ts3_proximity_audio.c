@@ -602,9 +602,11 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     }
 
     /* PROTOTYPE occlusion (061): mod-reported wall/foundation blocking.
-       Only when the root channel enables it (EnableOcclusion=True, 064). */
+       Only when the root channel enables it (EnableOcclusion=True, 064);
+       strength from OcclusionIntensity (069). */
     if (!soundproof && occlusion_is_enabled()) {
-        occlusion_apply(occlusion_get(clientID, GetTickCount64()), &gain, &cutoffHz);
+        occlusion_apply(occlusion_get(clientID, GetTickCount64()), occlusion_get_strength(),
+            &gain, &cutoffHz);
     }
 
     float panL, panR;

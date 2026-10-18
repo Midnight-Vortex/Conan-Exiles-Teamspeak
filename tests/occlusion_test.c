@@ -61,22 +61,54 @@ static void test_stale(void) {
 
 static void test_apply(void) {
     float g = 0.8f, c = 19000.0f;
-    occlusion_apply(0.0f, &g, &c);
+    occlusion_apply(0.0f, 1.0f, &g, &c);
     CHECK(feq(g, 0.8f) && feq(c, 19000.0f), "occ 0 is a no-op");
 
     g = 1.0f; c = 19000.0f;
-    occlusion_apply(1.0f, &g, &c);
+    occlusion_apply(1.0f, 1.0f, &g, &c);
     CHECK(feq(g, OCCLUSION_FULL_GAIN), "occ 1 -> full gain multiplier");
     CHECK(fabsf(c - OCCLUSION_FULL_CUTOFF) < 1.0f, "occ 1 -> full cutoff");
 
     float g5 = 1.0f, c5 = 19000.0f;
-    occlusion_apply(0.5f, &g5, &c5);
+    occlusion_apply(0.5f, 1.0f, &g5, &c5);
     CHECK(g5 < 1.0f && g5 > OCCLUSION_FULL_GAIN, "occ 0.5 gain between");
     CHECK(c5 < 19000.0f && c5 > OCCLUSION_FULL_CUTOFF, "occ 0.5 cutoff between");
 
     g = 1.0f; c = 500.0f;
-    occlusion_apply(0.3f, &g, &c);
+    occlusion_apply(0.3f, 1.0f, &g, &c);
     CHECK(feq(c, 500.0f), "never raises an already lower cutoff");
+}
+
+/* 069: OcclusionIntensity scales the dB loss; 100 % keeps the 8.0.8 curve. */
+static void test_strength(void) {
+    float g = 1.0f, c = 19000.0f;
+    occlusion_apply(1.0f, 0.0f, &g, &c);
+    CHECK(feq(g, 1.0f) && feq(c, 19000.0f), "strength 0 is a no-op");
+
+    float ga = 1.0f, ca = 19000.0f, gb = 1.0f, cb = 19000.0f;
+    occlusion_apply(0.7f, 1.0f, &ga, &ca);
+    gb = 1.0f - 0.7f * (1.0f - OCCLUSION_FULL_GAIN);
+    cb = 19000.0f * powf(OCCLUSION_FULL_CUTOFF / 19000.0f, 0.7f);
+    CHECK(ga == gb && ca == cb, "strength 1 is bit-identical to the 8.0.8 formula");
+
+    g = 1.0f; c = 19000.0f;
+    occlusion_apply(1.0f, 2.0f, &g, &c);
+    CHECK(feq(g, OCCLUSION_FULL_GAIN * OCCLUSION_FULL_GAIN), "strength 2 -> twice the dB loss (-24 dB)");
+    CHECK(feq(c, OCCLUSION_MIN_CUTOFF), "strength 2 -> cutoff clamped at the minimum");
+
+    float gh = 1.0f, ch = 19000.0f;
+    occlusion_apply(1.0f, 1.25f, &gh, &ch);
+    CHECK(gh < OCCLUSION_FULL_GAIN && ch < OCCLUSION_FULL_CUTOFF && ch > OCCLUSION_MIN_CUTOFF,
+        "strength 1.25 -> stronger than 100 %, cutoff above the minimum");
+
+    occlusion_set_intensity(150.0f);
+    CHECK(feq(occlusion_get_strength(), 1.5f), "intensity 150 -> strength 1.5");
+    occlusion_set_intensity(999.0f);
+    CHECK(feq(occlusion_get_strength(), OCCLUSION_INTENSITY_MAX / 100.0f), "intensity clamped to max");
+    occlusion_set_intensity(-5.0f);
+    CHECK(feq(occlusion_get_strength(), 0.0f), "negative intensity -> 0");
+    occlusion_set_intensity((float)OCCLUSION_INTENSITY_DEFAULT);
+    CHECK(feq(occlusion_get_strength(), 1.0f), "default intensity -> strength 1");
 }
 
 static void test_probes(void) {
@@ -126,6 +158,7 @@ int main(void) {
     test_parse();
     test_stale();
     test_apply();
+    test_strength();
     test_probes();
     if (g_failures) {
         printf("FAILED: %d check(s)\n", g_failures);
