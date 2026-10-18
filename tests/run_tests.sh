@@ -116,6 +116,11 @@ run_suite cepos_load_test \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
+# 062 — binaural HRTF (Brown & Duda structural model).
+run_suite hrtf_test \
+    tests/hrtf_test.c \
+    src/core/proximity/hrtf.c
+
 # V8.6c — layering guard (no ts/ or ui/ include under src/core/).
 echo "=== layering_guard ==="
 if bash tests/check_layering.sh; then

@@ -22,11 +22,22 @@
  *
  *  Result: exactly one writer per array => no torn floats, no cross-thread race
  *  on client-ID reuse. See doku/aenderungen/004-pcm-besitz-generation-counter.md.
+ *
+ *  HRTF (post-process stage, doku/aenderungen/062-hrtf-kopfhoerer.md):
+ *  - Writers publish the listener-relative direction per client into its own
+ *    seqlock g_dirSnap (same writers + g_writerLock as g_snap).
+ *  - The audio thread (onEditPostProcessVoiceDataEvent ->
+ *    ts3_audio_process_postprocess) is the ONLY user of g_hrtf/g_hrtfGeneration/
+ *    g_hrtfActive. It resets a client's HRTF state itself when the generation
+ *    changed or the client was not rendered in the previous block.
+ *  - Step-0 diagnostics: the audio thread stores channel layouts in atomics
+ *    (g_diag*); only the callback thread logs them (ts3_audio_diag_flush).
  */
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ts/proximity/ts3_3d.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
+#include "core/proximity/hrtf.h"
 #include "core/proximity/player_table.h"
 #include "core/proximity/proximity_math.h"
 #include "core/proximity/zone_resolve.h"
@@ -93,6 +104,29 @@ static float g_renderPanR[TS3_MAX_CLIENT_ID];
    ramp/LPF for that client when it changed. See the file-header thread contract. */
 static volatile LONG g_snapGeneration[TS3_MAX_CLIENT_ID];  /* callback thread writes */
 static LONG g_renderGeneration[TS3_MAX_CLIENT_ID];         /* audio thread only */
+
+/* HRTF direction per client (radians, listener-relative). Own seqlock so the
+   main snapshot layout stays unchanged. Written under g_writerLock. */
+typedef struct AudioDirSnap {
+    volatile LONG seq;   /* odd = write in progress */
+    float azimuth;
+    float elevation;
+    int valid;
+} AudioDirSnap;
+
+static AudioDirSnap g_dirSnap[TS3_MAX_CLIENT_ID];
+
+/* HRTF render state — post-process audio thread only. */
+static HrtfState g_hrtf[TS3_MAX_CLIENT_ID];
+static LONG g_hrtfGeneration[TS3_MAX_CLIENT_ID];
+static char g_hrtfActive[TS3_MAX_CLIENT_ID];
+
+/* Step-0 diagnostics: last seen channel layouts. Audio thread stores (atomic,
+   only on change), callback thread logs in ts3_audio_diag_flush. */
+static volatile LONG g_diagPlaybackChannels = 0;
+static volatile LONG g_diagPostChannels = 0;
+static volatile LONG g_diagPostSpeakers = 0;
+static volatile LONG g_diagPostFill = 0;
 
 /* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
 static volatile long g_pendingUnmute[TS3_MAX_CLIENT_ID];
@@ -201,6 +235,39 @@ static void snap_publish(anyID clientID, float gain, float panL, float panR,
     s->reverbSlot = reverbSlot;
     s->valid = valid;
     InterlockedIncrement(&s->seq);          /* even: stable */
+}
+
+/* HRTF direction publish (writer side, under g_writerLock like snap_publish). */
+static void dir_publish(anyID clientID, float azimuth, float elevation, int valid) {
+    AudioDirSnap* s = &g_dirSnap[clientID];
+    InterlockedIncrement(&s->seq);
+    s->azimuth = azimuth;
+    s->elevation = elevation;
+    s->valid = valid;
+    InterlockedIncrement(&s->seq);
+}
+
+/* Audio-thread reader; returns 0 when no stable/valid direction exists. */
+static int dir_read(anyID clientID, float* azimuth, float* elevation) {
+    const AudioDirSnap* s = &g_dirSnap[clientID];
+    for (int attempt = 0; attempt < 3; attempt++) {
+        const LONG seqBefore = s->seq;
+        if (seqBefore & 1) {
+            continue;
+        }
+        const float az = s->azimuth;
+        const float el = s->elevation;
+        const int valid = s->valid;
+        if (s->seq == seqBefore) {
+            if (!valid) {
+                return 0;
+            }
+            *azimuth = az;
+            *elevation = el;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* Publish "no proximity influence" for one client. */
@@ -438,6 +505,9 @@ typedef struct AudioPublishParams {
     int reverbSlot;
     int valid;
     int neutral;
+    float azimuth;     /* HRTF direction, radians (listener-relative) */
+    float elevation;
+    int dirValid;
 } AudioPublishParams;
 
 static float audio_lerp_realistic(float bypass, float target, float intensity) {
@@ -496,6 +566,10 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     const float toRemoteX = remote.x - lx;
     const float toRemoteY = remote.y - ly;
     const float toRemoteZ = remote.z - lz;
+
+    /* HRTF direction from the raw Unreal yaw/pitch (not the TS-3D dir above). */
+    out->dirValid = hrtf_listener_angles((float)local->yaw, (float)local->yawY,
+        toRemoteX, toRemoteY, toRemoteZ, &out->azimuth, &out->elevation);
 
     const int realisticOn = server_profile_get_realistic_audio();
     const float filterIntensity = server_profile_get_filter_intensity() / 100.0f;
@@ -558,8 +632,10 @@ static void audio_publish_client(anyID clientID, const AudioPublishParams* param
     if (params->neutral || !params->valid) {
         cave_slot_release(clientID);
         snap_publish_neutral(clientID, params->valid);
+        dir_publish(clientID, 0.0f, 0.0f, 0);
         return;
     }
+    dir_publish(clientID, params->azimuth, params->elevation, params->dirValid);
 
     int reverbSlot = -1;
     if (params->reverbZone) {
@@ -917,6 +993,9 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         || !ts3_client_id_valid(clientID)) {
         return;
     }
+    if (g_diagPlaybackChannels != channels) {
+        InterlockedExchange(&g_diagPlaybackChannels, channels); /* step-0 diag */
+    }
 
     /* V8.3 PCM-owns-its-state: if the callback thread signaled invalidation
        (client left / evicted / moved away / reset) since our last buffer, we
@@ -1045,6 +1124,92 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
     g_renderGain[clientID] = target;
     g_renderPanL[clientID] = panL;
     g_renderPanR[clientID] = panR;
+}
+
+/* ---- 6.2b HRTF post-process (audio thread) ---------------------------------- */
+
+/* Index of the channel whose speaker matches `mask`, or -1. */
+static int audio_find_speaker(const unsigned int* speakers, int channels, unsigned int mask) {
+    for (int i = 0; i < channels; i++) {
+        if (speakers[i] & mask) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void ts3_audio_process_postprocess(anyID clientID, short* samples, int sampleCount,
+    int channels, const unsigned int* channelSpeakerArray, unsigned int* channelFillMask) {
+    if (!samples || sampleCount <= 0 || channels <= 0 || !channelSpeakerArray
+        || !channelFillMask || !ts3_client_id_valid(clientID)) {
+        return;
+    }
+
+    /* Step-0 diag: remember the layout TS hands us after its own 3D stage. */
+    LONG speakers = 0;
+    for (int i = 0; i < channels && i < 32; i++) {
+        speakers |= (LONG)channelSpeakerArray[i];
+    }
+    if (g_diagPostChannels != channels) {
+        InterlockedExchange(&g_diagPostChannels, channels);
+    }
+    if (g_diagPostSpeakers != speakers) {
+        InterlockedExchange(&g_diagPostSpeakers, speakers);
+    }
+    if (g_diagPostFill != (LONG)*channelFillMask) {
+        InterlockedExchange(&g_diagPostFill, (LONG)*channelFillMask);
+    }
+
+    /* Headphones / stereo only: HRTF is a two-ear rendering. 4.0/5.1 keep TS 3D. */
+    if (!server_profile_get_hrtf_enabled() || channels != 2
+        || InterlockedCompareExchange(&g_audioMode, 0, 0) != TS3_AUDIO_PROXIMITY) {
+        g_hrtfActive[clientID] = 0;
+        return;
+    }
+    const int li = audio_find_speaker(channelSpeakerArray, channels,
+        SPEAKER_FRONT_LEFT | SPEAKER_HEADPHONES_LEFT);
+    const int ri = audio_find_speaker(channelSpeakerArray, channels,
+        SPEAKER_FRONT_RIGHT | SPEAKER_HEADPHONES_RIGHT);
+    const unsigned int pairMask = (li >= 0 && ri >= 0) ? ((1u << li) | (1u << ri)) : 0u;
+    float azimuth, elevation;
+    if (li < 0 || ri < 0 || li == ri || (*channelFillMask & pairMask) == 0
+        || !dir_read(clientID, &azimuth, &elevation)) {
+        g_hrtfActive[clientID] = 0;
+        return;
+    }
+
+    /* Own the state like g_lpf: reset after invalidation or a pause in rendering. */
+    const LONG curGen = InterlockedCompareExchange(&g_snapGeneration[clientID], 0, 0);
+    if (!g_hrtfActive[clientID] || g_hrtfGeneration[clientID] != curGen) {
+        hrtf_reset(&g_hrtf[clientID]);
+        g_hrtfGeneration[clientID] = curGen;
+    }
+    g_hrtfActive[clientID] = 1;
+
+    /* TS already applied its own 3D pan here; the helper folds it back to mono,
+       renders both ears and keeps the block loudness (distance gain). */
+    hrtf_process_interleaved_s16(&g_hrtf[clientID], samples, sampleCount, channels,
+        li, ri, TS3_SAMPLE_RATE, azimuth, elevation);
+    *channelFillMask |= pairMask;
+}
+
+/* Callback thread: log the step-0 channel layouts once per change. */
+void ts3_audio_diag_flush(void) {
+    static LONG lastPlayback = -1;
+    static LONG lastPost = -1;
+    static LONG lastSpeakers = -1;
+    const LONG playback = InterlockedCompareExchange(&g_diagPlaybackChannels, 0, 0);
+    const LONG post = InterlockedCompareExchange(&g_diagPostChannels, 0, 0);
+    const LONG speakers = InterlockedCompareExchange(&g_diagPostSpeakers, 0, 0);
+    if (playback == lastPlayback && post == lastPost && speakers == lastSpeakers) {
+        return;
+    }
+    lastPlayback = playback;
+    lastPost = post;
+    lastSpeakers = speakers;
+    log_write("AUDIO-DIAG: playback channels=%ld | postprocess channels=%ld speakers=0x%lX fill=0x%lX | hrtf=%d",
+        (long)playback, (long)post, (unsigned long)speakers,
+        (unsigned long)InterlockedCompareExchange(&g_diagPostFill, 0, 0), server_profile_get_hrtf_enabled());
 }
 
 /* ---- 6.3 unmute signal ------------------------------------------------------ */
@@ -1200,6 +1365,7 @@ void ts3_audio_invalidate_client(anyID clientID) {
     EnterCriticalSection(&g_writerLock);
     cave_slot_release(clientID);
     snap_publish_neutral(clientID, 0);
+    dir_publish(clientID, 0.0f, 0.0f, 0);
     LeaveCriticalSection(&g_writerLock);
 
     if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 0, 1) == 1) {

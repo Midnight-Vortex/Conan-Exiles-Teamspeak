@@ -64,6 +64,7 @@
     <ClInclude Include="..\src\core\http\pos_http_server.h" />
     <ClInclude Include="..\src\ts\adapter\ts3_adapter.h" />
     <ClInclude Include="..\src\core\proximity\player_table.h" />
+    <ClInclude Include="..\src\core\proximity\hrtf.h" />
     <ClInclude Include="..\src\core\proximity\proximity_math.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_cepos.h" />
     <ClInclude Include="..\src\ts\proximity\ts3_cemode.h" />
@@ -101,6 +102,7 @@
     <ClCompile Include="..\src\core\http\pos_http_server.c" />
     <ClCompile Include="..\src\ts\adapter\ts3_adapter.c" />
     <ClCompile Include="..\src\core\proximity\player_table.c" />
+    <ClCompile Include="..\src\core\proximity\hrtf.c" />
     <ClCompile Include="..\src\core\proximity\proximity_math.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_cepos.c" />
     <ClCompile Include="..\src\ts\proximity\ts3_cemode.c" />

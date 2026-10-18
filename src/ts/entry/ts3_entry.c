@@ -615,6 +615,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         if (ts3_audio_has_pending_unmutes()) {
             ts3_audio_flush_unmutes();
         }
+        ts3_audio_diag_flush(); /* step-0 channel layout log (on change only) */
         /* Re-wake if any work is still pending — leftover from a per-drain
            budget (e.g. dirty-client recomputes capped at
            TS3_RECOMPUTE_DRAIN_BUDGET) or queued from another thread while we
@@ -635,6 +636,15 @@ void ts3plugin_onEditPlaybackVoiceDataEvent(uint64 serverConnectionHandlerID, an
         return;
     }
     ts3_audio_process_playback(clientID, samples, sampleCount, channels);
+}
+
+void ts3plugin_onEditPostProcessVoiceDataEvent(uint64 serverConnectionHandlerID, anyID clientID, short* samples, int sampleCount, int channels, const unsigned int* channelSpeakerArray, unsigned int* channelFillMask) {
+    /* Audio thread, after TS 3D positioning — same rules as playback above. */
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
+    ts3_audio_process_postprocess(clientID, samples, sampleCount, channels,
+        channelSpeakerArray, channelFillMask);
 }
 
 void ts3plugin_onCustom3dRolloffCalculationClientEvent(uint64 serverConnectionHandlerID, anyID clientID, float distance, float* volume) {
