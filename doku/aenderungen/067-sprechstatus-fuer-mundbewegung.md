@@ -54,19 +54,33 @@ onTalkStatusChangeEvent(client, status)     POST /v1/position  ->  {"ok":true[, 
   animieren genau diese Bones. Skelett-Slots: `Additive`, `Additive1st/3rd`, `Emote`, `Fullbody`,
   `Upperbody` (kein eigener Gesichts-Slot).
 
-### Plan fuer die Mod-Seite (offen, braucht das DevKit)
+### Mod-Seite (umgesetzt 2026-10-18, `Vo_PosStreamer_Actor`, nicht in Git)
 
-1. Aus `A_emote_talking_var_01_M/F` eine **additive Animation nur fuer Kiefer/Lippen** bauen
-   (Koerper-Spuren entfernen), als Montage im Slot `Additive`.
-2. Pruefen, ob das Character-AnimBP den `Additive`-Slot wirklich additiv mischt (sonst Alternative).
-3. `Vo_PosStreamer_Actor`: aus der HTTP-Antwort `talk` (eigene Figur) und `talkers` lesen,
-   Pawns in ~1,5 m um jeden Punkt finden, Montage lokal abspielen/stoppen.
+**Funcom hat die Lippenbewegung schon eingebaut** — es braucht keine eigene Animation:
+`AB_human_male` → `ApplyAdditive` (`MainPoseWithSpeech`) ← Blend by bool **`IsSpeaking`** ←
+additive `A_face_generic_talk_loop` (`/Game/Characters/humans/animations/lip_sync/`). Der Anim-Wert
+kommt jeden Frame aus der C++-Eigenschaft **`ConanCharacter.IsSpeaking`** der Figur.
+
+- Neue Funktion `UpdateTalk(Content)`: liest `"talk":1` (eigene Figur) und die `talkers`-Punkte,
+  setzt fuer jede `BasePlayerChar` `IsSpeaking` = „ein Sprecherpunkt ≤ 2 m entfernt“, zuletzt
+  fuer die eigene Figur = `talk`. `IsSpeaking` ist fuer Blueprints nur lesbar → gesetzt mit
+  `KismetSystemLibrary::SetBoolPropertyByName(Figur, "IsSpeaking", Wert)`.
+- `HTTPSuccess` (10-Hz-Bremse wie die Okklusion): nach `UpdateOcclusion` → `UpdateTalk`.
+- `HTTPFaIl`: nur wenn die Mod vorher etwas gesetzt hat (`TalkActive`) einmal `UpdateTalk("")`
+  → alle Muender zu. Spieler ohne Plugin werden nie angefasst; kein Mund bleibt offen haengen.
+- Backup vorher: `Documents\Codex\CountEmporiumDragons-Backup-20260927\Teamspeak_BeforeTalkAnim_20261018\`.
 
 ## 5. Wie wurde es getestet?
 
 - `talk_state_test` (MSVC): 13/13 gruen — Flags, Reset, Reihenfolge naechster zuerst,
   Unreal-Achsen in cm, Reichweite, Obergrenze 16, Anhaengen hinter die Probe-Liste, zu kleiner Puffer.
 - MSVC Release-Build OK, `check_layering.sh` OK.
+- **PIE (Mod):** `IsSpeaking` direkt gesetzt → Anim-Flag folgt im naechsten Frame, Kiefer
+  (`b_jaw`) bewegt sich (Roll −0,5° … +4,8° statt konstant −0,51°). `UpdateTalk` mit `"talk":1`
+  → eigene Figur spricht, Kiefer bewegt sich; Antwort ohne `talk` → aus. Kaputte/leere Antworten
+  ohne Fehler. Im PIE scheitert jeder Mod-HTTP-Aufruf (`NotApprovedByPlayer`) → die
+  `HTTPFaIl`-Absicherung schliesst die Muender sofort wieder (fuer den Test Timer gestoppt).
+- **Nicht im PIE testbar:** fremde Sprecher (braucht 2 Spieler) und der echte HTTP-Rundweg.
 - Ende-zu-Ende erst mit der Mod-Seite.
 
 ## 6. Lerneffekt
