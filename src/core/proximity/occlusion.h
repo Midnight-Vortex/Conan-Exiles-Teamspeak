@@ -30,6 +30,9 @@
 #define OCCLUSION_PROBE_RANGE_M 60.0f
 #define OCCLUSION_FULL_GAIN     0.25f  /* gain multiplier at 100 % (~ -12 dB) */
 #define OCCLUSION_FULL_CUTOFF   900.0f /* lowpass cutoff (Hz) at 100 % */
+#define OCCLUSION_MIN_CUTOFF    250.0f /* lowest cutoff, also with OcclusionIntensity > 100 */
+#define OCCLUSION_INTENSITY_DEFAULT 100 /* [GLOBAL] OcclusionIntensity, percent (069) */
+#define OCCLUSION_INTENSITY_MAX     300
 
 /* Parse "OCC=<cid>:<pct>;..." out of a POST body and store the values.
    Returns the number of stored entries, -1 when the body has no "OCC=" key. */
@@ -39,8 +42,11 @@ int occlusion_store_from_text(const char* body, unsigned long long nowMs);
 float occlusion_get(unsigned int clientID, unsigned long long nowMs);
 
 /* Apply occlusion (0..1) to a computed gain and lowpass cutoff. Cutoff is
-   only ever lowered. No-op for occ <= 0. */
-void occlusion_apply(float occ, float* gain, float* cutoffHz);
+   only ever lowered. No-op for occ <= 0 or strength <= 0.
+   strength = OcclusionIntensity / 100: 1 = the 8.0.8 curve (-12 dB, 900 Hz
+   at full occlusion), 2 = twice the dB loss and the cutoff sweep continued
+   (clamped at OCCLUSION_MIN_CUTOFF). */
+void occlusion_apply(float occ, float strength, float* gain, float* cutoffHz);
 
 /* Write the probe JSON response for a listener at plugin coordinates
    (meters, Y-up). Returns bytes written (0 on error / too small buffer). */
@@ -57,5 +63,11 @@ void occlusion_clear(void);
    occlusion. Switching off also forgets all stored values. Default: off. */
 void occlusion_set_enabled(int enabled);
 int occlusion_is_enabled(void);
+
+/* Strength from the root channel ([GLOBAL] OcclusionIntensity=100, 069),
+   percent, clamped to 0..OCCLUSION_INTENSITY_MAX. Same thread rules as the
+   switch. occlusion_get_strength returns percent / 100 for occlusion_apply. */
+void occlusion_set_intensity(float percent);
+float occlusion_get_strength(void);
 
 #endif /* CORE_PROXIMITY_OCCLUSION_H */

@@ -1,4 +1,5 @@
 #include "core/hub/hub_parser.h"
+#include "core/proximity/occlusion.h" /* OCCLUSION_INTENSITY_* (069) */
 
 #include "core/util/compat_crt.h"
 
@@ -78,6 +79,7 @@ static void hub_defaults(HubSettings* out) {
     out->audioMaxVolume = 1.0f;
     out->audioMinDistance = 1.0f;
     out->filterIntensity = 100.0f;
+    out->occlusionIntensity = (float)OCCLUSION_INTENSITY_DEFAULT;
     out->nicknameRandomizer = 1; /* absent key = enabled (legacy servers) */
 }
 
@@ -139,6 +141,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
     else if ((v = hub_value_for(line, "EnableOcclusion")) != NULL) {
         out->enableOcclusion = hub_parse_bool(v);
+    }
+    else if ((v = hub_value_for(line, "OcclusionIntensity")) != NULL) {
+        out->occlusionIntensity = hub_parse_clamped(v, 0.0f, (float)OCCLUSION_INTENSITY_MAX);
     }
     else if ((v = hub_value_for(line, "FilterIntensity")) != NULL
         || (v = hub_value_for(line, "hubAudioFilterIntensity")) != NULL) {

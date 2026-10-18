@@ -96,16 +96,22 @@ float occlusion_get(unsigned int clientID, unsigned long long nowMs) {
     return (float)pct / 100.0f;
 }
 
-void occlusion_apply(float occ, float* gain, float* cutoffHz) {
-    if (!(occ > 0.0f) || !gain || !cutoffHz) {
+void occlusion_apply(float occ, float strength, float* gain, float* cutoffHz) {
+    if (!(occ > 0.0f) || !(strength > 0.0f) || !gain || !cutoffHz) {
         return;
     }
     if (occ > 1.0f) {
         occ = 1.0f;
     }
-    *gain *= 1.0f - occ * (1.0f - OCCLUSION_FULL_GAIN);
+    /* Raising the 8.0.8 multiplier to the power "strength" scales its dB loss
+       linearly; strength 1 leaves the old curve bit-identical. */
+    const float base = 1.0f - occ * (1.0f - OCCLUSION_FULL_GAIN);
+    *gain *= (strength == 1.0f) ? base : powf(base, strength);
     /* Exponential sweep 19 kHz -> OCCLUSION_FULL_CUTOFF (perceptually even). */
-    const float target = 19000.0f * powf(OCCLUSION_FULL_CUTOFF / 19000.0f, occ);
+    float target = 19000.0f * powf(OCCLUSION_FULL_CUTOFF / 19000.0f, occ * strength);
+    if (target < OCCLUSION_MIN_CUTOFF) {
+        target = OCCLUSION_MIN_CUTOFF;
+    }
     if (target < *cutoffHz) {
         *cutoffHz = target;
     }
@@ -189,4 +195,20 @@ void occlusion_set_enabled(int enabled) {
 
 int occlusion_is_enabled(void) {
     return InterlockedCompareExchange(&g_occEnabled, 0, 0) != 0;
+}
+
+static volatile long g_occIntensityPct = OCCLUSION_INTENSITY_DEFAULT;
+
+void occlusion_set_intensity(float percent) {
+    if (!(percent > 0.0f)) {
+        percent = 0.0f; /* also NaN */
+    }
+    if (percent > (float)OCCLUSION_INTENSITY_MAX) {
+        percent = (float)OCCLUSION_INTENSITY_MAX;
+    }
+    InterlockedExchange(&g_occIntensityPct, lroundf(percent));
+}
+
+float occlusion_get_strength(void) {
+    return (float)InterlockedCompareExchange(&g_occIntensityPct, 0, 0) / 100.0f;
 }

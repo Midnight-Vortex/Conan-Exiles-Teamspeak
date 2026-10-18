@@ -342,6 +342,14 @@ static void test_hrtf_switch(void) {
     CHECK(s.enableOcclusion == 0, "absent EnableOcclusion -> off (064)");
     hub_parse_settings("[GLOBAL]\nEnableOcclusion=True\nEnableHrtf=False\n", &s);
     CHECK(s.enableOcclusion == 1 && s.enableHrtf == 0, "EnableOcclusion=True independent of EnableHrtf");
+
+    CHECK(s.occlusionIntensity == 100.0f, "absent OcclusionIntensity -> 100 (069)");
+    hub_parse_settings("[GLOBAL]\nEnableOcclusion=True\nOcclusionIntensity=200\n", &s);
+    CHECK(s.enableOcclusion == 1 && s.occlusionIntensity == 200.0f, "OcclusionIntensity=200 parsed");
+    hub_parse_settings("[GLOBAL]<br>occlusionintensity = 999<br>", &s);
+    CHECK(s.occlusionIntensity == 300.0f && s.enableOcclusion == 0, "OcclusionIntensity clamped to 300, switch untouched");
+    hub_parse_settings("[GLOBAL]\nOcclusionIntensity=-20\n", &s);
+    CHECK(s.occlusionIntensity == 0.0f, "negative OcclusionIntensity -> 0");
 }
 
 int main(void) {

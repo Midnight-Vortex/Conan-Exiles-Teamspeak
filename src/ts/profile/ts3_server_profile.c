@@ -256,6 +256,7 @@ void server_profile_apply(const HubSettings* settings) {
     InterlockedExchange(&g_listenAddBits, bits);
     InterlockedExchange(&g_hrtfEnabled, settings->enableHrtf ? 1 : 0);
     occlusion_set_enabled(settings->enableOcclusion); /* 064 root-channel switch */
+    occlusion_set_intensity(settings->occlusionIntensity); /* 069 */
     InterlockedExchange(&g_profileActive, 1);
     LeaveCriticalSection(&g_profileLock);
 
@@ -272,7 +273,7 @@ void server_profile_apply(const HubSettings* settings) {
     }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
-        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d occlusion=%d "
+        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d occlusion=%d occIntensity=%.0f "
         "pw=%s zones=%d races=%d localRace=%d defaults=%d",
         settings->audioMaxVolume,
         settings->minWhisper, settings->maxWhisper,
@@ -281,7 +282,7 @@ void server_profile_apply(const HubSettings* settings) {
         settings->forceDistanceMuting, settings->forceAutoChannelSwitch,
         settings->nicknameRandomizer,
         settings->realisticAudio, settings->filterIntensity, settings->enableHrtf,
-        settings->enableOcclusion,
+        settings->enableOcclusion, settings->occlusionIntensity,
         settings->ingameChannelPassword[0] ? "yes" : "no",
         settings->zoneCount, settings->raceCount, raceIndex,
         settings->defaults.enabled);
@@ -573,4 +574,5 @@ void server_profile_reset(void) {
     InterlockedExchange(&g_hrtfEnabled, 0);
     LeaveCriticalSection(&g_profileLock);
     occlusion_set_enabled(0); /* 064: no server profile -> no occlusion */
+    occlusion_set_intensity((float)OCCLUSION_INTENSITY_DEFAULT);
 }
