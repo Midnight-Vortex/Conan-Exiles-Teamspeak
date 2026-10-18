@@ -176,3 +176,17 @@ void occlusion_clear(void) {
         InterlockedExchange(&g_occTick[i], 0);
     }
 }
+
+static volatile long g_occEnabled = 0; /* root-channel switch, default off */
+
+void occlusion_set_enabled(int enabled) {
+    const long next = enabled ? 1 : 0;
+    const long prev = InterlockedExchange(&g_occEnabled, next);
+    if (prev && !next) {
+        occlusion_clear();
+    }
+}
+
+int occlusion_is_enabled(void) {
+    return InterlockedCompareExchange(&g_occEnabled, 0, 0) != 0;
+}

@@ -601,8 +601,9 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         cutoffHz = prox_lowpass_cutoff_hz(distance);
     }
 
-    /* PROTOTYPE occlusion (061): mod-reported wall/foundation blocking. */
-    if (!soundproof) {
+    /* PROTOTYPE occlusion (061): mod-reported wall/foundation blocking.
+       Only when the root channel enables it (EnableOcclusion=True, 064). */
+    if (!soundproof && occlusion_is_enabled()) {
         occlusion_apply(occlusion_get(clientID, GetTickCount64()), &gain, &cutoffHz);
     }
 

@@ -109,8 +109,20 @@ static void test_probes(void) {
     CHECK(occlusion_format_probes(buf, 16, 0.0f, 0.0f, 0.0f) == 0, "too small buffer -> 0");
 }
 
+static void test_switch(void) {
+    occlusion_clear();
+    CHECK(!occlusion_is_enabled(), "switch default off (064)");
+    occlusion_set_enabled(1);
+    CHECK(occlusion_is_enabled(), "switch on");
+    occlusion_store_from_text("OCC=12:80", 1000ull);
+    CHECK(occlusion_get(12, 1000ull) > 0.79f, "value stored while on");
+    occlusion_set_enabled(0);
+    CHECK(!occlusion_is_enabled() && occlusion_get(12, 1000ull) == 0.0f, "switch off forgets values");
+}
+
 int main(void) {
     printf("occlusion_test\n");
+    test_switch();
     test_parse();
     test_stale();
     test_apply();

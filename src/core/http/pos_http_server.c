@@ -432,8 +432,9 @@ static void http_handle_client(SOCKET client) {
             PosSample sample;
             const int parsed = http_parse_body(body, &sample);
             /* PROTOTYPE occlusion (061): store before inject so the recompute
-               triggered by this sample already sees the new values. */
-            const int occOptIn = parsed
+               triggered by this sample already sees the new values. Server
+               switch off (064) -> no store, no probes: the mod traces nothing. */
+            const int occOptIn = parsed && occlusion_is_enabled()
                 && occlusion_store_from_text(body, GetTickCount64()) >= 0;
             const int injected = parsed && pos_inject_sample(&sample);
             const int status = injected ? 200 : 400;

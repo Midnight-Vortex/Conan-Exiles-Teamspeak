@@ -50,4 +50,12 @@ int occlusion_format_probes(char* out, int outSize,
 /* Forget all stored values (unit tests, disconnect). */
 void occlusion_clear(void);
 
+/* Server switch from the root channel ([GLOBAL] EnableOcclusion=True, 064).
+   Set by the server profile (callback thread) on apply/reset; read from any
+   thread (single atomic). Off = the HTTP bridge neither stores OCC values nor
+   answers with probes (the mod then traces nothing) and the audio path ignores
+   occlusion. Switching off also forgets all stored values. Default: off. */
+void occlusion_set_enabled(int enabled);
+int occlusion_is_enabled(void);
+
 #endif /* CORE_PROXIMITY_OCCLUSION_H */
