@@ -25,6 +25,8 @@ As a security measure, compare the SHA-256 hash of the file you downloaded with 
 
 | Version | File | SHA-256 |
 |---|---|---|
+| 8.0.10 | `conan_exiles-8.0.10-win64.ts3_plugin` (installer package) | `c9fcc2e56c4eb47c594075830e8de4d1057226fab0c648e22022f784c782818d` |
+| 8.0.10 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `f243b9765080132f5bd8df25b7d06e6ff9fa4bf9070b40b0d43ec1268c79bb4b` |
 | 8.0.9 | `conan_exiles-8.0.9-win64.ts3_plugin` (installer package) | `08628397ee61b71d1ee7ed9763f00fc460b3d2f49095c9a00f623ac8bbfa6859` |
 | 8.0.9 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `cc246496ed7649c47583478fb91f9f5fe00d8d8efbb41aff20b5bb75d6f18e23` |
 | 8.0.8 | `conan_exiles-8.0.8-win64.ts3_plugin` (installer package) | `fa9b076b2aa35231a1f1e9787c7a8fdc3b490899cc1058cd05120fc50180deec` |
@@ -37,19 +39,19 @@ As a security measure, compare the SHA-256 hash of the file you downloaded with 
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\conan_exiles-8.0.9-win64.ts3_plugin -Algorithm SHA256
+Get-FileHash .\conan_exiles-8.0.10-win64.ts3_plugin -Algorithm SHA256
 ```
 
 Windows Command Prompt:
 
 ```bat
-certutil -hashfile conan_exiles-8.0.9-win64.ts3_plugin SHA256
+certutil -hashfile conan_exiles-8.0.10-win64.ts3_plugin SHA256
 ```
 
 Linux / macOS / Git Bash:
 
 ```bash
-sha256sum conan_exiles-8.0.9-win64.ts3_plugin
+sha256sum conan_exiles-8.0.10-win64.ts3_plugin
 ```
 
 Since 8.0.7 every release also contains a `SHA256SUMS` file. Put it next to the downloaded package and run `sha256sum -c --ignore-missing SHA256SUMS` (the `conan_exiles.dll` line only applies after extracting the package).
