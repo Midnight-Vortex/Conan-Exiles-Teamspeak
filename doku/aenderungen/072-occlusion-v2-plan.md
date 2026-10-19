@@ -1,6 +1,6 @@
 # 072 — Okklusion v2: Plan, Protokoll und Parameter (Plugin + Mod)
 
-**Status:** Plan / Spezifikation (2026-10-19). Umsetzung schrittweise, siehe Abschnitt 6.
+**Status (2026-10-19 21:30):** Plugin-Seite umgesetzt (Schritte 1–2, Vorab-Release 8.0.11, siehe 073). Offen: Mod-Seite (Schritt 3–4), dann Mod kochen.
 Auftrag: alle Ideen aus der Liste umsetzen **ausser A5 (Tueren leichter) und A8 (Material)**.
 
 | Nr. | Idee | Seite |
