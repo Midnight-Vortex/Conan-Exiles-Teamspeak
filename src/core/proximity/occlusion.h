@@ -35,11 +35,82 @@
 #define OCCLUSION_INTENSITY_MAX     300
 
 /* Parse "OCC=<cid>:<pct>;..." out of a POST body and store the values.
+   Also reads the v2 entries "<cid>:<pct>:<kind>:<room>:<x>,<y>,<z>" (072):
+   kind N/T/D, room 0..100, relay point in Unreal centimeters (kind D only).
+   v1 entries count as kind T (N when pct is 0) with room 0.
    Returns the number of stored entries, -1 when the body has no "OCC=" key. */
 int occlusion_store_from_text(const char* body, unsigned long long nowMs);
 
 /* Occlusion 0..1 for a client; 0 when unknown, out of range or stale. */
 float occlusion_get(unsigned int clientID, unsigned long long nowMs);
+
+/* ---- v2 (072) ------------------------------------------------------------ */
+#define OCCLUSION_PROTOCOL_VERSION 2
+#define OCCLUSION_KIND_NONE      0  /* free line of sight */
+#define OCCLUSION_KIND_TRANSMIT  1  /* through a wall */
+#define OCCLUSION_KIND_DIFFRACT  2  /* around a corner / through an opening */
+
+typedef struct OcclusionInfo {
+    float amount;      /* 0..1 */
+    int kind;          /* OCCLUSION_KIND_* */
+    float room;        /* 0..1 how enclosed listener/speaker are (reverb, B4) */
+    int relayValid;    /* 1 for kind DIFFRACT with a relay point */
+    float relayX, relayY, relayZ; /* relay point, plugin coordinates (meters, Y-up) */
+} OcclusionInfo;
+
+/* Everything stored for a client. Stale or unknown -> zeroed (kind NONE).
+   Returns 1 when fresh values exist. Any thread (single atomic reads). */
+int occlusion_get_info(unsigned int clientID, unsigned long long nowMs, OcclusionInfo* out);
+
+/* Mod parameters from the root channel, forwarded to the mod in every probe
+   reply as "occcfg":"2,<p1>,...,<p12>" (072 section 2). */
+#define OCCLUSION_MOD_PARAM_COUNT 12
+const char* occlusion_mod_param_name(int index);  /* root-channel key, NULL when out of range */
+int occlusion_mod_param_default(int index);
+int occlusion_mod_param_clamp(int index, double value); /* rounded + clamped to the key's range */
+/* values: OCCLUSION_MOD_PARAM_COUNT entries (already clamped), NULL = defaults. */
+void occlusion_set_mod_params(const int* values);
+/* Insert ,"occcfg":"..." before the closing brace of a JSON object in out.
+   Returns 1 when appended. HTTP listener thread. */
+int occlusion_append_cfg_json(char* out, int outSize);
+
+/* Plugin-side sound parameters from the root channel (072 section 4). */
+#define OCCLUSION_ATTACK_MS_DEFAULT    500
+#define OCCLUSION_RELEASE_MS_DEFAULT   250
+#define OCCLUSION_SMOOTH_MS_MAX        5000
+#define OCCLUSION_DIFFRACTION_DEFAULT  100
+#define OCCLUSION_DIFFRACTION_MAX      300
+#define OCCLUSION_REVERB_DEFAULT       100
+#define OCCLUSION_REVERB_MAX           200
+/* Around-the-corner curve (kind D, B2): mild loss of highs, little volume loss.
+   strength = OcclusionDiffraction / 100. At amount 1 / strength 1: -3 dB and
+   a lowpass at 2.5 kHz (never below 1.2 kHz). Cutoff is only ever lowered. */
+#define OCCLUSION_DIFFRACT_GAIN_LOSS  0.3f
+#define OCCLUSION_DIFFRACT_CUTOFF     2500.0f
+#define OCCLUSION_DIFFRACT_MIN_CUTOFF 1200.0f
+void occlusion_apply_diffraction(float amount, float strength, float* gain, float* cutoffHz);
+
+/* B1 smoothing per client: moves the gain factor, the cutoff (on a log scale)
+   and the relay-direction weight towards their targets - attack time constant
+   when getting more muffled, release when getting clearer. Keeps the last
+   relay point so the direction can fade back after a D entry ended.
+   First call for a client (or after 2 s without calls) jumps to the target. */
+typedef struct OcclusionSmoothed {
+    float gain;         /* factor 0..1 */
+    float cutoffHz;
+    float relayWeight;  /* 0 = speaker direction, 1 = relay point */
+    float room;         /* smoothed room factor 0..1 (indoor reverb, B4) */
+    int relayKnown;
+    float relayX, relayY, relayZ; /* plugin coordinates */
+} OcclusionSmoothed;
+void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const OcclusionInfo* info,
+    float targetGain, float targetCutoffHz, OcclusionSmoothed* out);
+
+void occlusion_set_sound_params(float attackMs, float releaseMs, float diffractionPct, float reverbPct);
+float occlusion_get_attack_ms(void);
+float occlusion_get_release_ms(void);
+float occlusion_get_diffraction(void); /* percent / 100 */
+float occlusion_get_reverb(void);      /* percent / 100 */
 
 /* Apply occlusion (0..1) to a computed gain and lowpass cutoff. Cutoff is
    only ever lowered. No-op for occ <= 0 or strength <= 0.

@@ -26,6 +26,20 @@
 
 static volatile long g_occPct[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_occTick[OCCLUSION_MAX_CLIENT_ID]; /* low 32 bits of ms tick */
+/* v2 (072). Written before pct/tick, so a reader that sees a fresh tick sees
+   the matching fields (a torn read across two updates 100 ms apart is harmless). */
+static volatile long g_occKind[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_occRoom[OCCLUSION_MAX_CLIENT_ID];   /* 0..100 */
+static volatile long g_occRelay[OCCLUSION_MAX_CLIENT_ID][3]; /* Unreal cm */
+static volatile long g_occRelayValid[OCCLUSION_MAX_CLIENT_ID];
+/* B1 smoothing state (072), see occlusion_smooth. */
+static volatile long g_smTick[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smGain[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smLogCut[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smRelayW[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smRoom[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smRelayKnown[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smRelay[OCCLUSION_MAX_CLIENT_ID][3];
 
 /* HTTP thread only. */
 static PlayerEntry g_probeSnap[PLAYER_TABLE_MAX_PLAYERS];
@@ -66,7 +80,66 @@ int occlusion_store_from_text(const char* body, unsigned long long nowMs) {
         if (pct > 100) {
             pct = 100;
         }
+        /* v2 tail (072): ":<kind>:<room>:<x>,<y>,<z>" - every part optional. */
+        long kind = pct > 0 ? OCCLUSION_KIND_TRANSMIT : OCCLUSION_KIND_NONE;
+        long room = 0;
+        long relay[3] = { 0, 0, 0 };
+        long relayValid = 0;
+        if (*p == ':') {
+            p++;
+            if (*p == 'N' || *p == 'n') {
+                kind = OCCLUSION_KIND_NONE;
+                p++;
+            }
+            else if (*p == 'T' || *p == 't') {
+                kind = OCCLUSION_KIND_TRANSMIT;
+                p++;
+            }
+            else if (*p == 'D' || *p == 'd') {
+                kind = OCCLUSION_KIND_DIFFRACT;
+                p++;
+            }
+            if (*p == ':') {
+                p++;
+                const long r = strtol(p, &end, 10);
+                if (end != p) {
+                    room = r < 0 ? 0 : (r > 100 ? 100 : r);
+                    p = end;
+                }
+            }
+            if (*p == ':') {
+                p++;
+                int k = 0;
+                for (; k < 3; k++) {
+                    relay[k] = strtol(p, &end, 10);
+                    if (end == p) {
+                        break;
+                    }
+                    p = end;
+                    if (k < 2) {
+                        if (*p != ',') {
+                            break;
+                        }
+                        p++;
+                    }
+                }
+                relayValid = (k == 3 && kind == OCCLUSION_KIND_DIFFRACT) ? 1 : 0;
+            }
+            /* skip anything unknown up to the entry separator */
+            while (*p && *p != ';') {
+                p++;
+            }
+        }
+        if (kind == OCCLUSION_KIND_NONE) {
+            pct = 0;
+        }
         if (cid > 0 && cid < OCCLUSION_MAX_CLIENT_ID) {
+            InterlockedExchange(&g_occKind[cid], kind);
+            InterlockedExchange(&g_occRoom[cid], room);
+            InterlockedExchange(&g_occRelay[cid][0], relay[0]);
+            InterlockedExchange(&g_occRelay[cid][1], relay[1]);
+            InterlockedExchange(&g_occRelay[cid][2], relay[2]);
+            InterlockedExchange(&g_occRelayValid[cid], relayValid);
             InterlockedExchange(&g_occPct[cid], pct);
             InterlockedExchange(&g_occTick[cid], (long)(unsigned long)nowMs);
             stored++;
@@ -94,6 +167,34 @@ float occlusion_get(unsigned int clientID, unsigned long long nowMs) {
         return 0.0f;
     }
     return (float)pct / 100.0f;
+}
+
+int occlusion_get_info(unsigned int clientID, unsigned long long nowMs, OcclusionInfo* out) {
+    if (!out) {
+        return 0;
+    }
+    memset(out, 0, sizeof(*out));
+    if (clientID == 0 || clientID >= OCCLUSION_MAX_CLIENT_ID) {
+        return 0;
+    }
+    const long tick = InterlockedCompareExchange(&g_occTick[clientID], 0, 0);
+    if (tick == 0 || (unsigned long)nowMs - (unsigned long)tick > OCCLUSION_STALE_MS) {
+        return 0;
+    }
+    out->amount = (float)InterlockedCompareExchange(&g_occPct[clientID], 0, 0) / 100.0f;
+    out->kind = (int)InterlockedCompareExchange(&g_occKind[clientID], 0, 0);
+    out->room = (float)InterlockedCompareExchange(&g_occRoom[clientID], 0, 0) / 100.0f;
+    out->relayValid = InterlockedCompareExchange(&g_occRelayValid[clientID], 0, 0) != 0;
+    if (out->relayValid) {
+        /* Unreal (X, Y, Z-up, cm) -> plugin (x, y-up, z, m), as in occlusion_format_probes. */
+        out->relayX = (float)InterlockedCompareExchange(&g_occRelay[clientID][0], 0, 0) / 100.0f;
+        out->relayZ = (float)InterlockedCompareExchange(&g_occRelay[clientID][1], 0, 0) / 100.0f;
+        out->relayY = (float)InterlockedCompareExchange(&g_occRelay[clientID][2], 0, 0) / 100.0f;
+    }
+    if (out->kind == OCCLUSION_KIND_NONE) {
+        out->amount = 0.0f;
+    }
+    return 1;
 }
 
 void occlusion_apply(float occ, float strength, float* gain, float* cutoffHz) {
@@ -180,6 +281,11 @@ void occlusion_clear(void) {
     for (int i = 0; i < OCCLUSION_MAX_CLIENT_ID; i++) {
         InterlockedExchange(&g_occPct[i], 0);
         InterlockedExchange(&g_occTick[i], 0);
+        InterlockedExchange(&g_occKind[i], 0);
+        InterlockedExchange(&g_occRoom[i], 0);
+        InterlockedExchange(&g_occRelayValid[i], 0);
+        InterlockedExchange(&g_smTick[i], 0);
+        InterlockedExchange(&g_smRelayKnown[i], 0);
     }
 }
 
@@ -211,4 +317,184 @@ void occlusion_set_intensity(float percent) {
 
 float occlusion_get_strength(void) {
     return (float)InterlockedCompareExchange(&g_occIntensityPct, 0, 0) / 100.0f;
+}
+
+/* ---- 072: mod parameters (forwarded as "occcfg") ---------------------------- */
+
+static volatile long g_occMod[OCCLUSION_MOD_PARAM_COUNT] = { 80, 150, 400, 150, 300, 30, 60, 60, 70, 80, 60, 2 };
+
+void occlusion_set_mod_params(const int* values) {
+    for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT; i++) {
+        InterlockedExchange(&g_occMod[i], values ? (long)occlusion_mod_param_clamp(i, values[i]) : occlusion_mod_param_default(i));
+    }
+}
+
+int occlusion_append_cfg_json(char* out, int outSize) {
+    if (!out || outSize < 32) {
+        return 0;
+    }
+    const int len = (int)strlen(out);
+    if (len < 2 || out[len - 1] != '}') {
+        return 0;
+    }
+    char cfg[160];
+    int n = snprintf(cfg, sizeof(cfg), ",\"occcfg\":\"%d", OCCLUSION_PROTOCOL_VERSION);
+    for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT && n > 0 && n < (int)sizeof(cfg); i++) {
+        n += snprintf(cfg + n, sizeof(cfg) - (size_t)n, ",%ld", InterlockedCompareExchange(&g_occMod[i], 0, 0));
+    }
+    if (n <= 0 || n >= (int)sizeof(cfg) - 3 || len - 1 + n + 3 > outSize) {
+        return 0;
+    }
+    /* overwrite the closing brace, then close the string and the object again */
+    memcpy(out + len - 1, cfg, (size_t)n);
+    memcpy(out + len - 1 + n, "\"}", 3);
+    return 1;
+}
+
+/* ---- 072: plugin-side sound parameters -------------------------------------- */
+
+static volatile long g_occAttackMs = OCCLUSION_ATTACK_MS_DEFAULT;
+static volatile long g_occReleaseMs = OCCLUSION_RELEASE_MS_DEFAULT;
+static volatile long g_occDiffractionPct = OCCLUSION_DIFFRACTION_DEFAULT;
+static volatile long g_occReverbPct = OCCLUSION_REVERB_DEFAULT;
+
+static long occ_clamp_long(float v, long maxV) {
+    if (!(v > 0.0f)) {
+        return 0; /* also NaN */
+    }
+    return v > (float)maxV ? maxV : lroundf(v);
+}
+
+void occlusion_set_sound_params(float attackMs, float releaseMs, float diffractionPct, float reverbPct) {
+    InterlockedExchange(&g_occAttackMs, occ_clamp_long(attackMs, OCCLUSION_SMOOTH_MS_MAX));
+    InterlockedExchange(&g_occReleaseMs, occ_clamp_long(releaseMs, OCCLUSION_SMOOTH_MS_MAX));
+    InterlockedExchange(&g_occDiffractionPct, occ_clamp_long(diffractionPct, OCCLUSION_DIFFRACTION_MAX));
+    InterlockedExchange(&g_occReverbPct, occ_clamp_long(reverbPct, OCCLUSION_REVERB_MAX));
+}
+
+float occlusion_get_attack_ms(void) {
+    return (float)InterlockedCompareExchange(&g_occAttackMs, 0, 0);
+}
+
+float occlusion_get_release_ms(void) {
+    return (float)InterlockedCompareExchange(&g_occReleaseMs, 0, 0);
+}
+
+float occlusion_get_diffraction(void) {
+    return (float)InterlockedCompareExchange(&g_occDiffractionPct, 0, 0) / 100.0f;
+}
+
+float occlusion_get_reverb(void) {
+    return (float)InterlockedCompareExchange(&g_occReverbPct, 0, 0) / 100.0f;
+}
+
+void occlusion_apply_diffraction(float amount, float strength, float* gain, float* cutoffHz) {
+    if (!(amount > 0.0f) || !(strength > 0.0f) || !gain || !cutoffHz) {
+        return;
+    }
+    float a = amount * strength;
+    if (a > 3.0f) {
+        a = 3.0f;
+    }
+    float g = 1.0f - OCCLUSION_DIFFRACT_GAIN_LOSS * a;
+    if (g < OCCLUSION_FULL_GAIN) {
+        g = OCCLUSION_FULL_GAIN;
+    }
+    *gain *= g;
+    float target = 19000.0f * powf(OCCLUSION_DIFFRACT_CUTOFF / 19000.0f, a);
+    if (target < OCCLUSION_DIFFRACT_MIN_CUTOFF) {
+        target = OCCLUSION_DIFFRACT_MIN_CUTOFF;
+    }
+    if (target < *cutoffHz) {
+        *cutoffHz = target;
+    }
+}
+
+/* ---- 072 B1: smoothing state per client -------------------------------------
+   Floats kept as their bit pattern in longs (single atomic stores). Two threads
+   may compute the same client at the same time; the worst case is one lost
+   smoothing step, never a torn float. */
+
+static float occ_bits_to_float(long v) {
+    float f;
+    memcpy(&f, &v, sizeof(f));
+    return f;
+}
+
+static long occ_float_to_bits(float f) {
+    long v;
+    memcpy(&v, &f, sizeof(v));
+    return v;
+}
+
+/* One exponential step towards target; tau = attack when moving in the
+   "more muffled" direction (moreMuffled), else release. */
+static float occ_step(float cur, float target, int moreMuffled, float dtMs) {
+    const float tau = moreMuffled ? occlusion_get_attack_ms() : occlusion_get_release_ms();
+    if (!(tau > 0.5f) || !(dtMs > 0.0f)) {
+        return tau > 0.5f ? cur : target;
+    }
+    const float alpha = 1.0f - expf(-dtMs / tau);
+    return cur + (target - cur) * alpha;
+}
+
+void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const OcclusionInfo* info,
+    float targetGain, float targetCutoffHz, OcclusionSmoothed* out) {
+    if (!out) {
+        return;
+    }
+    const float targetRelayW = (info && info->kind == OCCLUSION_KIND_DIFFRACT && info->relayValid) ? 1.0f : 0.0f;
+    const float targetLogCut = log2f(targetCutoffHz > 1.0f ? targetCutoffHz : 1.0f);
+    out->gain = targetGain;
+    out->cutoffHz = targetCutoffHz;
+    const float targetRoom = info ? info->room : 0.0f;
+    out->relayWeight = targetRelayW;
+    out->room = targetRoom;
+    out->relayKnown = 0;
+    out->relayX = out->relayY = out->relayZ = 0.0f;
+    if (clientID == 0 || clientID >= OCCLUSION_MAX_CLIENT_ID) {
+        if (info && info->relayValid) {
+            out->relayKnown = 1;
+            out->relayX = info->relayX;
+            out->relayY = info->relayY;
+            out->relayZ = info->relayZ;
+        }
+        return;
+    }
+    if (info && info->relayValid) {
+        InterlockedExchange(&g_smRelay[clientID][0], occ_float_to_bits(info->relayX));
+        InterlockedExchange(&g_smRelay[clientID][1], occ_float_to_bits(info->relayY));
+        InterlockedExchange(&g_smRelay[clientID][2], occ_float_to_bits(info->relayZ));
+        InterlockedExchange(&g_smRelayKnown[clientID], 1);
+    }
+
+    const long last = InterlockedCompareExchange(&g_smTick[clientID], 0, 0);
+    const unsigned long dt = (unsigned long)nowMs - (unsigned long)last;
+    float gain = targetGain, logCut = targetLogCut, relayW = targetRelayW, room = targetRoom;
+    if (last != 0 && dt <= 2000UL) {
+        const float curGain = occ_bits_to_float(InterlockedCompareExchange(&g_smGain[clientID], 0, 0));
+        const float curLogCut = occ_bits_to_float(InterlockedCompareExchange(&g_smLogCut[clientID], 0, 0));
+        const float curRelayW = occ_bits_to_float(InterlockedCompareExchange(&g_smRelayW[clientID], 0, 0));
+        gain = occ_step(curGain, targetGain, targetGain < curGain, (float)dt);
+        logCut = occ_step(curLogCut, targetLogCut, targetLogCut < curLogCut, (float)dt);
+        relayW = occ_step(curRelayW, targetRelayW, targetRelayW > curRelayW, (float)dt);
+        const float curRoom = occ_bits_to_float(InterlockedCompareExchange(&g_smRoom[clientID], 0, 0));
+        room = occ_step(curRoom, targetRoom, targetRoom > curRoom, (float)dt);
+    }
+    InterlockedExchange(&g_smGain[clientID], occ_float_to_bits(gain));
+    InterlockedExchange(&g_smLogCut[clientID], occ_float_to_bits(logCut));
+    InterlockedExchange(&g_smRelayW[clientID], occ_float_to_bits(relayW));
+    InterlockedExchange(&g_smRoom[clientID], occ_float_to_bits(room));
+    InterlockedExchange(&g_smTick[clientID], (long)(unsigned long)(nowMs ? nowMs : 1ULL));
+
+    out->gain = gain;
+    out->cutoffHz = exp2f(logCut);
+    out->relayWeight = relayW;
+    out->room = room;
+    if (InterlockedCompareExchange(&g_smRelayKnown[clientID], 0, 0)) {
+        out->relayKnown = 1;
+        out->relayX = occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][0], 0, 0));
+        out->relayY = occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][1], 0, 0));
+        out->relayZ = occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][2], 0, 0));
+    }
 }

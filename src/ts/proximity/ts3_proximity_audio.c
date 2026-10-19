@@ -84,6 +84,7 @@ typedef struct AudioSnap {
     float drr;           /* 1.0 = no diffuse; lower = more diffuse mix */
     int soundproof;      /* 10.2 hard mute (different soundproof zone) */
     int reverbSlot;      /* 10.4 cave reverb slot, -1 = off */
+    float reverbWet;     /* 072 B4: 1 = cave, < 1 = indoor room reverb */
     int valid;
 } AudioSnap;
 
@@ -223,7 +224,7 @@ static void writer_lock_ensure(void) {
 }
 
 static void snap_publish(anyID clientID, float gain, float panL, float panR,
-    float cutoffHz, float drr, int soundproof, int reverbSlot, int valid) {
+    float cutoffHz, float drr, int soundproof, int reverbSlot, float reverbWet, int valid) {
     AudioSnap* s = &g_snap[clientID];
     InterlockedIncrement(&s->seq);          /* odd: write in progress */
     s->gain = gain;
@@ -233,6 +234,7 @@ static void snap_publish(anyID clientID, float gain, float panL, float panR,
     s->drr = drr;
     s->soundproof = soundproof;
     s->reverbSlot = reverbSlot;
+    s->reverbWet = reverbWet;
     s->valid = valid;
     InterlockedIncrement(&s->seq);          /* even: stable */
 }
@@ -272,12 +274,12 @@ static int dir_read(anyID clientID, float* azimuth, float* elevation) {
 
 /* Publish "no proximity influence" for one client. */
 static void snap_publish_neutral(anyID clientID, int valid) {
-    snap_publish(clientID, 0.0f, 0.7071f, 0.7071f, TS3_LPF_BYPASS_HZ, 1.0f, 0, -1, valid);
+    snap_publish(clientID, 0.0f, 0.7071f, 0.7071f, TS3_LPF_BYPASS_HZ, 1.0f, 0, -1, 0.0f, valid);
 }
 
 /* Audio-thread reader; returns 0 when no stable/valid snapshot exists. */
 static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
-    float* cutoffHz, float* drr, int* soundproof, int* reverbSlot) {
+    float* cutoffHz, float* drr, int* soundproof, int* reverbSlot, float* reverbWet) {
     const AudioSnap* s = &g_snap[clientID];
     for (int attempt = 0; attempt < 3; attempt++) {
         const LONG seqBefore = s->seq;
@@ -291,6 +293,7 @@ static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
         const float d = s->drr;
         const int sp = s->soundproof;
         const int rv = s->reverbSlot;
+        const float rw = s->reverbWet;
         const int valid = s->valid;
         if (s->seq == seqBefore) {
             if (!valid) {
@@ -303,6 +306,9 @@ static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
             *drr = d;
             *soundproof = sp;
             *reverbSlot = rv;
+            if (reverbWet) {
+                *reverbWet = rw;
+            }
             return 1;
         }
     }
@@ -332,6 +338,7 @@ static LpfState g_lpf[TS3_MAX_CLIENT_ID];
 #define CAVE_AP_MAX       607
 #define CAVE_WET_GAIN     0.26f
 #define CAVE_DRY_GAIN     0.92f
+#define INDOOR_REVERB_SCALE 0.5f /* 072 B4: room 1.0 at OcclusionReverb=100 -> half the cave wet */
 #define CAVE_COMB_MIX     0.18f
 #define CAVE_COMB_DAMP    0.60f
 #define CAVE_AP_GAIN      0.55f
@@ -503,12 +510,17 @@ typedef struct AudioPublishParams {
     int soundproof;
     int reverbZone;
     int reverbSlot;
+    float reverbWet;     /* 072 B4: 1 = cave zone, < 1 indoor, 0 off */
     int valid;
     int neutral;
     float azimuth;     /* HRTF direction, radians (listener-relative) */
     float elevation;
     int dirValid;
 } AudioPublishParams;
+
+/* 072 C1: last OCC-DBG log line per client (writer side; a lost update only
+   means one extra or one missing debug line). */
+static unsigned long long g_occDebugTick[TS3_MAX_CLIENT_ID];
 
 static float audio_lerp_realistic(float bypass, float target, float intensity) {
     return bypass + (target - bypass) * intensity;
@@ -522,6 +534,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     out->cutoffHz = TS3_LPF_BYPASS_HZ;
     out->drr = 1.0f;
     out->reverbSlot = -1;
+    out->reverbWet = 0.0f;
     out->panL = 0.7071f;
     out->panR = 0.7071f;
 
@@ -601,19 +614,59 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         cutoffHz = prox_lowpass_cutoff_hz(distance);
     }
 
-    /* PROTOTYPE occlusion (061): mod-reported wall/foundation blocking.
-       Only when the root channel enables it (EnableOcclusion=True, 064);
-       strength from OcclusionIntensity (069). */
+    /* Occlusion (061/064/069, v2 072): mod-reported blocking, only when the root
+       channel enables it (EnableOcclusion=True). Kind T = through a wall
+       (OcclusionIntensity curve), kind D = around a corner (OcclusionDiffraction
+       curve, direction from the relay point). Both smoothed over time (B1). */
+    float srcX = toRemoteX, srcY = toRemoteY, srcZ = toRemoteZ;
+    float indoorWet = 0.0f; /* 072 B4 */
     if (!soundproof && occlusion_is_enabled()) {
-        occlusion_apply(occlusion_get(clientID, GetTickCount64()), occlusion_get_strength(),
-            &gain, &cutoffHz);
+        const unsigned long long nowMs = GetTickCount64();
+        OcclusionInfo oi;
+        occlusion_get_info(clientID, nowMs, &oi);
+        float occGain = 1.0f, occCut = TS3_LPF_BYPASS_HZ;
+        if (oi.kind == OCCLUSION_KIND_TRANSMIT) {
+            occlusion_apply(oi.amount, occlusion_get_strength(), &occGain, &occCut);
+        }
+        else if (oi.kind == OCCLUSION_KIND_DIFFRACT) {
+            occlusion_apply_diffraction(oi.amount, occlusion_get_diffraction(), &occGain, &occCut);
+        }
+        OcclusionSmoothed sm;
+        occlusion_smooth(clientID, nowMs, &oi, occGain, occCut, &sm);
+        gain *= sm.gain;
+        indoorWet = sm.room * occlusion_get_reverb() * INDOOR_REVERB_SCALE;
+        if (sm.cutoffHz < cutoffHz) {
+            cutoffHz = sm.cutoffHz;
+        }
+        /* B3: the voice comes from the opening - blend the direction towards the relay point. */
+        if (sm.relayKnown && sm.relayWeight > 0.001f) {
+            const float rx = sm.relayX - lx, ry = sm.relayY - ly, rz = sm.relayZ - lz;
+            const float rl = sqrtf(rx * rx + ry * ry + rz * rz);
+            const float tl = sqrtf(srcX * srcX + srcY * srcY + srcZ * srcZ);
+            if (rl > 0.01f && tl > 0.01f) {
+                const float w = sm.relayWeight > 1.0f ? 1.0f : sm.relayWeight;
+                srcX = (srcX / tl) * (1.0f - w) + (rx / rl) * w;
+                srcY = (srcY / tl) * (1.0f - w) + (ry / rl) * w;
+                srcZ = (srcZ / tl) * (1.0f - w) + (rz / rl) * w;
+                out->dirValid = hrtf_listener_angles((float)local->yaw, (float)local->yawY,
+                    srcX, srcY, srcZ, &out->azimuth, &out->elevation);
+            }
+        }
+        /* C1: with DebugMode (plugin.cfg) one line per speaker and second. */
+        if (clientID < TS3_MAX_CLIENT_ID && nowMs - g_occDebugTick[clientID] >= 1000ULL) {
+            g_occDebugTick[clientID] = nowMs;
+            if (oi.kind != OCCLUSION_KIND_NONE || sm.gain < 0.999f || oi.room > 0.0f) {
+                log_debug("OCC-DBG cid=%u kind=%d amount=%.2f room=%.2f -> gain=%.2f cutoff=%.0f relayW=%.2f",
+                    (unsigned)clientID, oi.kind, oi.amount, oi.room, sm.gain, sm.cutoffHz, sm.relayWeight);
+            }
+        }
     }
 
     float panL, panR;
     /* Mumble "TRUE stereo" (~4090) — light spatial pan; always in proximity mode.
        RealisticAudio owns LPF/diffuse blend; reverb zones add LPF + cave only. */
     prox_binaural_stereo_gains(dirX, dirY, dirZ,
-        toRemoteX, toRemoteY, toRemoteZ, &panL, &panR);
+        srcX, srcY, srcZ, &panL, &panR);
 
     out->gain = gain;
     out->panL = panL;
@@ -622,6 +675,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     out->drr = drr;
     out->soundproof = soundproof;
     out->reverbZone = reverbZone;
+    out->reverbWet = reverbZone ? 1.0f : indoorWet;
     out->valid = 1;
     out->neutral = 0;
 
@@ -641,7 +695,7 @@ static void audio_publish_client(anyID clientID, const AudioPublishParams* param
     dir_publish(clientID, params->azimuth, params->elevation, params->dirValid);
 
     int reverbSlot = -1;
-    if (params->reverbZone) {
+    if (params->reverbZone || params->reverbWet > 0.01f) {
         reverbSlot = cave_slot_acquire(clientID);
     }
     else {
@@ -649,7 +703,7 @@ static void audio_publish_client(anyID clientID, const AudioPublishParams* param
     }
 
     snap_publish(clientID, params->gain, params->panL, params->panR,
-        params->cutoffHz, params->drr, params->soundproof, reverbSlot, params->valid);
+        params->cutoffHz, params->drr, params->soundproof, reverbSlot, params->reverbWet, params->valid);
 }
 
 static void audio_recompute_client_impl(anyID clientID) {
@@ -961,11 +1015,20 @@ static void cave_process_sample(CaveState* rev, float inL, float inR,
 }
 
 static void audio_apply_cave(short* samples, int sampleCount, int channels,
-    CaveState* rev, LONG expectedOwner) {
+    CaveState* rev, LONG expectedOwner, float wetScale) {
     /* Owner checked once — mid-buffer abort left dry/wet mix and caused clicks. */
     if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
         return;
     }
+    /* 072 B4: cave = 1.0 (unchanged mix); indoor rooms scale the wet part down. */
+    if (!(wetScale > 0.0f)) {
+        wetScale = 0.0f;
+    }
+    if (wetScale > 1.5f) {
+        wetScale = 1.5f;
+    }
+    const float dryGain = 1.0f - (1.0f - CAVE_DRY_GAIN) * (wetScale > 1.0f ? 1.0f : wetScale);
+    const float wetGain = CAVE_WET_GAIN * wetScale;
     if (channels >= 2) {
         for (int s = 0; s < sampleCount; s++) {
             const int li = s * channels;
@@ -974,8 +1037,8 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
             const float inR = (float)samples[ri];
             float wetL, wetR;
             cave_process_sample(rev, inL, inR, &wetL, &wetR);
-            samples[li] = audio_clamp_sample(inL * CAVE_DRY_GAIN + wetL * CAVE_WET_GAIN);
-            samples[ri] = audio_clamp_sample(inR * CAVE_DRY_GAIN + wetR * CAVE_WET_GAIN);
+            samples[li] = audio_clamp_sample(inL * dryGain + wetL * wetGain);
+            samples[ri] = audio_clamp_sample(inR * dryGain + wetR * wetGain);
         }
     }
     else {
@@ -984,7 +1047,7 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
             float wetL, wetR;
             cave_process_sample(rev, in, in, &wetL, &wetR);
             samples[s] = audio_clamp_sample(
-                in * CAVE_DRY_GAIN + (wetL + wetR) * 0.5f * CAVE_WET_GAIN);
+                in * dryGain + (wetL + wetR) * 0.5f * wetGain);
         }
     }
 }
@@ -1027,9 +1090,9 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         return;
     }
 
-    float target, panL, panR, cutoffHz, drr;
+    float target, panL, panR, cutoffHz, drr, reverbWet = 1.0f;
     int soundproof, reverbSlot;
-    if (!snap_read(clientID, &target, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot)) {
+    if (!snap_read(clientID, &target, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot, &reverbWet)) {
         /* Ingame proximity mode but no position data for this speaker (no
            CEPOS yet / expired) — mute instead of leaking full-volume voice
            that should be distance-attenuated. The next CEPOS packet
@@ -1076,7 +1139,7 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         CaveState* rev = &g_cave[reverbSlot];
         const LONG owner = InterlockedCompareExchange(&rev->owner, 0, 0);
         if (owner == (LONG)clientID) {
-            audio_apply_cave(samples, sampleCount, channels, rev, owner);
+            audio_apply_cave(samples, sampleCount, channels, rev, owner, reverbWet);
         }
     }
 
@@ -1391,7 +1454,7 @@ int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
     }
     float gain, panL, panR, cutoffHz, drr;
     int soundproof, reverbSlot;
-    if (!snap_read((anyID)clientID, &gain, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot)) {
+    if (!snap_read((anyID)clientID, &gain, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot, NULL)) {
         return 0;
     }
     return soundproof ? 1 : 0;

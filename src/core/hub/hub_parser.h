@@ -1,6 +1,8 @@
 #ifndef CORE_HUB_HUB_PARSER_H
 #define CORE_HUB_HUB_PARSER_H
 
+#include "core/proximity/occlusion.h" /* OCCLUSION_MOD_PARAM_COUNT (072) */
+
 /*
  * Phase 9.2 — parse server settings from a channel description.
  *
@@ -19,6 +21,9 @@
  *   EnableHrtf=True             (binaural HRTF for headphones, default off)
  *   EnableOcclusion=True        (mod-reported wall occlusion prototype, default off)
  *   OcclusionIntensity=100      (occlusion strength in percent, 0..300, default 100)
+ *   OcclusionAttackMs=500 / OcclusionReleaseMs=250 / OcclusionDiffraction=100 / OcclusionReverb=100
+ *   OccFanEdge, OccNear, OccFar, OccDetourNear, OccDetourFar, OccDetourNearPct, OccDetourFarPct,
+ *   OccSameBuilding, OccFloor, OccThin, OccBudget, OccFast   (mod parameters, doku 072)
  *   NicknameRandomizer=True
  *   IngameChannelPassword=secret
  *   [ZONES]
@@ -90,6 +95,10 @@ typedef struct HubSettings {
     int enableHrtf;              /* 1 = binaural HRTF in the post-process stage (default 0) */
     int enableOcclusion;         /* 1 = use mod-reported wall occlusion (prototype, default 0) */
     float occlusionIntensity;    /* 0..300 %, strength of the occlusion (069, default 100) */
+    float occAttackMs, occReleaseMs;  /* 072: smoothing towards more / less occlusion (ms) */
+    float occDiffraction;        /* 072: strength of the around-the-corner curve, 0..300 % */
+    float occReverb;             /* 072: indoor reverb from the room factor, 0..200 % */
+    int occModParams[OCCLUSION_MOD_PARAM_COUNT]; /* 072: forwarded to the mod (occcfg) */
     char ingameChannelPassword[HUB_PASSWORD_LEN];
 
     int zoneCount;

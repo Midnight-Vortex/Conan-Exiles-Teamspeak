@@ -44,7 +44,8 @@ run_suite hub_parser_test \
     tests/hub_parser_test.c \
     src/core/hub/hub_parser.c \
     src/core/proximity/zone_resolve.c \
-    src/core/proximity/proximity_math.c
+    src/core/proximity/proximity_math.c \
+    src/core/proximity/occlusion_params.c
 
 run_suite proximity_math_test \
     tests/proximity_math_test.c \
@@ -66,6 +67,7 @@ run_suite occlusion_test \
     tests/occlusion_test.c \
     tests/support/win32_shim/win32_shim.c \
     src/core/proximity/occlusion.c \
+    src/core/proximity/occlusion_params.c \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
