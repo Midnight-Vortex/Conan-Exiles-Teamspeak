@@ -243,6 +243,12 @@ static void test_diffraction_and_smoothing(void) {
     occlusion_smooth(42, 20100ULL, &n, 1.0f, 19000.0f, &sm);
     CHECK(sm.relayKnown && sm.relayWeight < 1.0f && sm.relayWeight > 0.0f, "after D the direction fades back with the old point");
 
+    OcclusionInfo in1 = { 0.0f, OCCLUSION_KIND_NONE, 1.0f, 0, 0.0f, 0.0f, 0.0f };
+    occlusion_smooth(43, 40000ULL, &in1, 1.0f, 19000.0f, &sm);
+    CHECK(feq(sm.room, 1.0f), "B4: room starts at the target");
+    occlusion_smooth(43, 40100ULL, &n, 1.0f, 19000.0f, &sm);
+    CHECK(sm.room < 1.0f && sm.room > 0.5f, "B4: room fades (release) instead of dropping");
+
     occlusion_set_sound_params(0.0f, 0.0f, 100.0f, 100.0f);
     occlusion_smooth(41, 30000ULL, &t, 0.25f, 900.0f, &sm);
     occlusion_smooth(41, 30050ULL, &n, 1.0f, 19000.0f, &sm);

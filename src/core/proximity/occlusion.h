@@ -99,6 +99,7 @@ typedef struct OcclusionSmoothed {
     float gain;         /* factor 0..1 */
     float cutoffHz;
     float relayWeight;  /* 0 = speaker direction, 1 = relay point */
+    float room;         /* smoothed room factor 0..1 (indoor reverb, B4) */
     int relayKnown;
     float relayX, relayY, relayZ; /* plugin coordinates */
 } OcclusionSmoothed;

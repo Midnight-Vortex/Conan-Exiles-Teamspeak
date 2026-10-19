@@ -37,6 +37,7 @@ static volatile long g_smTick[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_smGain[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_smLogCut[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_smRelayW[OCCLUSION_MAX_CLIENT_ID];
+static volatile long g_smRoom[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_smRelayKnown[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_smRelay[OCCLUSION_MAX_CLIENT_ID][3];
 
@@ -446,7 +447,9 @@ void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const Occ
     const float targetLogCut = log2f(targetCutoffHz > 1.0f ? targetCutoffHz : 1.0f);
     out->gain = targetGain;
     out->cutoffHz = targetCutoffHz;
+    const float targetRoom = info ? info->room : 0.0f;
     out->relayWeight = targetRelayW;
+    out->room = targetRoom;
     out->relayKnown = 0;
     out->relayX = out->relayY = out->relayZ = 0.0f;
     if (clientID == 0 || clientID >= OCCLUSION_MAX_CLIENT_ID) {
@@ -467,7 +470,7 @@ void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const Occ
 
     const long last = InterlockedCompareExchange(&g_smTick[clientID], 0, 0);
     const unsigned long dt = (unsigned long)nowMs - (unsigned long)last;
-    float gain = targetGain, logCut = targetLogCut, relayW = targetRelayW;
+    float gain = targetGain, logCut = targetLogCut, relayW = targetRelayW, room = targetRoom;
     if (last != 0 && dt <= 2000UL) {
         const float curGain = occ_bits_to_float(InterlockedCompareExchange(&g_smGain[clientID], 0, 0));
         const float curLogCut = occ_bits_to_float(InterlockedCompareExchange(&g_smLogCut[clientID], 0, 0));
@@ -475,15 +478,19 @@ void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const Occ
         gain = occ_step(curGain, targetGain, targetGain < curGain, (float)dt);
         logCut = occ_step(curLogCut, targetLogCut, targetLogCut < curLogCut, (float)dt);
         relayW = occ_step(curRelayW, targetRelayW, targetRelayW > curRelayW, (float)dt);
+        const float curRoom = occ_bits_to_float(InterlockedCompareExchange(&g_smRoom[clientID], 0, 0));
+        room = occ_step(curRoom, targetRoom, targetRoom > curRoom, (float)dt);
     }
     InterlockedExchange(&g_smGain[clientID], occ_float_to_bits(gain));
     InterlockedExchange(&g_smLogCut[clientID], occ_float_to_bits(logCut));
     InterlockedExchange(&g_smRelayW[clientID], occ_float_to_bits(relayW));
+    InterlockedExchange(&g_smRoom[clientID], occ_float_to_bits(room));
     InterlockedExchange(&g_smTick[clientID], (long)(unsigned long)(nowMs ? nowMs : 1ULL));
 
     out->gain = gain;
     out->cutoffHz = exp2f(logCut);
     out->relayWeight = relayW;
+    out->room = room;
     if (InterlockedCompareExchange(&g_smRelayKnown[clientID], 0, 0)) {
         out->relayKnown = 1;
         out->relayX = occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][0], 0, 0));
