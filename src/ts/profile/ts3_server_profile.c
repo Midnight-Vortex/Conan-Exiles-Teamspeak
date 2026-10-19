@@ -257,6 +257,9 @@ void server_profile_apply(const HubSettings* settings) {
     InterlockedExchange(&g_hrtfEnabled, settings->enableHrtf ? 1 : 0);
     occlusion_set_enabled(settings->enableOcclusion); /* 064 root-channel switch */
     occlusion_set_intensity(settings->occlusionIntensity); /* 069 */
+    occlusion_set_sound_params(settings->occAttackMs, settings->occReleaseMs,
+        settings->occDiffraction, settings->occReverb); /* 072 */
+    occlusion_set_mod_params(settings->occModParams);  /* 072: forwarded as occcfg */
     InterlockedExchange(&g_profileActive, 1);
     LeaveCriticalSection(&g_profileLock);
 
@@ -273,7 +276,7 @@ void server_profile_apply(const HubSettings* settings) {
     }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
-        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d occlusion=%d occIntensity=%.0f "
+        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d occlusion=%d occIntensity=%.0f occAtk=%.0f occRel=%.0f occDiff=%.0f occRev=%.0f "
         "pw=%s zones=%d races=%d localRace=%d defaults=%d",
         settings->audioMaxVolume,
         settings->minWhisper, settings->maxWhisper,
@@ -283,6 +286,7 @@ void server_profile_apply(const HubSettings* settings) {
         settings->nicknameRandomizer,
         settings->realisticAudio, settings->filterIntensity, settings->enableHrtf,
         settings->enableOcclusion, settings->occlusionIntensity,
+        settings->occAttackMs, settings->occReleaseMs, settings->occDiffraction, settings->occReverb,
         settings->ingameChannelPassword[0] ? "yes" : "no",
         settings->zoneCount, settings->raceCount, raceIndex,
         settings->defaults.enabled);
@@ -575,4 +579,7 @@ void server_profile_reset(void) {
     LeaveCriticalSection(&g_profileLock);
     occlusion_set_enabled(0); /* 064: no server profile -> no occlusion */
     occlusion_set_intensity((float)OCCLUSION_INTENSITY_DEFAULT);
+    occlusion_set_sound_params((float)OCCLUSION_ATTACK_MS_DEFAULT, (float)OCCLUSION_RELEASE_MS_DEFAULT,
+        (float)OCCLUSION_DIFFRACTION_DEFAULT, (float)OCCLUSION_REVERB_DEFAULT);
+    occlusion_set_mod_params(NULL);
 }

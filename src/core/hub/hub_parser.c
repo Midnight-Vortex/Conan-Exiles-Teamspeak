@@ -59,6 +59,39 @@ static const char* hub_value_for(const char* line, const char* key) {
     return p;
 }
 
+/* Like hub_value_for, but the key must be followed by '=' (072: keys such as
+   OccDetourNear / OccDetourNearPct share a prefix). */
+static const char* hub_value_for_exact(const char* line, const char* key) {
+    const size_t keyLen = strlen(key);
+    if (_strnicmp(line, key, keyLen) != 0) {
+        return NULL;
+    }
+    const char* p = line + keyLen;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p != '=') {
+        return NULL;
+    }
+    p++;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    return p;
+}
+
+/* 072: mod-side occlusion parameters (forwarded to the mod as "occcfg"). */
+static int hub_parse_occ_mod_param(const char* line, HubSettings* out) {
+    for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT; i++) {
+        const char* v = hub_value_for_exact(line, occlusion_mod_param_name(i));
+        if (v) {
+            out->occModParams[i] = occlusion_mod_param_clamp(i, strtod(v, NULL));
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int hub_parse_bool(const char* value) {
     return _strnicmp(value, "true", 4) == 0 || value[0] == '1';
 }
@@ -80,6 +113,13 @@ static void hub_defaults(HubSettings* out) {
     out->audioMinDistance = 1.0f;
     out->filterIntensity = 100.0f;
     out->occlusionIntensity = (float)OCCLUSION_INTENSITY_DEFAULT;
+    out->occAttackMs = (float)OCCLUSION_ATTACK_MS_DEFAULT;     /* 072 */
+    out->occReleaseMs = (float)OCCLUSION_RELEASE_MS_DEFAULT;
+    out->occDiffraction = (float)OCCLUSION_DIFFRACTION_DEFAULT;
+    out->occReverb = (float)OCCLUSION_REVERB_DEFAULT;
+    for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT; i++) {
+        out->occModParams[i] = occlusion_mod_param_default(i);
+    }
     out->nicknameRandomizer = 1; /* absent key = enabled (legacy servers) */
 }
 
@@ -151,6 +191,22 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
     else if ((v = hub_value_for(line, "IngameChannelPassword")) != NULL) {
         strncpy_s(out->ingameChannelPassword, sizeof(out->ingameChannelPassword), v, _TRUNCATE);
+    }
+    /* 072: occlusion sound parameters + mod parameters */
+    else if ((v = hub_value_for_exact(line, "OcclusionAttackMs")) != NULL) {
+        out->occAttackMs = hub_parse_clamped(v, 0.0f, (float)OCCLUSION_SMOOTH_MS_MAX);
+    }
+    else if ((v = hub_value_for_exact(line, "OcclusionReleaseMs")) != NULL) {
+        out->occReleaseMs = hub_parse_clamped(v, 0.0f, (float)OCCLUSION_SMOOTH_MS_MAX);
+    }
+    else if ((v = hub_value_for_exact(line, "OcclusionDiffraction")) != NULL) {
+        out->occDiffraction = hub_parse_clamped(v, 0.0f, (float)OCCLUSION_DIFFRACTION_MAX);
+    }
+    else if ((v = hub_value_for_exact(line, "OcclusionReverb")) != NULL) {
+        out->occReverb = hub_parse_clamped(v, 0.0f, (float)OCCLUSION_REVERB_MAX);
+    }
+    else {
+        hub_parse_occ_mod_param(line, out);
     }
 }
 

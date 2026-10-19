@@ -454,6 +454,10 @@ static void http_handle_client(SOCKET client) {
                 if (!occOptIn || occlusion_format_probes(reply, 640, lx, ly, lz) <= 0) {
                     strcpy_s(reply, sizeof(reply), "{\"ok\":true}");
                 }
+                else {
+                    /* 072: tell the mod this plugin reads OCC v2 + its parameters */
+                    occlusion_append_cfg_json(reply, (int)sizeof(reply));
+                }
                 /* 067: talk status for the mod's mouth animation (appended last,
                    so the mod's probe parser - text up to the next quote - is unaffected). */
                 talk_state_append_json(reply, (int)sizeof(reply), lx, ly, lz);

@@ -152,8 +152,66 @@ static void test_switch(void) {
     CHECK(!occlusion_is_enabled() && occlusion_get(12, 1000ull) == 0.0f, "switch off forgets values");
 }
 
+/* 072: v2 entries, v1 compatibility, occcfg, parameters */
+static void test_v2(void) {
+    occlusion_clear();
+    OcclusionInfo info;
+    const int n = occlusion_store_from_text(
+        "X=1 OCC=21:0:N:40:0,0,0;22:55:T:100:0,0,0;23:30:D:80:1200,-340,250;24:70", 1000ULL);
+    CHECK(n == 4, "v2: four entries stored (mixed with a v1 entry)");
+    CHECK(occlusion_get_info(21, 1000ULL, &info) && info.kind == OCCLUSION_KIND_NONE && feq(info.amount, 0.0f)
+        && feq(info.room, 0.40f), "v2 N: no occlusion, room kept for the reverb");
+    CHECK(occlusion_get_info(22, 1000ULL, &info) && info.kind == OCCLUSION_KIND_TRANSMIT && feq(info.amount, 0.55f)
+        && feq(info.room, 1.0f) && !info.relayValid, "v2 T: amount + room, no relay");
+    CHECK(occlusion_get_info(23, 1000ULL, &info) && info.kind == OCCLUSION_KIND_DIFFRACT && feq(info.amount, 0.30f)
+        && info.relayValid, "v2 D: relay valid");
+    /* Unreal (1200, -340, 250) cm -> plugin x 12, y(up) 2.5, z -3.4 m */
+    CHECK(feq(info.relayX, 12.0f) && feq(info.relayY, 2.5f) && feq(info.relayZ, -3.4f), "v2 D: relay converted to plugin axes");
+    CHECK(occlusion_get_info(24, 1000ULL, &info) && info.kind == OCCLUSION_KIND_TRANSMIT && feq(info.amount, 0.70f)
+        && feq(info.room, 0.0f), "v1 entry after v2 entries -> kind T, room 0");
+    CHECK(feq(occlusion_get(23, 1000ULL), 0.30f), "occlusion_get still returns the amount");
+
+    CHECK(occlusion_store_from_text("OCC=31:40:Q:20:junk;32:10:T", 2000ULL) == 2, "unknown kind/tail skipped to ';'");
+    CHECK(occlusion_get_info(32, 2000ULL, &info) && info.kind == OCCLUSION_KIND_TRANSMIT && feq(info.amount, 0.10f),
+        "entry after a malformed tail still parsed");
+    CHECK(occlusion_store_from_text("OCC=33:20:D:150:1,2", 2000ULL) == 1
+        && occlusion_get_info(33, 2000ULL, &info) && !info.relayValid && feq(info.room, 1.0f),
+        "incomplete relay -> not valid, room clamped to 100");
+    CHECK(!occlusion_get_info(22, 1000ULL + OCCLUSION_STALE_MS + 1, &info) && info.kind == OCCLUSION_KIND_NONE,
+        "stale -> zeroed info");
+
+    char buf[256] = "{\"ok\":true,\"probe\":\"5,1,2,3\"}";
+    occlusion_set_mod_params(NULL);
+    CHECK(occlusion_append_cfg_json(buf, (int)sizeof(buf))
+        && strcmp(buf, "{\"ok\":true,\"probe\":\"5,1,2,3\",\"occcfg\":\"2,80,150,400,150,300,30,60,60,70,80,60,2\"}") == 0,
+        "occcfg appended with defaults");
+    char small[40] = "{\"ok\":true,\"probe\":\"5,1,2,3\"}";
+    CHECK(!occlusion_append_cfg_json(small, (int)sizeof(small)) && strcmp(small, "{\"ok\":true,\"probe\":\"5,1,2,3\"}") == 0,
+        "too small buffer -> untouched");
+    int v[OCCLUSION_MOD_PARAM_COUNT];
+    for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT; i++) {
+        v[i] = occlusion_mod_param_default(i);
+    }
+    v[0] = 120;
+    v[11] = 4;
+    occlusion_set_mod_params(v);
+    char buf2[256] = "{\"ok\":true}";
+    CHECK(occlusion_append_cfg_json(buf2, (int)sizeof(buf2)) && strstr(buf2, "\"2,120,150,") && strstr(buf2, ",60,4\"}"),
+        "occcfg follows the set values");
+    CHECK(occlusion_mod_param_clamp(0, 999.0) == 200 && occlusion_mod_param_clamp(10, 1.0) == 20
+        && occlusion_mod_param_clamp(5, 33.6) == 34, "mod params clamped + rounded");
+    occlusion_set_mod_params(NULL);
+
+    occlusion_set_sound_params(800.0f, 9999.0f, -5.0f, 150.0f);
+    CHECK(feq(occlusion_get_attack_ms(), 800.0f) && feq(occlusion_get_release_ms(), (float)OCCLUSION_SMOOTH_MS_MAX)
+        && feq(occlusion_get_diffraction(), 0.0f) && feq(occlusion_get_reverb(), 1.5f), "sound params clamped");
+    occlusion_set_sound_params((float)OCCLUSION_ATTACK_MS_DEFAULT, (float)OCCLUSION_RELEASE_MS_DEFAULT,
+        (float)OCCLUSION_DIFFRACTION_DEFAULT, (float)OCCLUSION_REVERB_DEFAULT);
+}
+
 int main(void) {
     printf("occlusion_test\n");
+    test_v2();
     test_switch();
     test_parse();
     test_stale();
