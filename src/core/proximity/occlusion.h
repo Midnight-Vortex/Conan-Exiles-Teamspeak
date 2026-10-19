@@ -82,6 +82,29 @@ int occlusion_append_cfg_json(char* out, int outSize);
 #define OCCLUSION_DIFFRACTION_MAX      300
 #define OCCLUSION_REVERB_DEFAULT       100
 #define OCCLUSION_REVERB_MAX           200
+/* Around-the-corner curve (kind D, B2): mild loss of highs, little volume loss.
+   strength = OcclusionDiffraction / 100. At amount 1 / strength 1: -3 dB and
+   a lowpass at 2.5 kHz (never below 1.2 kHz). Cutoff is only ever lowered. */
+#define OCCLUSION_DIFFRACT_GAIN_LOSS  0.3f
+#define OCCLUSION_DIFFRACT_CUTOFF     2500.0f
+#define OCCLUSION_DIFFRACT_MIN_CUTOFF 1200.0f
+void occlusion_apply_diffraction(float amount, float strength, float* gain, float* cutoffHz);
+
+/* B1 smoothing per client: moves the gain factor, the cutoff (on a log scale)
+   and the relay-direction weight towards their targets - attack time constant
+   when getting more muffled, release when getting clearer. Keeps the last
+   relay point so the direction can fade back after a D entry ended.
+   First call for a client (or after 2 s without calls) jumps to the target. */
+typedef struct OcclusionSmoothed {
+    float gain;         /* factor 0..1 */
+    float cutoffHz;
+    float relayWeight;  /* 0 = speaker direction, 1 = relay point */
+    int relayKnown;
+    float relayX, relayY, relayZ; /* plugin coordinates */
+} OcclusionSmoothed;
+void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const OcclusionInfo* info,
+    float targetGain, float targetCutoffHz, OcclusionSmoothed* out);
+
 void occlusion_set_sound_params(float attackMs, float releaseMs, float diffractionPct, float reverbPct);
 float occlusion_get_attack_ms(void);
 float occlusion_get_release_ms(void);

@@ -510,6 +510,10 @@ typedef struct AudioPublishParams {
     int dirValid;
 } AudioPublishParams;
 
+/* 072 C1: last OCC-DBG log line per client (writer side; a lost update only
+   means one extra or one missing debug line). */
+static unsigned long long g_occDebugTick[TS3_MAX_CLIENT_ID];
+
 static float audio_lerp_realistic(float bypass, float target, float intensity) {
     return bypass + (target - bypass) * intensity;
 }
@@ -601,19 +605,57 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
         cutoffHz = prox_lowpass_cutoff_hz(distance);
     }
 
-    /* PROTOTYPE occlusion (061): mod-reported wall/foundation blocking.
-       Only when the root channel enables it (EnableOcclusion=True, 064);
-       strength from OcclusionIntensity (069). */
+    /* Occlusion (061/064/069, v2 072): mod-reported blocking, only when the root
+       channel enables it (EnableOcclusion=True). Kind T = through a wall
+       (OcclusionIntensity curve), kind D = around a corner (OcclusionDiffraction
+       curve, direction from the relay point). Both smoothed over time (B1). */
+    float srcX = toRemoteX, srcY = toRemoteY, srcZ = toRemoteZ;
     if (!soundproof && occlusion_is_enabled()) {
-        occlusion_apply(occlusion_get(clientID, GetTickCount64()), occlusion_get_strength(),
-            &gain, &cutoffHz);
+        const unsigned long long nowMs = GetTickCount64();
+        OcclusionInfo oi;
+        occlusion_get_info(clientID, nowMs, &oi);
+        float occGain = 1.0f, occCut = TS3_LPF_BYPASS_HZ;
+        if (oi.kind == OCCLUSION_KIND_TRANSMIT) {
+            occlusion_apply(oi.amount, occlusion_get_strength(), &occGain, &occCut);
+        }
+        else if (oi.kind == OCCLUSION_KIND_DIFFRACT) {
+            occlusion_apply_diffraction(oi.amount, occlusion_get_diffraction(), &occGain, &occCut);
+        }
+        OcclusionSmoothed sm;
+        occlusion_smooth(clientID, nowMs, &oi, occGain, occCut, &sm);
+        gain *= sm.gain;
+        if (sm.cutoffHz < cutoffHz) {
+            cutoffHz = sm.cutoffHz;
+        }
+        /* B3: the voice comes from the opening - blend the direction towards the relay point. */
+        if (sm.relayKnown && sm.relayWeight > 0.001f) {
+            const float rx = sm.relayX - lx, ry = sm.relayY - ly, rz = sm.relayZ - lz;
+            const float rl = sqrtf(rx * rx + ry * ry + rz * rz);
+            const float tl = sqrtf(srcX * srcX + srcY * srcY + srcZ * srcZ);
+            if (rl > 0.01f && tl > 0.01f) {
+                const float w = sm.relayWeight > 1.0f ? 1.0f : sm.relayWeight;
+                srcX = (srcX / tl) * (1.0f - w) + (rx / rl) * w;
+                srcY = (srcY / tl) * (1.0f - w) + (ry / rl) * w;
+                srcZ = (srcZ / tl) * (1.0f - w) + (rz / rl) * w;
+                out->dirValid = hrtf_listener_angles((float)local->yaw, (float)local->yawY,
+                    srcX, srcY, srcZ, &out->azimuth, &out->elevation);
+            }
+        }
+        /* C1: with DebugMode (plugin.cfg) one line per speaker and second. */
+        if (clientID < TS3_MAX_CLIENT_ID && nowMs - g_occDebugTick[clientID] >= 1000ULL) {
+            g_occDebugTick[clientID] = nowMs;
+            if (oi.kind != OCCLUSION_KIND_NONE || sm.gain < 0.999f || oi.room > 0.0f) {
+                log_debug("OCC-DBG cid=%u kind=%d amount=%.2f room=%.2f -> gain=%.2f cutoff=%.0f relayW=%.2f",
+                    (unsigned)clientID, oi.kind, oi.amount, oi.room, sm.gain, sm.cutoffHz, sm.relayWeight);
+            }
+        }
     }
 
     float panL, panR;
     /* Mumble "TRUE stereo" (~4090) — light spatial pan; always in proximity mode.
        RealisticAudio owns LPF/diffuse blend; reverb zones add LPF + cave only. */
     prox_binaural_stereo_gains(dirX, dirY, dirZ,
-        toRemoteX, toRemoteY, toRemoteZ, &panL, &panR);
+        srcX, srcY, srcZ, &panL, &panR);
 
     out->gain = gain;
     out->panL = panL;

@@ -209,9 +209,53 @@ static void test_v2(void) {
         (float)OCCLUSION_DIFFRACTION_DEFAULT, (float)OCCLUSION_REVERB_DEFAULT);
 }
 
+/* 072 B2 + B1 */
+static void test_diffraction_and_smoothing(void) {
+    float g = 1.0f, c = 19000.0f;
+    occlusion_apply_diffraction(1.0f, 1.0f, &g, &c);
+    CHECK(feq(g, 0.7f) && fabsf(c - OCCLUSION_DIFFRACT_CUTOFF) < 1.0f, "diffraction 1/1 -> -3 dB, 2.5 kHz");
+    g = 1.0f; c = 19000.0f;
+    occlusion_apply_diffraction(0.0f, 1.0f, &g, &c);
+    CHECK(feq(g, 1.0f) && feq(c, 19000.0f), "diffraction 0 is a no-op");
+    g = 1.0f; c = 19000.0f;
+    occlusion_apply_diffraction(1.0f, 3.0f, &g, &c);
+    CHECK(g >= OCCLUSION_FULL_GAIN && feq(c, OCCLUSION_DIFFRACT_MIN_CUTOFF), "diffraction strength 3 -> clamped");
+
+    occlusion_clear();
+    occlusion_set_sound_params(500.0f, 250.0f, 100.0f, 100.0f);
+    OcclusionInfo t = { 0.8f, OCCLUSION_KIND_TRANSMIT, 0.0f, 0, 0.0f, 0.0f, 0.0f };
+    OcclusionInfo n = { 0.0f, OCCLUSION_KIND_NONE, 0.0f, 0, 0.0f, 0.0f, 0.0f };
+    OcclusionSmoothed sm;
+    occlusion_smooth(41, 10000ULL, &t, 0.25f, 900.0f, &sm);
+    CHECK(feq(sm.gain, 0.25f) && fabsf(sm.cutoffHz - 900.0f) < 1.0f, "first call jumps to the target");
+    occlusion_smooth(41, 10100ULL, &n, 1.0f, 19000.0f, &sm);
+    CHECK(fabsf(sm.gain - (0.25f + 0.75f * (1.0f - expf(-100.0f / 250.0f)))) < 0.002f, "clearer -> release time constant");
+    const float g1 = sm.gain;
+    CHECK(sm.cutoffHz > 900.0f && sm.cutoffHz < 19000.0f, "cutoff moves on the log scale");
+    occlusion_smooth(41, 10200ULL, &t, 0.25f, 900.0f, &sm);
+    CHECK(fabsf(sm.gain - (g1 + (0.25f - g1) * (1.0f - expf(-100.0f / 500.0f)))) < 0.002f, "more muffled -> attack time constant");
+    occlusion_smooth(41, 13000ULL, &n, 1.0f, 19000.0f, &sm);
+    CHECK(feq(sm.gain, 1.0f), "after > 2 s without calls -> jumps to the target");
+
+    OcclusionInfo d = { 0.3f, OCCLUSION_KIND_DIFFRACT, 0.5f, 1, 4.0f, 1.5f, -2.0f };
+    occlusion_smooth(42, 20000ULL, &d, 0.9f, 4000.0f, &sm);
+    CHECK(sm.relayKnown && feq(sm.relayWeight, 1.0f) && feq(sm.relayX, 4.0f) && feq(sm.relayZ, -2.0f), "D: relay weight 1, point kept");
+    occlusion_smooth(42, 20100ULL, &n, 1.0f, 19000.0f, &sm);
+    CHECK(sm.relayKnown && sm.relayWeight < 1.0f && sm.relayWeight > 0.0f, "after D the direction fades back with the old point");
+
+    occlusion_set_sound_params(0.0f, 0.0f, 100.0f, 100.0f);
+    occlusion_smooth(41, 30000ULL, &t, 0.25f, 900.0f, &sm);
+    occlusion_smooth(41, 30050ULL, &n, 1.0f, 19000.0f, &sm);
+    CHECK(feq(sm.gain, 1.0f), "time constants 0 -> no smoothing");
+    occlusion_set_sound_params((float)OCCLUSION_ATTACK_MS_DEFAULT, (float)OCCLUSION_RELEASE_MS_DEFAULT,
+        (float)OCCLUSION_DIFFRACTION_DEFAULT, (float)OCCLUSION_REVERB_DEFAULT);
+    occlusion_clear();
+}
+
 int main(void) {
     printf("occlusion_test\n");
     test_v2();
+    test_diffraction_and_smoothing();
     test_switch();
     test_parse();
     test_stale();
