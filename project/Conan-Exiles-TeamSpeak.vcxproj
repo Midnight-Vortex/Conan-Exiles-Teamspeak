@@ -78,6 +78,7 @@
     <ClInclude Include="..\src\ts\proximity\ts3_3d.h" />
     <ClInclude Include="..\src\ts\channel\channel_manage.h" />
     <ClInclude Include="..\src\core\hub\hub_parser.h" />
+    <ClInclude Include="..\src\core\hub\mod_password.h" />
     <ClInclude Include="..\src\ts\profile\ts3_server_profile.h" />
     <ClInclude Include="..\src\core\proximity\zone_resolve.h" />
     <ClInclude Include="..\src\core\proximity\occlusion.h" />
@@ -114,6 +115,7 @@
     <ClCompile Include="..\src\ts\proximity\ts3_3d.c" />
     <ClCompile Include="..\src\ts\channel\channel_manage.c" />
     <ClCompile Include="..\src\core\hub\hub_parser.c" />
+    <ClCompile Include="..\src\core\hub\mod_password.c" />
     <ClCompile Include="..\src\ts\profile\ts3_server_profile.c" />
     <ClCompile Include="..\src\core\proximity\zone_resolve.c" />
     <ClCompile Include="..\src\core\proximity\occlusion.c" />

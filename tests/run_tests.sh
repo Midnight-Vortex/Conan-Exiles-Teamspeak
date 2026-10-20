@@ -61,6 +61,13 @@ run_suite player_table_test \
     tests/support/win32_shim/win32_shim.c \
     src/core/proximity/player_table.c
 
+# 077 — ingame channel password delivered by the game mod (cut, store, TTL, no log).
+run_suite mod_password_test \
+    -Itests/support/win32_shim \
+    tests/mod_password_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/hub/mod_password.c
+
 # 061 PROTOTYPE — occlusion values from the mod (parse, stale, apply, probes).
 run_suite occlusion_test \
     -Itests/support/win32_shim \

@@ -33,6 +33,7 @@
 #include <math.h>
 
 #include "core/http/pos_http_server.h"
+#include "core/hub/mod_password.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/occlusion.h"
 #include "core/proximity/talk_state.h"
@@ -428,8 +429,12 @@ static void http_handle_client(SOCKET client) {
         buf[total] = '\0';
 
         {
-            const char* body = buf + header_end;
-            const int bodyLen = (content_length > 0) ? content_length : (total - header_end);
+            char* body = buf + header_end;
+            int bodyLen = (content_length > 0) ? content_length : (total - header_end);
+            /* 077: the mod's ingame channel password (" TSPW=<pw>", always the
+               LAST field) is cut off and wiped here, before anything parses or
+               logs the body (the 400 paths log the raw body). */
+            bodyLen = mod_password_take_from_body(body, bodyLen, GetTickCount64());
             PosSample sample;
             const int parsed = http_parse_body(body, &sample);
             /* PROTOTYPE occlusion (061): store before inject so the recompute

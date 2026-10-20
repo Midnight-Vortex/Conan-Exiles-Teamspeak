@@ -62,6 +62,15 @@ Alias (nicht für neue Mods empfohlen): `POST …/position`.
 {"seq":42,"x":12345.0,"y":67890.0,"z":200.0,"yaw":45.0,"yawY":0.0}
 ```
 
+### Zusatzfeld `TSPW=` – Ingame-Channel-Passwort (077)
+
+Die Teamspeak-Mod (Zeilenformat `SEQ=… X=… … OCC=…`) hängt **als letztes Feld**
+` TSPW=<Passwort>` an, wenn der Conan-Server ein Passwort kennt (`dc tsvm <Passwort>`).
+Alles hinter `TSPW=` gehört zum Passwort (Leerzeichen erlaubt). Das Plugin schneidet das
+Feld ab und löscht es aus dem Puffer, **bevor** der Body geparst oder geloggt wird. Es
+hält das Passwort nur im Speicher und gilt nur, solange die Mod sendet (10 s).
+`TSPW=` ohne Wert = „Server hat kein Passwort“. In `Pos.txt` steht es nie.
+
 ### Ablehnung (HTTP 400)
 
 Das Plugin lehnt u. a. ab:

@@ -226,7 +226,23 @@ int chan_request_move(uint64 targetChannelID) {
         return 0;
     }
 
-    const char* password = toIngame ? server_profile_get_ingame_password() : "";
+    /* 077: the game mod's password (Conan server, "dc tsvm") wins over the
+       root channel's IngameChannelPassword. A protected channel without any
+       password waits for the mod instead of provoking a TS error. */
+    char password[HUB_PASSWORD_LEN];
+    password[0] = '\0';
+    if (toIngame) {
+        const int pwSource = server_profile_copy_ingame_password(password, (int)sizeof(password));
+        if (pwSource == 0 && ts3_channel_has_password(targetChannelID) == 1) {
+            static ULONGLONG lastPwWaitLog = 0;
+            if (lastPwWaitLog == 0 || now - lastPwWaitLog >= 60000) {
+                lastPwWaitLog = now;
+                log_write("CHAN: ingame channel is password protected - waiting for the password "
+                    "from the game mod (server: dc tsvm <password>)");
+            }
+            return 0;
+        }
+    }
 
     /* Rename while still in the hub so ingame clients never see the
        "realName -> digits" rename event (Phase 12). */
@@ -234,7 +250,9 @@ int chan_request_move(uint64 targetChannelID) {
         nick_anonymize_before_ingame(targetChannelID);
     }
 
-    if (!ts3_request_client_move(localID, targetChannelID, password)) {
+    const int moveSent = ts3_request_client_move(localID, targetChannelID, password);
+    SecureZeroMemory(password, sizeof(password));
+    if (!moveSent) {
         if (toIngame) {
             nick_restore_in_hub(); /* move failed — roll back pre-anonymize */
         }

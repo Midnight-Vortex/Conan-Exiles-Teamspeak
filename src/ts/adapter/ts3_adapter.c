@@ -298,6 +298,21 @@ int ts3_get_channel_name(uint64 channelID, char* outName, int outLen) {
     return 1;
 }
 
+int ts3_channel_has_password(uint64 channelID) {
+    if (!ts3_require_callback_thread("getChannelFlagPassword")) {
+        return -1;
+    }
+    if (channelID == 0 || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getChannelVariableAsInt) {
+        return -1;
+    }
+    int flag = 0;
+    if (g_ts3.getChannelVariableAsInt(g_activeConnection, channelID, CHANNEL_FLAG_PASSWORD, &flag) != ERROR_ok) {
+        return -1;
+    }
+    return flag ? 1 : 0;
+}
+
 /* ---- command execution ---------------------------------------------------- */
 
 static void ts3_cmd_execute(const Ts3Command* cmd) {

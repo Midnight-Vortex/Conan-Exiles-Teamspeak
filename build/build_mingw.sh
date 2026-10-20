@@ -78,6 +78,7 @@ SOURCES=(
     src/ts/proximity/ts3_3d.c
     src/ts/channel/channel_manage.c
     src/core/hub/hub_parser.c
+    src/core/hub/mod_password.c
     src/ts/profile/ts3_server_profile.c
     src/core/proximity/zone_resolve.c
     src/core/proximity/occlusion.c

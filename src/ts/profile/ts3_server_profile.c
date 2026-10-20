@@ -1,6 +1,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "core/config/config.h"
+#include "core/hub/mod_password.h"
 #include "core/proximity/occlusion.h"
 #include "core/voice/voice_modes.h"
 #include "core/util/log.h"
@@ -353,8 +354,15 @@ int server_profile_get_nickname_randomizer(void) {
     return settings.nicknameRandomizer;
 }
 
-const char* server_profile_get_ingame_password(void) {
-    return g_ingamePassword;
+int server_profile_copy_ingame_password(char* out, int outLen) {
+    if (!out || outLen <= 0) {
+        return 0;
+    }
+    if (mod_password_get(out, outLen, GetTickCount64())) {
+        return 2;
+    }
+    strncpy_s(out, (size_t)outLen, g_ingamePassword, _TRUNCATE);
+    return out[0] ? 1 : 0;
 }
 
 int server_profile_get_local_race(HubRace* out) {
@@ -566,6 +574,7 @@ void server_profile_reset(void) {
     g_requestSentMs = 0;
     g_lastRequestMs = 0;
     g_ingamePassword[0] = '\0';
+    mod_password_clear(); /* 077: belongs to the old connection */
     g_announced = 0; /* next profile after (re)connect announces again */
     g_lastAppliedDescHash = 0;
     /* Clear flag under the lock so a concurrent server_profile_get can

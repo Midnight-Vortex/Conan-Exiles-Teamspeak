@@ -52,8 +52,11 @@ int server_profile_force_auto_channel(void);
    ingame move. Default 1 without profile (legacy behavior). Any thread. */
 int server_profile_get_nickname_randomizer(void);
 
-/* Ingame channel password ("" when none). Callback thread. */
-const char* server_profile_get_ingame_password(void);
+/* Ingame channel password into out ("" when none). 077: the password the
+   game mod delivers (Conan server, "dc tsvm") wins over the root channel's
+   IngameChannelPassword. Returns 2 = from the mod, 1 = from the root
+   channel, 0 = none. Callback thread. */
+int server_profile_copy_ingame_password(char* out, int outLen);
 
 /* SteamID64 of the logged-in Steam user (registry, cached after first read).
    0 when Steam is not running. Any thread. */

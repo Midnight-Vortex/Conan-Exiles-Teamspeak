@@ -155,6 +155,9 @@ int ts3_get_channel_list(uint64* outChannels, int maxChannels);
 /* Channel name lookup, returns 1 on success. */
 int ts3_get_channel_name(uint64 channelID, char* outName, int outLen);
 
+/* 077: 1 = channel is password protected, 0 = not, -1 = unknown. */
+int ts3_channel_has_password(uint64 channelID);
+
 /* ---- plugin commands (TS callback thread ONLY) ---------------------------- */
 
 /* Registered plugin ID ("" until registered). Any thread (read-only). */
