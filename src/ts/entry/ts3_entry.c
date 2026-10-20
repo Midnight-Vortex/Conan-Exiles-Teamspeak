@@ -212,7 +212,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.11";
+    return "8.0.12";
 }
 
 int ts3plugin_apiVersion(void) {
