@@ -34,6 +34,13 @@ bleibt es dumpfer als draussen.
 
 **Noch nicht** im echten Spiel gehoert. Mod gekocht (Doku 076, Pak siehe Memory).
 
+## 3b. Zusatz: „Accessed None … LocChar“ in `UpdatePosition`
+
+Gemeldete Laufzeitfehler (`Set LocPos`, `Set LocFwd`, `Set YawY`): seit der Optimierung A2 (18.10.) merkt sich
+`UpdatePosition` die Figur in `LocChar`. Ohne Figur (Ladebildschirm, Tod/Respawn, Menue, PIE-Start) war sie leer.
+Fix: `Set LocChar` → `Branch(IsValid(LocChar))` → nur bei gueltiger Figur weiter, sonst endet der Takt still.
+PIE: keine neuen Meldungen im Log, X/Y/Z/YawX/YawZ/YawY stimmen weiter mit der Figur ueberein.
+
 ## 4. Hinweise
 
 - `OcclusionReverb` bleibt Standard 100: gebaute Raeume hallen jetzt nicht mehr, nur natuerliche (Hoehlen) und
