@@ -1,7 +1,8 @@
-# 073 — Version 8.0.11: Vorab-Release (Okklusion v2, Plugin-Seite)
+# 073 — Version 8.0.11: Release (Okklusion v2, Plugin-Seite)
 
-**Vorabversion** (GitHub „Pre-release“): zum Testen auf dem eigenen Server; 8.0.10 bleibt „Latest“,
-bis der Test mit der neuen Mod durch ist.
+Am 2026-10-19 als **Vorabversion** veroeffentlicht, am **2026-10-20 auf Wunsch des Owners zur regulaeren
+Version („Latest“)** gemacht, zusammen mit der gekochten Mod (Mod-Seite: 074). Gleiche Dateien und Hashes;
+nur Titel („v8.0.11 — Occlusion v2“), Release-Notizen und der Pre-release-Schalter wurden geaendert.
 
 ## 1. Was wurde geaendert?
 
