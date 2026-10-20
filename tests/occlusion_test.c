@@ -150,6 +150,10 @@ static void test_switch(void) {
     CHECK(occlusion_get(12, 1000ull) > 0.79f, "value stored while on");
     occlusion_set_enabled(0);
     CHECK(!occlusion_is_enabled() && occlusion_get(12, 1000ull) == 0.0f, "switch off forgets values");
+    /* review 2026-10-20: a store after switch-off is dropped under the writer lock */
+    CHECK(occlusion_store_from_text("OCC=12:80;13:50:T:20:0,0,0", 1000ull) == 0 && occlusion_get(12, 1000ull) == 0.0f,
+        "store while off is rejected");
+    CHECK(occlusion_store_from_text("no occ key", 1000ull) == -1, "missing OCC key still -1 while off");
 }
 
 /* 072: v2 entries, v1 compatibility, occcfg, parameters */
@@ -240,6 +244,10 @@ static void test_diffraction_and_smoothing(void) {
     OcclusionInfo d = { 0.3f, OCCLUSION_KIND_DIFFRACT, 0.5f, 1, 4.0f, 1.5f, -2.0f };
     occlusion_smooth(42, 20000ULL, &d, 0.9f, 4000.0f, &sm);
     CHECK(sm.relayKnown && feq(sm.relayWeight, 1.0f) && feq(sm.relayX, 4.0f) && feq(sm.relayZ, -2.0f), "D: relay weight 1, point kept");
+    /* review 2026-10-20: another opening -> the relay point glides instead of jumping */
+    OcclusionInfo d2 = { 0.3f, OCCLUSION_KIND_DIFFRACT, 0.5f, 1, 8.0f, 1.5f, -2.0f };
+    occlusion_smooth(42, 20050ULL, &d2, 0.9f, 4000.0f, &sm);
+    CHECK(sm.relayX > 4.0f && sm.relayX < 8.0f && feq(sm.relayZ, -2.0f), "new relay point is approached smoothly");
     occlusion_smooth(42, 20100ULL, &n, 1.0f, 19000.0f, &sm);
     CHECK(sm.relayKnown && sm.relayWeight < 1.0f && sm.relayWeight > 0.0f, "after D the direction fades back with the old point");
 
@@ -260,9 +268,10 @@ static void test_diffraction_and_smoothing(void) {
 
 int main(void) {
     printf("occlusion_test\n");
+    test_switch();            /* checks the default-off state, so it runs first */
+    occlusion_set_enabled(1); /* stores are only accepted while the switch is on */
     test_v2();
     test_diffraction_and_smoothing();
-    test_switch();
     test_parse();
     test_stale();
     test_apply();

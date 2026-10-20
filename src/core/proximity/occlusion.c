@@ -20,14 +20,33 @@
 
 #include <windows.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static volatile long g_occPct[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_occTick[OCCLUSION_MAX_CLIENT_ID]; /* low 32 bits of ms tick */
-/* v2 (072). Written before pct/tick, so a reader that sees a fresh tick sees
-   the matching fields (a torn read across two updates 100 ms apart is harmless). */
+/* v2 (072). One entry = pct, tick, kind, room, relay; published as a unit with a
+   per-client seqlock (odd = write in progress). The writers - HTTP listener
+   (occlusion_store_from_text) and the switch-off path (occlusion_clear) - are
+   serialized by g_occWriteLock, so the seqlock always has a single writer; the
+   readers (audio compute) never take the lock, they retry. */
+static volatile long g_occSeq[OCCLUSION_MAX_CLIENT_ID];
+static CRITICAL_SECTION g_occWriteLock;
+static INIT_ONCE g_occWriteLockOnce = INIT_ONCE_STATIC_INIT;
+static volatile long g_occEnabled = 0; /* root-channel switch, default off */
+
+static BOOL CALLBACK occ_write_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
+    InitializeCriticalSection(&g_occWriteLock);
+    return TRUE;
+}
+
+static void occ_write_lock(void) {
+    InitOnceExecuteOnce(&g_occWriteLockOnce, occ_write_lock_init_once, NULL, NULL);
+    EnterCriticalSection(&g_occWriteLock);
+}
 static volatile long g_occKind[OCCLUSION_MAX_CLIENT_ID];
 static volatile long g_occRoom[OCCLUSION_MAX_CLIENT_ID];   /* 0..100 */
 static volatile long g_occRelay[OCCLUSION_MAX_CLIENT_ID][3]; /* Unreal cm */
@@ -54,6 +73,13 @@ int occlusion_store_from_text(const char* body, unsigned long long nowMs) {
     }
     p += 4;
 
+    /* Writers serialized; a store that lost the race against switch-off is dropped
+       instead of surviving the clear with a fresh timestamp (review 2026-10-20). */
+    occ_write_lock();
+    if (InterlockedCompareExchange(&g_occEnabled, 0, 0) == 0) {
+        LeaveCriticalSection(&g_occWriteLock);
+        return 0;
+    }
     int stored = 0;
     for (;;) {
         char* end = NULL;
@@ -134,6 +160,7 @@ int occlusion_store_from_text(const char* body, unsigned long long nowMs) {
             pct = 0;
         }
         if (cid > 0 && cid < OCCLUSION_MAX_CLIENT_ID) {
+            InterlockedIncrement(&g_occSeq[cid]); /* odd: write in progress */
             InterlockedExchange(&g_occKind[cid], kind);
             InterlockedExchange(&g_occRoom[cid], room);
             InterlockedExchange(&g_occRelay[cid][0], relay[0]);
@@ -142,6 +169,7 @@ int occlusion_store_from_text(const char* body, unsigned long long nowMs) {
             InterlockedExchange(&g_occRelayValid[cid], relayValid);
             InterlockedExchange(&g_occPct[cid], pct);
             InterlockedExchange(&g_occTick[cid], (long)(unsigned long)nowMs);
+            InterlockedIncrement(&g_occSeq[cid]); /* even: stable */
             stored++;
         }
         if (*p != ';') {
@@ -149,6 +177,7 @@ int occlusion_store_from_text(const char* body, unsigned long long nowMs) {
         }
         p++;
     }
+    LeaveCriticalSection(&g_occWriteLock);
     return stored;
 }
 
@@ -177,19 +206,37 @@ int occlusion_get_info(unsigned int clientID, unsigned long long nowMs, Occlusio
     if (clientID == 0 || clientID >= OCCLUSION_MAX_CLIENT_ID) {
         return 0;
     }
-    const long tick = InterlockedCompareExchange(&g_occTick[clientID], 0, 0);
-    if (tick == 0 || (unsigned long)nowMs - (unsigned long)tick > OCCLUSION_STALE_MS) {
+    /* Seqlock read: the writer publishes the whole entry between two increments;
+       a mixed read (e.g. old kind D with a new zeroed relay point) is retried. */
+    long tick = 0, pct = 0, kind = 0, room = 0, relayValid = 0, r0 = 0, r1 = 0, r2 = 0;
+    int stable = 0;
+    for (int attempt = 0; attempt < 8 && !stable; attempt++) {
+        const long seqBefore = InterlockedCompareExchange(&g_occSeq[clientID], 0, 0);
+        if (seqBefore & 1) {
+            continue;
+        }
+        tick = InterlockedCompareExchange(&g_occTick[clientID], 0, 0);
+        pct = InterlockedCompareExchange(&g_occPct[clientID], 0, 0);
+        kind = InterlockedCompareExchange(&g_occKind[clientID], 0, 0);
+        room = InterlockedCompareExchange(&g_occRoom[clientID], 0, 0);
+        relayValid = InterlockedCompareExchange(&g_occRelayValid[clientID], 0, 0);
+        r0 = InterlockedCompareExchange(&g_occRelay[clientID][0], 0, 0);
+        r1 = InterlockedCompareExchange(&g_occRelay[clientID][1], 0, 0);
+        r2 = InterlockedCompareExchange(&g_occRelay[clientID][2], 0, 0);
+        stable = InterlockedCompareExchange(&g_occSeq[clientID], 0, 0) == seqBefore;
+    }
+    if (!stable || tick == 0 || (unsigned long)nowMs - (unsigned long)tick > OCCLUSION_STALE_MS) {
         return 0;
     }
-    out->amount = (float)InterlockedCompareExchange(&g_occPct[clientID], 0, 0) / 100.0f;
-    out->kind = (int)InterlockedCompareExchange(&g_occKind[clientID], 0, 0);
-    out->room = (float)InterlockedCompareExchange(&g_occRoom[clientID], 0, 0) / 100.0f;
-    out->relayValid = InterlockedCompareExchange(&g_occRelayValid[clientID], 0, 0) != 0;
+    out->amount = (float)pct / 100.0f;
+    out->kind = (int)kind;
+    out->room = (float)room / 100.0f;
+    out->relayValid = relayValid != 0;
     if (out->relayValid) {
         /* Unreal (X, Y, Z-up, cm) -> plugin (x, y-up, z, m), as in occlusion_format_probes. */
-        out->relayX = (float)InterlockedCompareExchange(&g_occRelay[clientID][0], 0, 0) / 100.0f;
-        out->relayZ = (float)InterlockedCompareExchange(&g_occRelay[clientID][1], 0, 0) / 100.0f;
-        out->relayY = (float)InterlockedCompareExchange(&g_occRelay[clientID][2], 0, 0) / 100.0f;
+        out->relayX = (float)r0 / 100.0f;
+        out->relayZ = (float)r1 / 100.0f;
+        out->relayY = (float)r2 / 100.0f;
     }
     if (out->kind == OCCLUSION_KIND_NONE) {
         out->amount = 0.0f;
@@ -278,18 +325,20 @@ int occlusion_format_probes(char* out, int outSize,
 }
 
 void occlusion_clear(void) {
+    occ_write_lock(); /* no HTTP store can interleave (see g_occWriteLock) */
     for (int i = 0; i < OCCLUSION_MAX_CLIENT_ID; i++) {
-        InterlockedExchange(&g_occPct[i], 0);
+        InterlockedIncrement(&g_occSeq[i]);
         InterlockedExchange(&g_occTick[i], 0);
+        InterlockedExchange(&g_occPct[i], 0);
         InterlockedExchange(&g_occKind[i], 0);
         InterlockedExchange(&g_occRoom[i], 0);
         InterlockedExchange(&g_occRelayValid[i], 0);
+        InterlockedIncrement(&g_occSeq[i]);
         InterlockedExchange(&g_smTick[i], 0);
         InterlockedExchange(&g_smRelayKnown[i], 0);
     }
+    LeaveCriticalSection(&g_occWriteLock);
 }
-
-static volatile long g_occEnabled = 0; /* root-channel switch, default off */
 
 void occlusion_set_enabled(int enabled) {
     const long next = enabled ? 1 : 0;
@@ -415,16 +464,19 @@ void occlusion_apply_diffraction(float amount, float strength, float* gain, floa
    may compute the same client at the same time; the worst case is one lost
    smoothing step, never a torn float. */
 
+/* Through a 32-bit integer: long is 8 bytes on 64-bit Linux (host tests), a
+   float always 4 - copying sizeof(long) bytes would read past the float. */
 static float occ_bits_to_float(long v) {
+    const uint32_t u = (uint32_t)v;
     float f;
-    memcpy(&f, &v, sizeof(f));
+    memcpy(&f, &u, sizeof(f));
     return f;
 }
 
 static long occ_float_to_bits(float f) {
-    long v;
-    memcpy(&v, &f, sizeof(v));
-    return v;
+    uint32_t u;
+    memcpy(&u, &f, sizeof(u));
+    return (long)(int32_t)u;
 }
 
 /* One exponential step towards target; tau = attack when moving in the
@@ -461,15 +513,22 @@ void occlusion_smooth(unsigned int clientID, unsigned long long nowMs, const Occ
         }
         return;
     }
-    if (info && info->relayValid) {
-        InterlockedExchange(&g_smRelay[clientID][0], occ_float_to_bits(info->relayX));
-        InterlockedExchange(&g_smRelay[clientID][1], occ_float_to_bits(info->relayY));
-        InterlockedExchange(&g_smRelay[clientID][2], occ_float_to_bits(info->relayZ));
-        InterlockedExchange(&g_smRelayKnown[clientID], 1);
-    }
-
     const long last = InterlockedCompareExchange(&g_smTick[clientID], 0, 0);
     const unsigned long dt = (unsigned long)nowMs - (unsigned long)last;
+    if (info && info->relayValid) {
+        /* The relay point itself is smoothed (release time constant), so a switch
+           to another opening glides instead of jumping the pan/HRTF direction. */
+        float rx = info->relayX, ry = info->relayY, rz = info->relayZ;
+        if (InterlockedCompareExchange(&g_smRelayKnown[clientID], 0, 0) && last != 0 && dt <= 2000UL) {
+            rx = occ_step(occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][0], 0, 0)), rx, 0, (float)dt);
+            ry = occ_step(occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][1], 0, 0)), ry, 0, (float)dt);
+            rz = occ_step(occ_bits_to_float(InterlockedCompareExchange(&g_smRelay[clientID][2], 0, 0)), rz, 0, (float)dt);
+        }
+        InterlockedExchange(&g_smRelay[clientID][0], occ_float_to_bits(rx));
+        InterlockedExchange(&g_smRelay[clientID][1], occ_float_to_bits(ry));
+        InterlockedExchange(&g_smRelay[clientID][2], occ_float_to_bits(rz));
+        InterlockedExchange(&g_smRelayKnown[clientID], 1);
+    }
     float gain = targetGain, logCut = targetLogCut, relayW = targetRelayW, room = targetRoom;
     if (last != 0 && dt <= 2000UL) {
         const float curGain = occ_bits_to_float(InterlockedCompareExchange(&g_smGain[clientID], 0, 0));
