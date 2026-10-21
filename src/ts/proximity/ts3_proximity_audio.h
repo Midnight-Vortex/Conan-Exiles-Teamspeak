@@ -33,6 +33,11 @@ void ts3_audio_set_mode(Ts3AudioMode mode);
 
 Ts3AudioMode ts3_audio_get_mode(void);
 
+/* 079 ForceSpeakersOn: mark a speaker whose speakers are muted in TS; the PCM
+   path silences him in proximity mode. Set: callback thread. Clear: any thread. */
+void ts3_audio_set_client_deaf(anyID clientID, int deaf);
+void ts3_audio_clear_client_deaf(void);
+
 /* Recompute gain/pan snapshot for one client from the player table and the
    local position. Any thread (writers serialize on a private lock). */
 void ts3_audio_recompute_client(anyID clientID);

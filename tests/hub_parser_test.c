@@ -338,6 +338,10 @@ static void test_hrtf_switch(void) {
     hub_parse_settings("[GLOBAL]\nEnableHrtf=False\n", &s);
     CHECK(s.enableHrtf == 0, "EnableHrtf=False -> off");
 
+    CHECK(s.forceSpeakersOn == 0, "absent ForceSpeakersOn -> off (079)");
+    hub_parse_settings("[GLOBAL]<br>forcespeakerson = 1<br>", &s);
+    CHECK(s.forceSpeakersOn == 1, "ForceSpeakersOn=1 -> on");
+
     hub_parse_settings("[GLOBAL]\nEnableHrtf=True\n", &s);
     CHECK(s.enableOcclusion == 0, "absent EnableOcclusion -> off (064)");
     hub_parse_settings("[GLOBAL]\nEnableOcclusion=True\nEnableHrtf=False\n", &s);

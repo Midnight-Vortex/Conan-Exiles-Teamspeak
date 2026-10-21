@@ -313,6 +313,36 @@ int ts3_channel_has_password(uint64 channelID) {
     return flag ? 1 : 0;
 }
 
+int ts3_client_speakers_muted(anyID clientID) {
+    if (!ts3_require_callback_thread("getClientSpeakersMuted")) {
+        return -1;
+    }
+    if (clientID == 0 || !g_ts3FunctionsSet || !ts3_is_connected()) {
+        return -1;
+    }
+    int muted = 0;
+    int onlyMuted = 0;
+    unsigned int e1, e2;
+    if (clientID == ts3_get_local_client_id()) {
+        if (!g_ts3.getClientSelfVariableAsInt) {
+            return -1;
+        }
+        e1 = g_ts3.getClientSelfVariableAsInt(g_activeConnection, CLIENT_OUTPUT_MUTED, &muted);
+        e2 = g_ts3.getClientSelfVariableAsInt(g_activeConnection, CLIENT_OUTPUTONLY_MUTED, &onlyMuted);
+    }
+    else {
+        if (!g_ts3.getClientVariableAsInt) {
+            return -1;
+        }
+        e1 = g_ts3.getClientVariableAsInt(g_activeConnection, clientID, CLIENT_OUTPUT_MUTED, &muted);
+        e2 = g_ts3.getClientVariableAsInt(g_activeConnection, clientID, CLIENT_OUTPUTONLY_MUTED, &onlyMuted);
+    }
+    if (e1 != ERROR_ok && e2 != ERROR_ok) {
+        return -1;
+    }
+    return ((e1 == ERROR_ok && muted) || (e2 == ERROR_ok && onlyMuted)) ? 1 : 0;
+}
+
 /* ---- command execution ---------------------------------------------------- */
 
 static void ts3_cmd_execute(const Ts3Command* cmd) {

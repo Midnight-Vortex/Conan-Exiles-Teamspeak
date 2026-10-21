@@ -277,13 +277,13 @@ void server_profile_apply(const HubSettings* settings) {
     }
 
     log_write("PROFILE: applied - maxVol=%.2f whisper=%.0f..%.0f normal=%.0f..%.0f "
-        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d occlusion=%d occIntensity=%.0f occAtk=%.0f occRel=%.0f occDiff=%.0f occRev=%.0f "
+        "shout=%.0f..%.0f forceMute=%d forceAutoChan=%d forceSpeakers=%d nickRand=%d realistic=%d filter=%.0f hrtf=%d occlusion=%d occIntensity=%.0f occAtk=%.0f occRel=%.0f occDiff=%.0f occRev=%.0f "
         "pw=%s zones=%d races=%d localRace=%d defaults=%d",
         settings->audioMaxVolume,
         settings->minWhisper, settings->maxWhisper,
         settings->minNormal, settings->maxNormal,
         settings->minShout, settings->maxShout,
-        settings->forceDistanceMuting, settings->forceAutoChannelSwitch,
+        settings->forceDistanceMuting, settings->forceAutoChannelSwitch, settings->forceSpeakersOn,
         settings->nicknameRandomizer,
         settings->realisticAudio, settings->filterIntensity, settings->enableHrtf,
         settings->enableOcclusion, settings->occlusionIntensity,
@@ -344,6 +344,14 @@ int server_profile_force_auto_channel(void) {
         return 0;
     }
     return settings.forceAutoChannelSwitch;
+}
+
+int server_profile_force_speakers_on(void) {
+    HubSettings settings;
+    if (!server_profile_get(&settings)) {
+        return 0;
+    }
+    return settings.forceSpeakersOn;
 }
 
 int server_profile_get_nickname_randomizer(void) {

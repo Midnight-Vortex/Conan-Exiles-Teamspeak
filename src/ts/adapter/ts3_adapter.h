@@ -158,6 +158,11 @@ int ts3_get_channel_name(uint64 channelID, char* outName, int outLen);
 /* 077: 1 = channel is password protected, 0 = not, -1 = unknown. */
 int ts3_channel_has_password(uint64 channelID);
 
+/* 079: 1 = the client's speakers are muted in TS (CLIENT_OUTPUT_MUTED or
+   CLIENT_OUTPUTONLY_MUTED), 0 = not, -1 = unknown. Own client or any visible
+   client. TS callback thread ONLY. */
+int ts3_client_speakers_muted(anyID clientID);
+
 /* ---- plugin commands (TS callback thread ONLY) ---------------------------- */
 
 /* Registered plugin ID ("" until registered). Any thread (read-only). */

@@ -16,6 +16,8 @@
  *   MinimumShout=20 / MaximumShout=100
  *   ForceDistanceBasedMuting=True
  *   ForceAutomaticChanelSwitching=True
+ *   ForceSpeakersOn=True        (speakers muted in TS -> out of the ingame channel, others
+ *                                no longer hear that player; default off, doku 079)
  *   RealisticAudio=True
  *   FilterIntensity=100
  *   EnableHrtf=True             (binaural HRTF for headphones, default off)
@@ -89,6 +91,7 @@ typedef struct HubSettings {
 
     int forceDistanceMuting;     /* server forces proximity muting on */
     int forceAutoChannelSwitch;  /* server forces hub<->ingame auto-move */
+    int forceSpeakersOn;         /* 079: muted speakers -> hub, deaf speakers silenced */
     int nicknameRandomizer;      /* 1 = assign random digit nick ingame (default) */
     int realisticAudio;          /* 1 = Mumble-style spatial filter in open world */
     float filterIntensity;       /* 0..100 scales filter when realisticAudio=1 */

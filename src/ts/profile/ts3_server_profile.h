@@ -48,6 +48,9 @@ float server_profile_get_max_volume(void);
 /* 1 when the server forces hub<->ingame auto-move. Any thread. */
 int server_profile_force_auto_channel(void);
 
+/* 079: root key ForceSpeakersOn (0 without profile). Any thread. */
+int server_profile_force_speakers_on(void);
+
 /* 1 when ingame nicknames should be replaced with random digits before the
    ingame move. Default 1 without profile (legacy behavior). Any thread. */
 int server_profile_get_nickname_randomizer(void);

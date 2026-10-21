@@ -170,6 +170,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     else if ((v = hub_value_for(line, "ForceAutomaticChanelSwitching")) != NULL) {
         out->forceAutoChannelSwitch = hub_parse_bool(v);
     }
+    else if ((v = hub_value_for(line, "ForceSpeakersOn")) != NULL) {
+        out->forceSpeakersOn = hub_parse_bool(v);
+    }
     else if ((v = hub_value_for(line, "NicknameRandomizer")) != NULL) {
         out->nicknameRandomizer = hub_parse_bool(v);
     }

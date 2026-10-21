@@ -213,6 +213,26 @@ Ts3AudioMode ts3_audio_get_mode(void) {
     return (Ts3AudioMode)InterlockedCompareExchange(&g_audioMode, 0, 0);
 }
 
+/* 079 ForceSpeakersOn: a speaker whose own speakers are muted in TS is not
+   heard in proximity mode. Written on the callback thread (chan_tick), read in
+   the PCM hot path (one aligned LONG per client). */
+static volatile LONG g_clientDeaf[TS3_MAX_CLIENT_ID];
+
+void ts3_audio_set_client_deaf(anyID clientID, int deaf) {
+    if (!ts3_client_id_valid(clientID)) {
+        return;
+    }
+    InterlockedExchange(&g_clientDeaf[clientID], deaf ? 1 : 0);
+}
+
+void ts3_audio_clear_client_deaf(void) {
+    for (int i = 0; i < TS3_MAX_CLIENT_ID; i++) {
+        if (g_clientDeaf[i]) {
+            InterlockedExchange(&g_clientDeaf[i], 0);
+        }
+    }
+}
+
 static BOOL CALLBACK writer_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
     (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_writerLock);
@@ -1087,6 +1107,14 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         /* Hub: hard mute — zero the buffer so nothing is audible. */
         memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
         g_renderGain[clientID] = 0.0f;
+        return;
+    }
+
+    /* 079: speakers muted in TS while ForceSpeakersOn -> nobody hears him. */
+    if (InterlockedCompareExchange(&g_clientDeaf[clientID], 0, 0)) {
+        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        g_renderGain[clientID] = 0.0f;
+        g_lpf[clientID].initialized = 0;
         return;
     }
 

@@ -39,22 +39,29 @@ static struct {
     ULONGLONG cachedAt;
 } g_ignoreCache[CHAN_IGNORE_CACHE_SIZE];
 
-/* SaltyChat-style: channels whose name contains "event" or "plot" as a whole
-   word suspend auto-move (Event, [Event] Halle, Plot Nord — not Development). */
+/* SaltyChat-style: channels whose name contains "event" or "support" anywhere
+   (Event, [Event] Halle, Eventhalle, Support, Supportraum — case-insensitive,
+   079) or "plot" as a whole word (Plot Nord, not Plotter) suspend auto-move. */
 static int chan_name_has_ignore_keyword(const char* name) {
-    static const char* const keywords[] = { "event", "plot" };
+    static const struct {
+        const char* word;
+        int wholeWord;
+    } keywords[] = { { "event", 0 }, { "support", 0 }, { "plot", 1 } };
 
     if (!name || !name[0]) {
         return 0;
     }
 
     for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
-        const char* kw = keywords[k];
+        const char* kw = keywords[k].word;
         const size_t kwLen = strlen(kw);
 
         for (const char* p = name; *p; p++) {
             if (_strnicmp(p, kw, kwLen) != 0) {
                 continue;
+            }
+            if (!keywords[k].wholeWord) {
+                return 1;
             }
             const int startOk = (p == name) || !isalpha((unsigned char)p[-1]);
             const int endOk = !isalpha((unsigned char)p[kwLen]);
@@ -307,6 +314,40 @@ void chan_signal_position_update(void) {
     ts3_request_wakeup();
 }
 
+/* ---- 079 ForceSpeakersOn ---------------------------------------------------------- */
+
+#define CHAN_MAX_CHANNEL_CLIENTS 512
+
+static int g_deafPollActive = 0;  /* deaf flags currently maintained */
+static int g_speakerHintShown = 0; /* chat hint once per muted episode */
+
+/* Others in the ingame channel with muted speakers are silenced for us (their
+   plugin moves them out; this covers old plugins and the moment before). */
+static void chan_update_deaf_speakers(uint64 ownChannel, anyID localID, int force) {
+    if (!force || !chan_is_ingame_channel(ownChannel)) {
+        if (g_deafPollActive) {
+            ts3_audio_clear_client_deaf();
+            g_deafPollActive = 0;
+        }
+        return;
+    }
+    anyID clients[CHAN_MAX_CHANNEL_CLIENTS];
+    const int count = ts3_get_channel_client_list(ownChannel, clients, CHAN_MAX_CHANNEL_CLIENTS);
+    if (!g_deafPollActive) {
+        ts3_audio_clear_client_deaf();
+        g_deafPollActive = 1;
+    }
+    for (int i = 0; i < count; i++) {
+        if (clients[i] == localID) {
+            continue;
+        }
+        const int muted = ts3_client_speakers_muted(clients[i]);
+        if (muted >= 0) {
+            ts3_audio_set_client_deaf(clients[i], muted);
+        }
+    }
+}
+
 /* ---- tick driver ------------------------------------------------------------------ */
 
 void chan_tick(void) {
@@ -348,6 +389,31 @@ void chan_tick(void) {
         ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     }
 
+    /* 079 ForceSpeakersOn: whoever mutes his speakers in TS leaves the ingame
+       channel (also without auto-move) and comes back once they are on again. */
+    const int forceSpeakers = server_profile_force_speakers_on();
+    chan_update_deaf_speakers(ownChannel, localID, forceSpeakers);
+    const int ownSpeakersMuted = forceSpeakers && ts3_client_speakers_muted(localID) == 1;
+    if (!ownSpeakersMuted) {
+        g_speakerHintShown = 0;
+    }
+    else if (chan_is_ingame_channel(ownChannel)) {
+        if (!g_speakerHintShown) {
+            g_speakerHintShown = 1;
+            log_write("CHAN: speakers muted in the ingame channel (ForceSpeakersOn) - moving to hub");
+            ts3_print_to_chat("[Conan Exiles] Your speakers are muted - moved to the hub. "
+                "Unmute your speakers to get back ingame.");
+        }
+        if (g_hubChannelID == 0) {
+            chan_find_hub_and_ingame();
+        }
+        if (g_hubChannelID != 0) {
+            chan_request_move(g_hubChannelID);
+            ts3_request_wakeup();
+        }
+        return;
+    }
+
     if (!chan_auto_move_enabled()) {
         return;
     }
@@ -358,7 +424,7 @@ void chan_tick(void) {
     }
 
     int moveWanted = 0;
-    const int wantIngame = chan_should_be_ingame();
+    const int wantIngame = chan_should_be_ingame() && !ownSpeakersMuted;
 
     if (wantIngame) {
         if (!chan_is_ingame_channel(ownChannel)) {
@@ -497,6 +563,9 @@ void chan_reset(void) {
     g_ingameArrivalMs = 0;
     memset(g_ignoreCache, 0, sizeof(g_ignoreCache));
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
+    ts3_audio_clear_client_deaf();
+    g_deafPollActive = 0;
+    g_speakerHintShown = 0;
 }
 
 int chan_has_pending_work(void) {
