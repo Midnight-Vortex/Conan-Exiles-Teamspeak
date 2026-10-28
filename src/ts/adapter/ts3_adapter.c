@@ -2,7 +2,9 @@
 #include "ts/adapter/ts3_cmd_ring.h"
 #include "core/util/poll_interval.h"
 #include "core/util/wakeup_policy.h"
+#include "core/util/drain_target.h"
 #include "core/util/log.h"
+#include "ts/adapter/ts3_return_code.h"
 
 #include "sdk/include/teamspeak/public_errors.h"
 #include "sdk/include/teamspeak/public_rare_definitions.h"
@@ -68,6 +70,18 @@ static volatile uint64 g_activeConnection = 0;
 static volatile long g_connected = 0;
 static volatile long g_localClientID = 0;
 
+/* CEDRAIN addressing state shared between the callback thread (writer) and the
+   wakeup thread (reader) — see the wakeup section below.
+   g_drainEpoch: bumped whenever the connection identity changes, so the wakeup
+   thread re-probes CLIENT addressing (new connection / tab switch).
+   g_drainEchoMs: GetTickCount64 of the newest CEDRAIN that came back from our
+   OWN client; 0 = none seen yet. */
+static volatile long g_drainEpoch = 0;
+static volatile LONG64 g_drainEchoMs = 0;
+
+/* Return codes of our requestClientMove calls (callback thread only). */
+static Ts3RcTracker g_moveRc;
+
 static void conn_id_store(uint64 id) {
     InterlockedExchange64((volatile LONG64*)&g_activeConnection, (LONG64)id);
 }
@@ -89,6 +103,8 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
         InterlockedExchange(&g_connected, 0);
         InterlockedExchange(&g_localClientID, 0);
         conn_id_store(0);
+        InterlockedIncrement(&g_drainEpoch);
+        ts3_rc_track_clear(&g_moveRc);
         log_write("TS-EVT: DISCONNECTED");
         return 1;
     }
@@ -120,6 +136,8 @@ int ts3_on_connect_status_changed(uint64 serverConnectionHandlerID, int newStatu
             InterlockedExchange(&g_localClientID, (long)localID);
         }
         InterlockedExchange(&g_connected, 1);
+        InterlockedIncrement(&g_drainEpoch);   /* re-probe CEDRAIN addressing */
+        ts3_rc_track_clear(&g_moveRc);
         log_write("TS-EVT: CONNECTION_ESTABLISHED conn=%llu localClient=%d",
             (unsigned long long)serverConnectionHandlerID, (int)localID);
         return 1;
@@ -156,6 +174,8 @@ int ts3_on_active_server_changed(uint64 serverConnectionHandlerID) {
         }
         InterlockedExchange(&g_connected, 1);
     }
+    InterlockedIncrement(&g_drainEpoch);       /* re-probe CEDRAIN addressing */
+    ts3_rc_track_clear(&g_moveRc);
     log_write("TS-EVT: active server tab changed -> conn=%llu (connected=%d)",
         (unsigned long long)serverConnectionHandlerID,
         status == STATUS_CONNECTION_ESTABLISHED ? 1 : 0);
@@ -298,6 +318,23 @@ int ts3_get_channel_name(uint64 channelID, char* outName, int outLen) {
     return 1;
 }
 
+int ts3_get_channel_parent(uint64 channelID, uint64* outParent) {
+    if (!ts3_require_callback_thread("getParentChannelOfChannel")) {
+        return 0;
+    }
+    if (!outParent || channelID == 0
+        || !g_ts3FunctionsSet || !ts3_is_connected()
+        || !g_ts3.getParentChannelOfChannel) {
+        return 0;
+    }
+    uint64 parent = 0;
+    if (g_ts3.getParentChannelOfChannel(g_activeConnection, channelID, &parent) != ERROR_ok) {
+        return 0;
+    }
+    *outParent = parent; /* 0 = top-level channel */
+    return 1;
+}
+
 int ts3_channel_has_password(uint64 channelID) {
     if (!ts3_require_callback_thread("getChannelFlagPassword")) {
         return -1;
@@ -348,13 +385,15 @@ int ts3_client_speakers_muted(anyID clientID) {
 static void ts3_cmd_execute(const Ts3Command* cmd) {
     switch (cmd->type) {
     case TS3_CMD_LOG_CHANNEL_LIST: {
+        /* Debug-only self-test: server channel names must never reach the
+           production log (the push in ts3_entry.c is debug-gated as well). */
         uint64 channels[64];
         int count = ts3_get_channel_list(channels, 64);
-        log_write("TS-CMD: channel list (%d channels)", count);
+        log_debug("TS-CMD: channel list (%d channels)", count);
         for (int i = 0; i < count && i < 16; i++) {
             char name[128] = "";
             ts3_get_channel_name(channels[i], name, sizeof(name));
-            log_write("TS-CMD:   channel %llu '%s'", (unsigned long long)channels[i], name);
+            log_debug("TS-CMD:   channel %llu '%s'", (unsigned long long)channels[i], name);
         }
         break;
     }
@@ -413,6 +452,18 @@ int ts3_cmd_queue_nonempty(void) {
  * touched by exactly TWO threads total — the TS callback thread (everything)
  * and this wakeup thread (exactly one function, sendPluginCommand). That is
  * the minimal possible surface.
+ *
+ * CEDRAIN addressing (review fix): the command used to go to the whole SERVER,
+ * so every client relayed ~33 drains/s to every other client (N^2) and every
+ * client ran the foreign drains. It is now addressed to the OWN client only
+ * (PluginCommandTarget_CLIENT, targetIDs {ownId, 0}). Whether TeamSpeak echoes
+ * a self-addressed plugin command back is not verified, so the wakeup thread
+ * probes at runtime (core/util/drain_target.h): the callback thread stamps the
+ * arrival of its own CEDRAIN (ts3_wakeup_note_own_echo); without an echo after
+ * >= 5 sends and 2 s the thread falls back to SERVER addressing for the rest
+ * of the connection. While a probe is open a 250 ms watchdog re-sends so the
+ * decision never depends on unrelated producers. A new connection or tab
+ * switch (g_drainEpoch) re-probes. Drains therefore never stop permanently.
  */
 
 static volatile LONG64 s_lastWakeMs = 0;   /* last send time, wakeup thread */
@@ -424,13 +475,63 @@ static volatile long g_wakeupStop = 0;     /* set once at shutdown, never reset 
 static volatile long g_wakeupPending = 0;  /* a wakeup was requested */
 static volatile long g_wakeupUrgent = 0;   /* the pending request was urgent */
 
+void ts3_wakeup_note_own_echo(void) {
+    /* Any thread (atomic store). 0 is the "never" sentinel, GetTickCount64 is
+       never 0 in practice, but keep the invariant explicit. */
+    LONG64 now = (LONG64)GetTickCount64();
+    if (now == 0) {
+        now = 1;
+    }
+    InterlockedExchange64(&g_drainEchoMs, now);
+}
+
+/* Log the one-shot probe outcome (wakeup thread). */
+static void ts3_wakeup_log_drain_events(int events) {
+    if (events & DRAIN_EVT_CONFIRMED) {
+        log_write("TS-WAKE: CEDRAIN addressed to own client confirmed (echo received)");
+    }
+    if (events & DRAIN_EVT_FALLBACK) {
+        log_write("TS-WAKE: no echo for own-client CEDRAIN (>= %d sends, %d ms) - "
+            "falling back to server-wide CEDRAIN for this connection",
+            DRAIN_PROBE_MIN_SENDS, DRAIN_PROBE_TIMEOUT_MS);
+    }
+}
+
 static unsigned __stdcall ts3_wakeup_thread(void* arg) {
     (void)arg;
+    DrainTargetState drain;      /* wakeup thread only */
+    long drainEpochSeen = InterlockedCompareExchange(&g_drainEpoch, 0, 0);
+    drain_target_reset(&drain);
+
     for (;;) {
-        WaitForSingleObject(g_wakeupEvent, INFINITE);
+        /* While CLIENT-addressed sends wait for their echo, wake up on a timer
+           too: if the echo never comes and no other producer fires, the probe
+           still completes (fallback) instead of leaving the drain stuck. */
+        const DWORD waitMs = drain_target_probe_open(&drain)
+            ? (DWORD)DRAIN_PROBE_RETRY_MS : INFINITE;
+        const DWORD waitResult = WaitForSingleObject(g_wakeupEvent, waitMs);
         if (InterlockedCompareExchange(&g_wakeupStop, 0, 0)) {
             break;
         }
+
+        /* New connection / tab switch: start probing CLIENT addressing again. */
+        const long epoch = InterlockedCompareExchange(&g_drainEpoch, 0, 0);
+        if (epoch != drainEpochSeen) {
+            drainEpochSeen = epoch;
+            drain_target_reset(&drain);
+        }
+
+        if (waitResult == WAIT_TIMEOUT) {
+            /* Watchdog tick of an open probe: stop if the echo arrived, else
+               re-send (a CEDRAIN with nothing to do returns early). */
+            ts3_wakeup_log_drain_events(drain_target_poll(&drain,
+                (int64_t)InterlockedCompareExchange64(&g_drainEchoMs, 0, 0)));
+            if (!drain_target_probe_open(&drain)) {
+                continue;
+            }
+            InterlockedExchange(&g_wakeupPending, 1);
+        }
+
         /* Coalesce: many SetEvents collapse into the single pending flag.
            Do NOT clear pending until CEDRAIN actually sends — otherwise a
            rate-limit or transient disconnect drops the drain forever. */
@@ -454,14 +555,14 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
         const LONG64 last = InterlockedCompareExchange64(&s_lastWakeMs, 0, 0);
         if (!wakeup_should_send(now, last, urgent != 0, PLUGIN_POLL_INTERVAL_MS)) {
             const LONG64 elapsed = now - last;
-            DWORD waitMs = (DWORD)(PLUGIN_POLL_INTERVAL_MS - elapsed);
-            if (waitMs == 0 || waitMs > (DWORD)PLUGIN_POLL_INTERVAL_MS) {
-                waitMs = 1;
+            DWORD waitMs2 = (DWORD)(PLUGIN_POLL_INTERVAL_MS - elapsed);
+            if (waitMs2 == 0 || waitMs2 > (DWORD)PLUGIN_POLL_INTERVAL_MS) {
+                waitMs2 = 1;
             }
             if (urgent) {
                 InterlockedExchange(&g_wakeupUrgent, 1);
             }
-            Sleep(waitMs);
+            Sleep(waitMs2);
             SetEvent(g_wakeupEvent);
             continue; /* rate limited: pending stays set, retry after window */
         }
@@ -480,9 +581,26 @@ static unsigned __stdcall ts3_wakeup_thread(void* arg) {
             continue;
         }
 
+        /* Pick the addressing for THIS send. Own id unknown (0) -> SERVER
+           (the pre-fix behaviour); the callback side then accepts every
+           CEDRAIN as well, see drain_accept_invoker. */
+        const anyID localId = ts3_get_local_client_id();
+        int drainEvents = 0;
+        const int target = drain_target_pick(&drain, (int64_t)now,
+            (int64_t)InterlockedCompareExchange64(&g_drainEchoMs, 0, 0),
+            localId != 0, &drainEvents);
+        ts3_wakeup_log_drain_events(drainEvents);
+
         InterlockedExchange64(&s_lastWakeMs, now);
-        g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
-            PluginCommandTarget_SERVER, NULL, NULL);
+        if (target == DRAIN_TARGET_CLIENT) {
+            const anyID targetIDs[2] = { localId, 0 }; /* zero-terminated list */
+            g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
+                PluginCommandTarget_CLIENT, targetIDs, NULL);
+        }
+        else {
+            g_ts3.sendPluginCommand(conn, g_pluginID, "CEDRAIN:1",
+                PluginCommandTarget_SERVER, NULL, NULL);
+        }
 
         InterlockedExchange(&g_wakeupPending, 0);
         InterlockedExchange(&g_wakeupUrgent, 0);
@@ -741,14 +859,43 @@ int ts3_request_client_move(anyID clientID, uint64 channelID, const char* passwo
         || !g_ts3.requestClientMove) {
         return 0;
     }
+
+    /* The move is asynchronous — the server answers later via
+       onServerErrorEvent. Give the request a plugin return code and remember
+       it so ts3_consume_move_return_code() can tell OUR move apart from any
+       other command. Without a registered plugin ID (or without the API
+       function) the code stays NULL: the previous, fire-and-forget behaviour. */
+    char returnCode[TS3_RC_MAX];
+    const char* rcArg = NULL;
+    returnCode[0] = '\0';
+    if (g_pluginID[0] != '\0' && g_ts3.createReturnCode) {
+        g_ts3.createReturnCode(g_pluginID, returnCode, sizeof(returnCode));
+        if (returnCode[0] != '\0' && ts3_rc_track_add(&g_moveRc, returnCode)) {
+            rcArg = returnCode;
+        }
+    }
+
     const unsigned int err = g_ts3.requestClientMove(g_activeConnection, clientID, channelID,
-        password ? password : "", NULL);
+        password ? password : "", rcArg);
     if (err != ERROR_ok) {
+        if (rcArg) {
+            ts3_rc_track_take(&g_moveRc, rcArg); /* no answer will come for a local failure */
+        }
         log_write("TS-API: requestClientMove -> %llu failed err=%u",
             (unsigned long long)channelID, err);
         return 0;
     }
     return 1;
+}
+
+int ts3_consume_move_return_code(const char* returnCode) {
+    if (!returnCode || !returnCode[0]) {
+        return 0;
+    }
+    if (!ts3_require_callback_thread("consumeMoveReturnCode")) {
+        return 0;
+    }
+    return ts3_rc_track_take(&g_moveRc, returnCode);
 }
 
 int ts3_request_channel_description(uint64 channelID) {
@@ -856,6 +1003,8 @@ void ts3_adapter_shutdown(void) {
     InterlockedExchange(&g_connected, 0);
     InterlockedExchange(&g_localClientID, 0);
     conn_id_store(0);
+
+    ts3_rc_track_clear(&g_moveRc);
 
     /* Drop anything still queued (preserve the lifetime drop counter). */
     ts3_cmd_lock_ensure();

@@ -208,7 +208,10 @@ extern BOOL overlayThreadRunning;
 // V8.5: hubChannelID / ingameChannelID are DERIVED MIRRORS of the canonical
 // IDs owned by ts/channel/channel_manage (chan_get_hub_channel_id /
 // chan_get_ingame_channel_id). UI/overlay read only; the single writer is
-// plugin_ui_sync_live_state (callback thread). Do not assign elsewhere.
+// plugin_ui_sync_live_state, which runs ONLY on the callback thread: either
+// called there directly, or requested from another thread (pos watcher /
+// HTTP notify) via plugin_ui_on_position_tick() and executed by the CEDRAIN
+// dispatcher through plugin_ui_flush_pending_sync(). Do not assign elsewhere.
 extern mumble_channelid_t hubChannelID;
 extern mumble_channelid_t rootChannelID;
 extern mumble_channelid_t ingameChannelID;

@@ -8,7 +8,10 @@
    - global config only:  whisper < normal < shout,
    - server profile min/max clamp raises/lowers the global value,
    - a race the local player is in beats the hub-wide clamp,
-   - a zone override beats the global config (and is then still clamped).
+   - a zone override beats the global config (and is then still clamped),
+   - 086: voice_mode_apply detects a mode change atomically — two threads
+     applying the same new mode at the same time produce exactly ONE
+     "changed" edge (one chat line / CEMODE), never two.
 
    The real zone_resolve.c (pure) is linked; config/pos/log are stubbed here. */
 
@@ -16,6 +19,7 @@
 #include "core/config/config.h"
 #include "core/mod_file/pos_file.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -158,11 +162,115 @@ static void test_zone_override(void) {
     CHECK(feq(voice_mode_get_distance(VOICE_MODE_NORMAL), 15.0f), "outside zone -> global config");
 }
 
+/* ---- 086: atomic mode change edge ------------------------------------------ */
+
+static volatile long g_hookChanged = 0;
+static volatile long g_hookChat = 0;
+static volatile long g_hookCepos = 0;
+
+static void hook_changed(void)       { __atomic_add_fetch(&g_hookChanged, 1, __ATOMIC_SEQ_CST); }
+static void hook_notify(const char* m) { (void)m; __atomic_add_fetch(&g_hookChat, 1, __ATOMIC_SEQ_CST); }
+static void hook_cepos(void)         { __atomic_add_fetch(&g_hookCepos, 1, __ATOMIC_SEQ_CST); }
+
+static void install_counting_hooks(void) {
+    VoiceModeHooks hooks;
+    memset(&hooks, 0, sizeof(hooks));
+    hooks.get_profile = fake_get_profile;
+    hooks.mode_changed = hook_changed;
+    hooks.notify_chat = hook_notify;
+    hooks.invalidate_cepos_cache = hook_cepos;
+    voice_mode_set_hooks(&hooks);
+    g_hookChanged = 0;
+    g_hookChat = 0;
+    g_hookCepos = 0;
+}
+
+static void test_apply_edge(void) {
+    printf("[5] voice_mode_apply: one edge per real change\n");
+    reset_state();
+    install_counting_hooks();
+
+    voice_mode_apply(VOICE_MODE_NORMAL); /* normalise (module default is normal) */
+    g_hookChanged = 0; g_hookChat = 0; g_hookCepos = 0;
+
+    voice_mode_apply(VOICE_MODE_NORMAL);
+    CHECK(g_hookChanged == 0 && g_hookChat == 0, "same mode again: no edge");
+
+    voice_mode_apply(VOICE_MODE_WHISPER);
+    CHECK(voice_mode_get_current() == VOICE_MODE_WHISPER, "mode stored");
+    CHECK(g_hookChanged == 1 && g_hookChat == 1 && g_hookCepos == 1, "real change: one edge");
+
+    voice_mode_apply(VOICE_MODE_WHISPER);
+    CHECK(g_hookChanged == 1 && g_hookChat == 1, "repeated hotkey press: still one edge");
+
+    voice_mode_apply((VoiceMode)99);
+    CHECK(voice_mode_get_current() == VOICE_MODE_NORMAL, "invalid mode falls back to normal");
+    CHECK(g_hookChanged == 2, "fallback to normal is a real change");
+
+    voice_mode_toggle();
+    CHECK(voice_mode_get_current() == VOICE_MODE_SHOUT && g_hookChanged == 3, "toggle normal -> shout");
+    voice_mode_apply(VOICE_MODE_NORMAL);
+}
+
+#define RACE_ROUNDS 3000
+
+static pthread_barrier_t g_raceStart;
+static pthread_barrier_t g_raceEnd;
+
+static void* race_worker(void* arg) {
+    (void)arg;
+    for (int i = 0; i < RACE_ROUNDS; i++) {
+        pthread_barrier_wait(&g_raceStart);
+        voice_mode_apply(VOICE_MODE_SHOUT);
+        pthread_barrier_wait(&g_raceEnd);
+    }
+    return NULL;
+}
+
+static void test_apply_race(void) {
+    printf("[6] two threads applying the same new mode: exactly one edge\n");
+    reset_state();
+    install_counting_hooks();
+    voice_mode_apply(VOICE_MODE_NORMAL);
+
+    pthread_barrier_init(&g_raceStart, NULL, 3);
+    pthread_barrier_init(&g_raceEnd, NULL, 3);
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, race_worker, NULL);
+    pthread_create(&t2, NULL, race_worker, NULL);
+
+    int doubles = 0;
+    int zeros = 0;
+    for (int i = 0; i < RACE_ROUNDS; i++) {
+        voice_mode_apply(VOICE_MODE_NORMAL);
+        g_hookChanged = 0;
+        pthread_barrier_wait(&g_raceStart);
+        pthread_barrier_wait(&g_raceEnd);
+        if (g_hookChanged > 1) {
+            doubles++;
+        }
+        else if (g_hookChanged == 0) {
+            zeros++;
+        }
+    }
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    pthread_barrier_destroy(&g_raceStart);
+    pthread_barrier_destroy(&g_raceEnd);
+
+    CHECK(doubles == 0, "never a duplicate 'mode changed' edge (chat line / CEMODE)");
+    CHECK(zeros == 0, "never a lost edge either");
+    CHECK(voice_mode_get_current() == VOICE_MODE_SHOUT, "final mode is shout");
+    voice_mode_apply(VOICE_MODE_NORMAL);
+}
+
 int main(void) {
     test_global_only();
     test_profile_clamp();
     test_race_beats_hub();
     test_zone_override();
+    test_apply_edge();
+    test_apply_race();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

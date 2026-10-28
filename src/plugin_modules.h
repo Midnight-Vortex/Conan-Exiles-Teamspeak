@@ -104,6 +104,9 @@ void loadDefaultSettingsFromConfig(void);
 void saveDefaultSettingsToConfig(void);
 void showPathSelectionDialogThread(void* arg);
 INT_PTR CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+/* Runs the settings dialog message loop on the CALLING thread. Does not touch
+   the config_dialog guard: the code that won config_dialog_try_open() (the
+   settings dialog thread in key_watcher.c) releases it once afterwards. */
 int showConfigInterface(void);
 void createPresetsCategory(void);
 void updatePresetLabels(void);
@@ -121,8 +124,11 @@ void installKeyMonitoring(void);
 void removeKeyMonitoring(void);
 void startKeyMonitorThread(void);
 void stopKeyMonitorThread(void);
-/* Open settings on a dedicated UI thread (F10 / Plugins menu). Caller must
-   have already succeeded at config_dialog_try_open(). */
+/* Open settings on a dedicated, joinable UI thread. Used by F10, the Plugins
+   menu AND ts3plugin_configure (TS Settings > Plugins), so every dialog thread
+   is known to settings_dialog_shutdown(). Caller must have already succeeded
+   at config_dialog_try_open(); the dialog thread releases that guard exactly
+   once when the dialog closes (showConfigInterface itself never does). */
 void settings_dialog_open_async(void);
 /* Close the F10 dialog (WM_CLOSE) and join its thread — shutdown only. */
 void settings_dialog_shutdown(void);

@@ -40,14 +40,28 @@ static int voice_hook_get_profile(VoiceModeProfile* out) {
 /* Current mode — atomic, read from cepos build path / written by hotkeys. */
 static volatile long g_currentMode = VOICE_MODE_NORMAL;
 
-/* Hotkey state — polled from the key-monitor thread ONLY (single owner).
-   Start armed (1) so the first key press is not missed before a release poll. */
+/* Hotkey state — read AND written by the key-monitor thread ONLY (single
+   owner, voice_mode_hotkey_poll). The first poll after start/reset arms keys
+   as soon as they are seen released, so no press is missed. */
 static char g_keyArmed[256];
 static ULONGLONG g_keySuppressUntil[256];
+
+/* Requests from other threads (TS callback thread, UI threads, 086). They only
+   set these flags; the poller applies them at its next poll, so the state
+   above never has a second writer:
+   - g_keyResetRequested: voice_mode_reset_key_tracking()
+   - g_keyNotifyRequested[vk]: voice_mode_notify_hotkey(vk) */
+static volatile long g_keyResetRequested = 0;
+static volatile long g_keyNotifyRequested[256];
 
 static int voice_key_pressed_vk(int vkCode) {
     if (vkCode <= 0 || vkCode >= 256) {
         return 0;
+    }
+    if (InterlockedExchange(&g_keyNotifyRequested[vkCode], 0)) {
+        /* The TS hotkey event already handled this press: swallow the poll. */
+        g_keySuppressUntil[vkCode] = GetTickCount64() + VOICE_POLL_SUPPRESS_MS;
+        g_keyArmed[vkCode] = 0;
     }
     if (GetTickCount64() < g_keySuppressUntil[vkCode]) {
         return 0;
@@ -189,10 +203,12 @@ void voice_mode_apply(VoiceMode mode) {
     if (mode != VOICE_MODE_WHISPER && mode != VOICE_MODE_SHOUT) {
         mode = VOICE_MODE_NORMAL;
     }
-    if (voice_mode_get_current() == mode) {
+    /* Detect the change atomically (086): the old get-then-set let two threads
+       (TS hotkey event + key poller, UI) both see "changed" and send the chat
+       line / CEMODE twice. Exactly one caller wins the exchange. */
+    if (InterlockedExchange(&g_currentMode, (long)mode) == (long)mode) {
         return;
     }
-    InterlockedExchange(&g_currentMode, (long)mode);
 
     voice_mode_notify_mode(mode);
 
@@ -206,8 +222,8 @@ void voice_mode_apply(VoiceMode mode) {
     if (g_hooks.overlay_sync) {
         g_hooks.overlay_sync();
     }
-    /* Edge only: reached exactly once per real switch (the early-out above
-       filters repeated hotkey presses of the already active mode). */
+    /* Edge only: reached exactly once per real switch (the atomic early-out
+       above filters repeated hotkey presses of the already active mode). */
     if (g_hooks.mode_changed) {
         g_hooks.mode_changed();
     }
@@ -225,8 +241,15 @@ void voice_mode_toggle(void) {
 /* ---- 11.3 hotkeys (key-monitor thread — single caller) ------------------------ */
 
 /* Single-caller contract: only keyMonitorThreadFunction (key_watcher.c) may
-   call this — the arming/debounce state has exactly one writer thread. */
+   call this — the arming/debounce state has exactly one writer thread. Other
+   threads reach it only through the request flags (reset / notify). */
 void voice_mode_hotkey_poll(void) {
+    /* Deferred reset (086): done HERE, on the thread that owns the state. */
+    if (InterlockedExchange(&g_keyResetRequested, 0)) {
+        memset(g_keyArmed, 1, sizeof(g_keyArmed));
+        memset(g_keySuppressUntil, 0, sizeof(g_keySuppressUntil));
+    }
+
     PluginConfig cfg;
     config_copy(&cfg);
 
@@ -248,14 +271,14 @@ void voice_mode_hotkey_poll(void) {
 }
 
 void voice_mode_reset_key_tracking(void) {
-    memset(g_keyArmed, 1, sizeof(g_keyArmed));
-    memset(g_keySuppressUntil, 0, sizeof(g_keySuppressUntil));
+    /* Any thread: only a request — the key poller clears its own state. */
+    InterlockedExchange(&g_keyResetRequested, 1);
 }
 
 void voice_mode_notify_hotkey(int vkCode) {
+    /* Any thread: only a request — the key poller applies it (see above). */
     if (vkCode > 0 && vkCode < 256) {
-        g_keySuppressUntil[vkCode] = GetTickCount64() + VOICE_POLL_SUPPRESS_MS;
-        g_keyArmed[vkCode] = 0;
+        InterlockedExchange(&g_keyNotifyRequested[vkCode], 1);
     }
 }
 

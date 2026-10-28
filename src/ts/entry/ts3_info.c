@@ -1,3 +1,11 @@
+/*
+ * Plugin menu, settings entry and info-panel text.
+ *
+ * Thread contract: every function here is called by TeamSpeak on one of its own
+ * threads. None may block, and none touches the TS API. ts3plugin_configure
+ * only hands over to the plugin-owned settings dialog thread (key_watcher.c).
+ */
+
 #include "ts3_exports.h"
 
 #include "ts/info/ts3_plugin_version.h"
@@ -104,14 +112,22 @@ int ts3plugin_offersConfigure(void) {
     return PLUGIN_OFFERS_CONFIGURE_NEW_THREAD;
 }
 
+/* Plugins > Settings > Conan Exiles. TeamSpeak calls this on its own
+   (configure) thread. The dialog must NOT run on that thread: the plugin
+   could not join it at shutdown, so TS could unload the DLL while the dialog
+   code still runs. Same path as F10 and the Plugins menu: the winner of the
+   dialog guard starts the plugin-owned, joinable dialog thread
+   (settings_dialog_open_async; that thread releases the guard exactly once).
+   Returns immediately. */
 void ts3plugin_configure(void* handle, void* qParentWidget) {
     (void)handle;
     (void)qParentWidget;
-    if (!config_dialog_try_open()) {
+    if (pluginShuttingDown) {
         return;
     }
-    showConfigInterface();
-    config_dialog_close();
+    if (config_dialog_try_open()) {
+        settings_dialog_open_async();
+    }
 }
 
 const char* ts3plugin_infoTitle(void) {

@@ -12,8 +12,12 @@
  *  - voice_mode_hotkey_poll: key-monitor thread ONLY (single owner of the
  *    arming/debounce state; PLUGIN_POLL_INTERVAL_MS). Only touches atomics
  *    + Win32 key state; never the TS API.
- *  - voice_mode_apply / voice_mode_toggle: any thread (atomic mode store,
- *    wakeup request; chat notify is deferred to the callback thread).
+ *  - voice_mode_reset_key_tracking / voice_mode_notify_hotkey: any thread
+ *    (TS callback, UI). They only set a request flag; the key poller applies
+ *    it at its next poll, so the debounce state keeps ONE writer (086).
+ *  - voice_mode_apply / voice_mode_toggle: any thread (atomic mode exchange —
+ *    exactly one concurrent caller sees the change and notifies; wakeup
+ *    request; chat notify is deferred to the callback thread).
  *  - voice_mode_flush_notify: TS callback thread ONLY (prints to chat).
  *  - voice_mode_get_current_distance: any thread.
  */
@@ -92,10 +96,12 @@ void voice_mode_flush_notify(void);
 /* 1 when a mode-change chat line is waiting. Any thread. */
 int voice_mode_has_pending_notify(void);
 
-/* Clear hotkey debounce state (e.g. after loading a preset). Pos watcher thread. */
+/* Clear hotkey debounce state (e.g. after loading a preset). Any thread: only
+   sets a request flag, the key poller performs the reset at its next poll. */
 void voice_mode_reset_key_tracking(void);
 
-/* Suppress duplicate poll trigger after TS hotkey event handled the same VK. */
+/* Suppress duplicate poll trigger after TS hotkey event handled the same VK.
+   Any thread: request flag, applied by the key poller at its next poll. */
 void voice_mode_notify_hotkey(int vkCode);
 
 #endif /* CORE_VOICE_VOICE_MODES_H */

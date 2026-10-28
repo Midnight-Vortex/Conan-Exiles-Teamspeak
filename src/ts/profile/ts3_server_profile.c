@@ -7,6 +7,7 @@
 #include "core/util/log.h"
 
 #include <windows.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -14,6 +15,8 @@
 #define PROFILE_REQUEST_RETRY_MS   30000  /* re-request until a profile arrived */
 #define PROFILE_INFLIGHT_MAX_MS    10000  /* pending request times out */
 #define PROFILE_DESC_MAX           16384
+#define PROFILE_MAX_CHANNELS       1024   /* scan cap (was 128, 086) */
+#define PROFILE_REFRESH_MIN_MS     500    /* min gap between tries to refresh a replaced Root */
 
 /* Request state — TS callback thread only. */
 static uint64 g_rootChannelID = 0;
@@ -21,6 +24,13 @@ static ULONGLONG g_lastFindMs = 0;
 static int g_requestInFlight = 0;
 static ULONGLONG g_requestSentMs = 0;
 static ULONGLONG g_lastRequestMs = 0;
+static volatile long g_rootDirty = 0;     /* 086: channel list changed - re-resolve Root */
+static int g_rootRefreshWanted = 0;       /* 086: Root ID changed - re-request its description */
+static ULONGLONG g_lastRefreshTryMs = 0;
+
+/* Channel list scan buffer (8 KB). Static — too big for the callback thread's
+   stack budget; the scan is never re-entered. Callback thread only. */
+static uint64 g_channelScan[PROFILE_MAX_CHANNELS];
 
 /* Active profile — written on the callback thread, read from any thread. */
 static CRITICAL_SECTION g_profileLock;
@@ -30,6 +40,27 @@ static volatile long g_profileActive = 0;
 
 /* Callback thread only (password consumer runs there too). */
 static char g_ingamePassword[HUB_PASSWORD_LEN] = "";
+
+/* Scratch buffers of the Root description parse. File scope (not function
+   statics) so server_profile_reset can wipe them: the description of a legacy
+   server still carries IngameChannelPassword in clear text. Callback thread
+   only, no reentry. */
+static char g_descBuf[PROFILE_DESC_MAX];
+static HubSettings g_parsedBuf; /* ~10 KB with races/zones — too big for the stack */
+
+/* 086: scalar getters read these instead of copying the whole HubSettings
+   (~8 KB) under the lock. They always hold the EFFECTIVE value: the profile's
+   value while a profile is active, the "no profile" default otherwise (set in
+   server_profile_reset). Floats are stored as their raw bit pattern. */
+#define PROFILE_BITS_FLOAT_1_0   0x3F800000L /* 1.0f   - default max volume */
+#define PROFILE_BITS_FLOAT_100_0 0x42C80000L /* 100.0f - default filter intensity */
+static volatile long g_maxVolumeBits = PROFILE_BITS_FLOAT_1_0;
+static volatile long g_filterIntensityBits = PROFILE_BITS_FLOAT_100_0;
+static volatile long g_forceAutoChannel = 0;
+static volatile long g_forceSpeakersOn = 0;
+static volatile long g_forceDistanceMuting = 0;
+static volatile long g_nicknameRandomizer = 1; /* legacy default without profile */
+static volatile long g_realisticAudio = 0;
 
 /* Local race match (index into g_active.races, -1 = none) + listener bonus.
    Written on the callback thread during apply, read from any thread. */
@@ -48,6 +79,33 @@ static BOOL CALLBACK profile_lock_init_once(PINIT_ONCE once, PVOID param, PVOID*
 
 static void profile_lock_ensure(void) {
     InitOnceExecuteOnce(&g_profileLockOnce, profile_lock_init_once, NULL, NULL);
+}
+
+static long profile_float_bits(float value) {
+    int32_t bits; /* fixed 32 bit, independent of the platform's long */
+    memcpy(&bits, &value, sizeof(bits));
+    return (long)bits;
+}
+
+static float profile_bits_float(long bits) {
+    const int32_t raw = (int32_t)bits;
+    float value;
+    memcpy(&value, &raw, sizeof(value));
+    return value;
+}
+
+/* Publish the scalar getters' values (profile applied) or their "no profile"
+   defaults (settings == NULL). Called under g_profileLock. */
+static void profile_publish_scalars(const HubSettings* settings) {
+    InterlockedExchange(&g_maxVolumeBits,
+        settings ? profile_float_bits(settings->audioMaxVolume) : PROFILE_BITS_FLOAT_1_0);
+    InterlockedExchange(&g_filterIntensityBits,
+        settings ? profile_float_bits(settings->filterIntensity) : PROFILE_BITS_FLOAT_100_0);
+    InterlockedExchange(&g_forceAutoChannel, settings ? settings->forceAutoChannelSwitch : 0);
+    InterlockedExchange(&g_forceSpeakersOn, settings ? settings->forceSpeakersOn : 0);
+    InterlockedExchange(&g_forceDistanceMuting, settings ? settings->forceDistanceMuting : 0);
+    InterlockedExchange(&g_nicknameRandomizer, settings ? settings->nicknameRandomizer : 1);
+    InterlockedExchange(&g_realisticAudio, settings ? settings->realisticAudio : 0);
 }
 
 /* ---- Steam ID (registry, read once) -------------------------------------- */
@@ -106,6 +164,34 @@ static int profile_resolve_race_index(const HubSettings* settings,
 
 /* ---- first-connection defaults ([DEFAULT_SETTINGS], once per server) ------- */
 
+typedef struct ProfileDefaultsCtx {
+    const HubDefaults* defaults;
+    const char* serverUid;
+    int applied;
+} ProfileDefaultsCtx;
+
+/* Runs on g_config under the config lock (config_modify) — the "already
+   applied" check and the write are one step, so a concurrent settings change
+   from another thread can no longer be lost (086). */
+static void profile_defaults_mutator(PluginConfig* cfg, void* ctx) {
+    ProfileDefaultsCtx* c = (ProfileDefaultsCtx*)ctx;
+    if (strcmp(cfg->defaultsAppliedServer, c->serverUid) == 0) {
+        return; /* already applied for this server — user changes stick */
+    }
+
+    const HubDefaults* def = c->defaults;
+    if (def->whisperKey > 0)          cfg->whisperKey = def->whisperKey;
+    if (def->normalKey > 0)           cfg->normalKey = def->normalKey;
+    if (def->shoutKey > 0)            cfg->shoutKey = def->shoutKey;
+    if (def->voiceToggleKey > 0)      cfg->voiceToggleKey = def->voiceToggleKey;
+    if (def->distanceWhisper > 0.0f)  cfg->distanceWhisper = def->distanceWhisper;
+    if (def->distanceNormal > 0.0f)   cfg->distanceNormal = def->distanceNormal;
+    if (def->distanceShout > 0.0f)    cfg->distanceShout = def->distanceShout;
+    strncpy_s(cfg->defaultsAppliedServer, sizeof(cfg->defaultsAppliedServer),
+        c->serverUid, _TRUNCATE);
+    c->applied = 1;
+}
+
 static void profile_apply_defaults_once(const HubSettings* settings) {
     if (!settings->defaults.enabled || !ts3_thread_is_callback()) {
         return;
@@ -116,28 +202,15 @@ static void profile_apply_defaults_once(const HubSettings* settings) {
         return; /* no stable identity — never risk re-applying */
     }
 
-    PluginConfig cfg;
-    config_copy(&cfg);
-    if (strcmp(cfg.defaultsAppliedServer, serverUid) == 0) {
-        return; /* already applied for this server — user changes stick */
+    ProfileDefaultsCtx ctx = { &settings->defaults, serverUid, 0 };
+    config_modify(profile_defaults_mutator, &ctx); /* clamps, does not save */
+    if (!ctx.applied) {
+        return;
     }
-
-    const HubDefaults* def = &settings->defaults;
-    if (def->whisperKey > 0)          cfg.whisperKey = def->whisperKey;
-    if (def->normalKey > 0)           cfg.normalKey = def->normalKey;
-    if (def->shoutKey > 0)            cfg.shoutKey = def->shoutKey;
-    if (def->voiceToggleKey > 0)      cfg.voiceToggleKey = def->voiceToggleKey;
-    if (def->distanceWhisper > 0.0f)  cfg.distanceWhisper = def->distanceWhisper;
-    if (def->distanceNormal > 0.0f)   cfg.distanceNormal = def->distanceNormal;
-    if (def->distanceShout > 0.0f)    cfg.distanceShout = def->distanceShout;
-    strncpy_s(cfg.defaultsAppliedServer, sizeof(cfg.defaultsAppliedServer),
-        serverUid, _TRUNCATE);
-
-    config_clamp(&cfg);
-    config_apply(&cfg);
     config_save();
     voice_mode_reset_key_tracking();
 
+    const HubDefaults* def = &settings->defaults;
     log_write("PROFILE: first-connection defaults applied (keys %d/%d/%d/%d, "
         "dist %.1f/%.1f/%.1f)",
         def->whisperKey, def->normalKey, def->shoutKey, def->voiceToggleKey,
@@ -206,32 +279,45 @@ static void profile_announce_reload(const HubSettings* settings, int raceIndex) 
 /* Server force flags -> plugin.cfg (keys untouched). Same rule as the old
    plugin: only force ON, never undo a user-enabled option when the server
    stops forcing. */
+typedef struct ProfileForcesCtx {
+    int forceDistanceMuting;
+    int forceAutoChannelSwitch;
+    int changed;
+    int muting;   /* resulting values, for the log line */
+    int autoChan;
+} ProfileForcesCtx;
+
+/* Runs on g_config under the config lock (config_modify), see 086. */
+static void profile_forces_mutator(PluginConfig* cfg, void* ctx) {
+    ProfileForcesCtx* c = (ProfileForcesCtx*)ctx;
+    if (c->forceDistanceMuting && !cfg->enableDistanceMuting) {
+        cfg->enableDistanceMuting = 1;
+        c->changed = 1;
+    }
+    if (c->forceAutoChannelSwitch && !cfg->enableAutomaticChannelChange) {
+        cfg->enableAutomaticChannelChange = 1;
+        c->changed = 1;
+    }
+    c->muting = cfg->enableDistanceMuting;
+    c->autoChan = cfg->enableAutomaticChannelChange;
+}
+
 static void profile_apply_hub_forces(const HubSettings* settings) {
     if (!settings || !ts3_thread_is_callback()) {
         return;
     }
-
-    PluginConfig cfg;
-    config_copy(&cfg);
-    int changed = 0;
-
-    if (settings->forceDistanceMuting && !cfg.enableDistanceMuting) {
-        cfg.enableDistanceMuting = 1;
-        changed = 1;
-    }
-    if (settings->forceAutoChannelSwitch && !cfg.enableAutomaticChannelChange) {
-        cfg.enableAutomaticChannelChange = 1;
-        changed = 1;
-    }
-    if (!changed) {
+    if (!settings->forceDistanceMuting && !settings->forceAutoChannelSwitch) {
         return;
     }
 
-    config_clamp(&cfg);
-    config_apply(&cfg);
+    ProfileForcesCtx ctx = { settings->forceDistanceMuting, settings->forceAutoChannelSwitch, 0, 0, 0 };
+    config_modify(profile_forces_mutator, &ctx); /* clamps, does not save */
+    if (!ctx.changed) {
+        return;
+    }
     config_save();
     log_write("PROFILE: server force flags saved (muting=%d autoChan=%d)",
-        cfg.enableDistanceMuting, cfg.enableAutomaticChannelChange);
+        ctx.muting, ctx.autoChan);
 }
 
 void server_profile_apply(const HubSettings* settings) {
@@ -252,10 +338,9 @@ void server_profile_apply(const HubSettings* settings) {
     EnterCriticalSection(&g_profileLock);
     g_active = *settings;
     InterlockedExchange(&g_localRaceIndex, raceIndex);
-    long bits;
-    memcpy(&bits, &listenAdd, sizeof(bits));
-    InterlockedExchange(&g_listenAddBits, bits);
+    InterlockedExchange(&g_listenAddBits, profile_float_bits(listenAdd));
     InterlockedExchange(&g_hrtfEnabled, settings->enableHrtf ? 1 : 0);
+    profile_publish_scalars(settings); /* 086: before the active flag, like the race index */
     occlusion_set_enabled(settings->enableOcclusion); /* 064 root-channel switch */
     occlusion_set_intensity(settings->occlusionIntensity); /* 069 */
     occlusion_set_sound_params(settings->occAttackMs, settings->occReleaseMs,
@@ -331,35 +416,23 @@ int server_profile_is_active(void) {
 }
 
 float server_profile_get_max_volume(void) {
-    HubSettings settings;
-    if (!server_profile_get(&settings)) {
-        return 1.0f;
-    }
-    return settings.audioMaxVolume;
+    return profile_bits_float(InterlockedCompareExchange(&g_maxVolumeBits, 0, 0));
 }
 
 int server_profile_force_auto_channel(void) {
-    HubSettings settings;
-    if (!server_profile_get(&settings)) {
-        return 0;
-    }
-    return settings.forceAutoChannelSwitch;
+    return InterlockedCompareExchange(&g_forceAutoChannel, 0, 0) != 0;
+}
+
+int server_profile_force_distance_muting(void) {
+    return InterlockedCompareExchange(&g_forceDistanceMuting, 0, 0) != 0;
 }
 
 int server_profile_force_speakers_on(void) {
-    HubSettings settings;
-    if (!server_profile_get(&settings)) {
-        return 0;
-    }
-    return settings.forceSpeakersOn;
+    return InterlockedCompareExchange(&g_forceSpeakersOn, 0, 0) != 0;
 }
 
 int server_profile_get_nickname_randomizer(void) {
-    HubSettings settings;
-    if (!server_profile_get(&settings)) {
-        return 1;
-    }
-    return settings.nicknameRandomizer;
+    return InterlockedCompareExchange(&g_nicknameRandomizer, 0, 0) != 0;
 }
 
 int server_profile_copy_ingame_password(char* out, int outLen) {
@@ -400,18 +473,12 @@ float server_profile_get_listen_add_distance(void) {
         || !InterlockedCompareExchange(&g_profileActive, 0, 0)) {
         return 0.0f;
     }
-    const long bits = InterlockedCompareExchange(&g_listenAddBits, 0, 0);
-    float value;
-    memcpy(&value, &bits, sizeof(value));
+    const float value = profile_bits_float(InterlockedCompareExchange(&g_listenAddBits, 0, 0));
     return (value > 0.0f && value < 1000.0f) ? value : 0.0f;
 }
 
 int server_profile_get_realistic_audio(void) {
-    HubSettings settings;
-    if (!server_profile_get(&settings)) {
-        return 0;
-    }
-    return settings.realisticAudio;
+    return InterlockedCompareExchange(&g_realisticAudio, 0, 0) != 0;
 }
 
 int server_profile_get_hrtf_enabled(void) {
@@ -420,26 +487,102 @@ int server_profile_get_hrtf_enabled(void) {
 }
 
 float server_profile_get_filter_intensity(void) {
-    HubSettings settings;
-    if (!server_profile_get(&settings)) {
-        return 100.0f;
-    }
-    return settings.filterIntensity;
+    return profile_bits_float(InterlockedCompareExchange(&g_filterIntensityBits, 0, 0));
 }
 
 /* ---- 9.1 request driver ------------------------------------------------------ */
 
-static uint64 profile_find_root_channel(void) {
-    uint64 channels[128];
-    const int count = ts3_get_channel_list(channels, 128);
+/* Scan the channel list for the "Root" channel. Returns 0 when the list could
+   not be read (the caller keeps what it has), else 1 with *outRoot set (0 =
+   no Root in the list) and *outTruncated = 1 when the list hit the scan cap.
+   086: a top-level "Root" wins over a sub-channel with the same name — a user
+   who may create channels must not be able to shadow the real Root with a
+   crafted [GLOBAL] description. When no top-level match exists the first
+   match is used (the old behaviour), so existing servers keep working. */
+static int profile_find_root_channel(uint64* outRoot, int* outTruncated) {
+    *outRoot = 0;
+    *outTruncated = 0;
+    const int count = ts3_get_channel_list(g_channelScan, PROFILE_MAX_CHANNELS);
+    if (count <= 0) {
+        return 0;
+    }
+    *outTruncated = count >= PROFILE_MAX_CHANNELS;
+
+    uint64 firstMatch = 0;
     for (int i = 0; i < count; i++) {
         char name[128] = "";
-        if (ts3_get_channel_name(channels[i], name, sizeof(name))
-            && _stricmp(name, "root") == 0) {
-            return channels[i];
+        if (!ts3_get_channel_name(g_channelScan[i], name, sizeof(name))
+            || _stricmp(name, "root") != 0) {
+            continue;
+        }
+        if (firstMatch == 0) {
+            firstMatch = g_channelScan[i];
+        }
+        uint64 parent = 0;
+        if (ts3_get_channel_parent(g_channelScan[i], &parent) && parent == 0) {
+            *outRoot = g_channelScan[i]; /* top-level Root */
+            return 1;
         }
     }
-    return 0;
+    *outRoot = firstMatch;
+    return 1;
+}
+
+/* Re-resolve the Root channel ID now. The old ID stays in place when the list
+   is unreadable or truncated without a hit. */
+static void profile_rescan_root(ULONGLONG now) {
+    g_lastFindMs = now;
+    InterlockedExchange(&g_rootDirty, 0);
+
+    uint64 found = 0;
+    int truncated = 0;
+    if (!profile_find_root_channel(&found, &truncated)) {
+        return;
+    }
+    if (found == 0 && g_rootChannelID != 0 && truncated) {
+        return; /* Root may lie beyond the scan cap — keep the cached ID */
+    }
+    if (found == g_rootChannelID) {
+        return;
+    }
+
+    const uint64 old = g_rootChannelID;
+    g_rootChannelID = found;
+    g_requestInFlight = 0; /* an open request belonged to the old channel */
+    g_lastRequestMs = 0;   /* the new channel is requested right away, not after the 30 s retry */
+    if (found == 0) {
+        log_write("PROFILE: Root channel %llu is gone", (unsigned long long)old);
+    }
+    else if (old == 0) {
+        log_write("PROFILE: Root channel found (id=%llu)", (unsigned long long)found);
+    }
+    else {
+        log_write("PROFILE: Root channel changed (id %llu -> %llu) - reloading settings",
+            (unsigned long long)old, (unsigned long long)found);
+        g_rootRefreshWanted = 1; /* new channel: fetch its description even with an active profile */
+    }
+}
+
+/* Make sure a Root ID is known, with the existing retry throttle while it is
+   missing (086: no scan per channel event on non-Conan servers). The tick
+   passes honorDirty=1 so a channel-list change (C4) forces exactly one
+   rescan; event handlers pass 0 and leave the flag for the tick, otherwise
+   the burst of onNewChannel events at connect would rescan once per event. */
+static int profile_resolve_root(ULONGLONG now, int honorDirty) {
+    const int dirty = honorDirty && InterlockedCompareExchange(&g_rootDirty, 0, 0) != 0;
+    if (dirty || (g_rootChannelID == 0 && now - g_lastFindMs >= PROFILE_FIND_RETRY_MS)) {
+        profile_rescan_root(now);
+    }
+    return g_rootChannelID != 0;
+}
+
+void server_profile_on_channel_list_changed(uint64 channelID) {
+    (void)channelID; /* which channel does not matter: one coalesced rescan */
+    if (!ts3_thread_is_callback()) {
+        return;
+    }
+    InterlockedExchange(&g_rootDirty, 1);
+    ts3_request_wakeup(); /* the CEDRAIN drain runs server_profile_tick */
 }
 
 void server_profile_tick(void) {
@@ -449,17 +592,8 @@ void server_profile_tick(void) {
 
     const ULONGLONG now = GetTickCount64();
 
-    if (g_rootChannelID == 0) {
-        if (now - g_lastFindMs < PROFILE_FIND_RETRY_MS) {
-            return;
-        }
-        g_lastFindMs = now;
-        g_rootChannelID = profile_find_root_channel();
-        if (g_rootChannelID == 0) {
-            return;
-        }
-        log_write("PROFILE: Root channel found (id=%llu)",
-            (unsigned long long)g_rootChannelID);
+    if (!profile_resolve_root(now, 1)) {
+        return;
     }
 
     /* Description arrives async — the update event clears in-flight. */
@@ -472,11 +606,17 @@ void server_profile_tick(void) {
     }
 
     /* Once a profile is active we stop polling entirely; live edits still
-       arrive via onChannelDescriptionUpdateEvent (Root stays subscribed). */
+       arrive via onChannelDescriptionUpdateEvent (Root stays subscribed).
+       Exception (086): the Root channel was replaced — its description has
+       to be fetched once. */
     if (InterlockedCompareExchange(&g_profileActive, 0, 0)) {
-        return;
+        if (!g_rootRefreshWanted
+            || (g_lastRefreshTryMs != 0 && now - g_lastRefreshTryMs < PROFILE_REFRESH_MIN_MS)) {
+            return;
+        }
+        g_lastRefreshTryMs = now; /* also when the request fails: no API/log spam per drain */
     }
-    if (now - g_lastRequestMs < PROFILE_REQUEST_RETRY_MS && g_lastRequestMs != 0) {
+    else if (now - g_lastRequestMs < PROFILE_REQUEST_RETRY_MS && g_lastRequestMs != 0) {
         return;
     }
 
@@ -484,6 +624,7 @@ void server_profile_tick(void) {
         g_requestInFlight = 1;
         g_requestSentMs = now;
         g_lastRequestMs = now;
+        g_rootRefreshWanted = 0;
         log_debug("PROFILE: description requested (root=%llu)",
             (unsigned long long)g_rootChannelID);
     }
@@ -504,8 +645,8 @@ static unsigned int profile_desc_hash(const char* desc) {
 static unsigned int g_lastAppliedDescHash = 0;
 
 static int profile_try_apply_root_description(uint64 channelID) {
-    static char desc[PROFILE_DESC_MAX]; /* callback thread only — no reentry */
-    if (!ts3_get_channel_description(channelID, desc, sizeof(desc))) {
+    char* const desc = g_descBuf; /* file scope: wiped by server_profile_reset */
+    if (!ts3_get_channel_description(channelID, desc, sizeof(g_descBuf))) {
         return 0;
     }
 
@@ -516,24 +657,22 @@ static int profile_try_apply_root_description(uint64 channelID) {
         return 0;
     }
 
-    /* Parsed settings are static — ~10 KB with races/zones, too big for the
-       callback thread's stack budget. Callback thread only, no reentry. */
-    static HubSettings parsed;
-    if (!hub_parse_settings(desc, &parsed)) {
+    /* Parsed settings are file-scope static (g_parsedBuf) — ~10 KB with
+       races/zones, too big for the callback thread's stack budget. Callback
+       thread only, no reentry. */
+    if (!hub_parse_settings(desc, &g_parsedBuf)) {
         log_write("PROFILE: Root description has no [GLOBAL] section - ignored");
         return 0;
     }
     g_lastAppliedDescHash = hash;
-    server_profile_apply(&parsed);
+    server_profile_apply(&g_parsedBuf);
     return 1;
 }
 
+/* Event handlers: known Root, or a throttled lookup while it is missing. They
+   never consume the channel-list dirty flag (see profile_resolve_root). */
 static int profile_ensure_root_channel_id(void) {
-    if (g_rootChannelID != 0) {
-        return 1;
-    }
-    g_rootChannelID = profile_find_root_channel();
-    return g_rootChannelID != 0;
+    return profile_resolve_root(GetTickCount64(), 0);
 }
 
 int server_profile_on_description_update(uint64 channelID) {
@@ -581,7 +720,14 @@ void server_profile_reset(void) {
     g_requestInFlight = 0;
     g_requestSentMs = 0;
     g_lastRequestMs = 0;
-    g_ingamePassword[0] = '\0';
+    InterlockedExchange(&g_rootDirty, 0);
+    g_rootRefreshWanted = 0;
+    g_lastRefreshTryMs = 0;
+    /* Legacy root-channel password (IngameChannelPassword) must not outlive the
+       connection: wipe it and every buffer it was parsed through (086). */
+    SecureZeroMemory(g_ingamePassword, sizeof(g_ingamePassword));
+    SecureZeroMemory(g_descBuf, sizeof(g_descBuf));
+    SecureZeroMemory(&g_parsedBuf, sizeof(g_parsedBuf));
     mod_password_clear(); /* 077: belongs to the old connection */
     g_announced = 0; /* next profile after (re)connect announces again */
     g_lastAppliedDescHash = 0;
@@ -593,6 +739,8 @@ void server_profile_reset(void) {
     InterlockedExchange(&g_localRaceIndex, -1);
     InterlockedExchange(&g_listenAddBits, 0);
     InterlockedExchange(&g_hrtfEnabled, 0);
+    profile_publish_scalars(NULL); /* 086: back to the "no profile" defaults */
+    SecureZeroMemory(&g_active, sizeof(g_active)); /* carries the legacy password too */
     LeaveCriticalSection(&g_profileLock);
     occlusion_set_enabled(0); /* 064: no server profile -> no occlusion */
     occlusion_set_intensity((float)OCCLUSION_INTENSITY_DEFAULT);

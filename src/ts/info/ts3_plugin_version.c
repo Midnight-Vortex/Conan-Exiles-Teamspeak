@@ -1,4 +1,5 @@
 #include "ts/info/ts3_plugin_version.h"
+#include "ts/info/ts3_version_map.h"
 
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/entry/ts3_exports.h"
@@ -8,27 +9,17 @@
 #include <string.h>
 #include <windows.h>
 
-#define VERSION_MAP_SLOTS     512
-#define VERSION_TEXT_MAX      24
-#define VERSION_NAME_MAX      48
-#define VERSION_UID_MAX       48
 #define VERSION_CMD_PREFIX    "CEVER:"
 #define VERSION_CMD_MAX       64
 
-typedef struct VersionClientSlot {
-    char version[VERSION_TEXT_MAX];
-    char displayName[VERSION_NAME_MAX];
-    char uniqueId[VERSION_UID_MAX];
-    unsigned char replied;
-    unsigned char hasVersion;
-} VersionClientSlot;
-
-typedef struct VersionMapEntry {
-    anyID clientID;
-    VersionClientSlot slot;
-} VersionMapEntry;
-
+/* The table itself (probing, tombstone deletion) is the pure header
+   ts3_version_map.h — host-tested; this file adds the lock and the protocol. */
 static VersionMapEntry g_versionMap[VERSION_MAP_SLOTS];
+/* CEVER broadcast that could not be sent yet because TeamSpeak had not
+   registered the plugin ID (plugin enabled while already connected). Set by
+   ts3_version_broadcast on the callback thread, sent from the CEDRAIN drain. */
+static volatile long g_broadcastRetry = 0;
+
 static CRITICAL_SECTION g_lock;
 static INIT_ONCE g_lockOnce = INIT_ONCE_STATIC_INIT;
 
@@ -45,44 +36,7 @@ static void version_lock_ensure(void) {
 }
 
 static int version_client_id_ok(anyID clientID) {
-    return clientID > 0;
-}
-
-static VersionMapEntry* version_map_find(anyID clientID) {
-    if (!version_client_id_ok(clientID)) {
-        return NULL;
-    }
-    const size_t start = (size_t)clientID % VERSION_MAP_SLOTS;
-    for (size_t i = 0; i < VERSION_MAP_SLOTS; i++) {
-        VersionMapEntry* entry = &g_versionMap[(start + i) % VERSION_MAP_SLOTS];
-        if (entry->clientID == clientID) {
-            return entry;
-        }
-        if (entry->clientID == 0) {
-            return NULL;
-        }
-    }
-    return NULL;
-}
-
-static VersionClientSlot* version_map_get(anyID clientID, int create) {
-    VersionMapEntry* entry = version_map_find(clientID);
-    if (entry) {
-        return &entry->slot;
-    }
-    if (!create || !version_client_id_ok(clientID)) {
-        return NULL;
-    }
-    const size_t start = (size_t)clientID % VERSION_MAP_SLOTS;
-    for (size_t i = 0; i < VERSION_MAP_SLOTS; i++) {
-        entry = &g_versionMap[(start + i) % VERSION_MAP_SLOTS];
-        if (entry->clientID == 0) {
-            entry->clientID = clientID;
-            memset(&entry->slot, 0, sizeof(entry->slot));
-            return &entry->slot;
-        }
-    }
-    return NULL;
+    return vmap_client_id_ok(clientID);
 }
 
 static int version_plugin_name_ok(const char* pluginName) {
@@ -123,10 +77,7 @@ static int version_text_ok(const char* text) {
 }
 
 static void version_clear_slot_locked(anyID clientID) {
-    VersionMapEntry* entry = version_map_find(clientID);
-    if (entry) {
-        memset(entry, 0, sizeof(*entry));
-    }
+    vmap_remove(g_versionMap, clientID);
 }
 
 static void version_purge_stale_locked(anyID keepClientID,
@@ -135,18 +86,19 @@ static void version_purge_stale_locked(anyID keepClientID,
         VersionMapEntry* entry = &g_versionMap[i];
         VersionClientSlot* slot;
 
-        if (entry->clientID == 0 || entry->clientID == keepClientID || !entry->slot.hasVersion) {
+        if (entry->state != VMAP_USED || entry->clientID == keepClientID || !entry->slot.hasVersion) {
             continue;
         }
         slot = &entry->slot;
+        /* Tombstone, never memset to EMPTY: that would cut the probe chain. */
         if (uniqueId && uniqueId[0] && slot->uniqueId[0]
             && strcmp(slot->uniqueId, uniqueId) == 0) {
-            memset(entry, 0, sizeof(*entry));
+            vmap_remove_entry(entry);
             continue;
         }
         if (displayName && displayName[0] && slot->displayName[0]
             && strcmp(slot->displayName, displayName) == 0) {
-            memset(entry, 0, sizeof(*entry));
+            vmap_remove_entry(entry);
         }
     }
 }
@@ -158,7 +110,7 @@ static void version_store_locked(anyID clientID, const char* versionText,
     if (!version_text_ok(versionText)) {
         return;
     }
-    slot = version_map_get(clientID, 1);
+    slot = vmap_get(g_versionMap, clientID, 1);
     if (!slot) {
         return;
     }
@@ -204,8 +156,9 @@ static int version_send_broadcast(void) {
 void ts3_version_reset(void) {
     version_lock_ensure();
     EnterCriticalSection(&g_lock);
-    memset(g_versionMap, 0, sizeof(g_versionMap));
+    vmap_clear(g_versionMap);
     LeaveCriticalSection(&g_lock);
+    InterlockedExchange(&g_broadcastRetry, 0);
 }
 
 void ts3_version_clear_client(anyID clientID) {
@@ -217,6 +170,35 @@ void ts3_version_clear_client(anyID clientID) {
 
 void ts3_version_broadcast(void) {
     if (!ts3_thread_is_callback()) {
+        return;
+    }
+    if (version_send_broadcast()) {
+        InterlockedExchange(&g_broadcastRetry, 0);
+        return;
+    }
+    /* The only failure that fixes itself: TeamSpeak registers the plugin ID
+       AFTER ts3plugin_init, so a plugin enabled while already connected has
+       no ID yet and sendPluginCommand is refused. Remember the broadcast;
+       ts3plugin_registerPluginID wakes the drain, which sends it. */
+    const char* id = ts3_get_plugin_id();
+    if ((!id || !id[0]) && ts3_is_connected() && !pluginShuttingDown) {
+        InterlockedExchange(&g_broadcastRetry, 1);
+    }
+}
+
+int ts3_version_broadcast_pending(void) {
+    /* Only "pending" once the ID exists: before that the drain cannot send it
+       anyway and would otherwise re-wake itself in a busy loop. */
+    const char* id = ts3_get_plugin_id();
+    return InterlockedCompareExchange(&g_broadcastRetry, 0, 0) != 0
+        && id && id[0] != '\0';
+}
+
+void ts3_version_flush_broadcast(void) {
+    if (!ts3_thread_is_callback()) {
+        return;
+    }
+    if (InterlockedExchange(&g_broadcastRetry, 0) == 0) {
         return;
     }
     version_send_broadcast();
@@ -250,7 +232,7 @@ int ts3_version_on_plugin_command(const char* pluginName, const char* pluginComm
     version_purge_stale_locked(invokerClientID, invokerUniqueIdentity, invokerDisplayName);
     version_store_locked(invokerClientID, versionText, invokerDisplayName, invokerUniqueIdentity);
     {
-        VersionClientSlot* invokerSlot = version_map_get(invokerClientID, 0);
+        VersionClientSlot* invokerSlot = vmap_get(g_versionMap, invokerClientID, 0);
         needReply = invokerSlot && !invokerSlot->replied;
         if (needReply && invokerSlot) {
             invokerSlot->replied = 1;
@@ -276,7 +258,7 @@ static int version_format_one_client(anyID clientID, char* buf, size_t bufSize) 
     version_lock_ensure();
     EnterCriticalSection(&g_lock);
     {
-        VersionMapEntry* entry = version_map_find(clientID);
+        VersionMapEntry* entry = vmap_find(g_versionMap, clientID);
         if (entry) {
             slot = entry->slot;
         }
@@ -335,7 +317,7 @@ static int version_format_server_list(char* buf, size_t bufSize) {
         const char* status;
         int lineLen;
 
-        if (entry->clientID == 0 || !slot->hasVersion) {
+        if (entry->state != VMAP_USED || !slot->hasVersion) {
             continue;
         }
         anyListed = 1;

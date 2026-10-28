@@ -139,6 +139,44 @@ run_suite talk_state_test \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
+# 082 — CEVER version table (tombstones) + move return codes. Header-only, needs -Isdk/include for anyID.
+run_suite adapter_lifecycle_test \
+    -Isdk/include \
+    tests/adapter_lifecycle_test.c
+
+# 086 — move retry backoff schedule (header-only chan_move_backoff.h).
+run_suite chan_move_backoff_test \
+    tests/chan_move_backoff_test.c
+
+# 086 — real channel_manage.c against TS/Win32 stubs (move failure, cooldown, password rule, rescan).
+run_suite channel_manage_test \
+    -Isdk/include -Itests/support/win32_shim \
+    tests/channel_manage_test.c \
+    tests/support/win32_shim/win32_shim.c
+
+# 086 — real ts3_server_profile.c against stubs (Root choice, scalar getters, reset wipe).
+run_suite server_profile_test \
+    -Isdk/include -Itests/support/win32_shim \
+    tests/server_profile_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/hub/hub_parser.c \
+    src/core/proximity/zone_resolve.c \
+    src/core/proximity/proximity_math.c \
+    src/core/proximity/occlusion_params.c
+
+# 086 — real nick_anonymize.c against stubs (connection binding, UTF-8 buffers, no real name in log).
+run_suite nick_anonymize_test \
+    -Isdk/include -Itests/support/win32_shim \
+    tests/nick_anonymize_test.c \
+    tests/support/win32_shim/win32_shim.c
+
+# 086 — key-tracking reset / hotkey notify requests handled by the poller thread.
+run_suite voice_keys_test \
+    -Itests/support/win32_shim \
+    tests/voice_keys_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/zone_resolve.c
+
 # 085 — HTTP request helpers (header parsing, browser guard, Content-Length, throttle, backoff).
 run_suite http_request_test \
     tests/http_request_test.c

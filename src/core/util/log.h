@@ -15,6 +15,11 @@
  *
  * plugin.log is truncated at 250 MB when debug is off, 1 GB when debug
  * is on (any thread, under the log lock).
+ *
+ * The file handle stays open between lines (shared READ|WRITE|DELETE) and is
+ * re-opened after the size-cap reset, after write errors and when the file
+ * was deleted/renamed meanwhile (checked about once per second). log_close()
+ * releases it; it is the last step of ts3plugin_shutdown.
  */
 
 void log_set_enabled(int enabled);
