@@ -5,6 +5,7 @@
 #include "core/proximity/occlusion.h"
 
 #include <math.h>
+#include <stddef.h>
 
 typedef struct OccModParam {
     const char* name;
