@@ -298,19 +298,20 @@ void updateServerLimitMessages() {
 }
 
 // Display status message in interface | Afficher un message de statut dans l'interface
+//
+// 087: the colour (red for errors, green for success) is chosen from the message TEXT by
+// the dialog's WM_CTLCOLORSTATIC handler (control 600) when the control repaints, so
+// isError is not needed here. The two SendMessage(hStatusMessage, WM_CTLCOLORSTATIC,
+// GetDC(...)) calls that used to follow were removed: they sent the message to the
+// static control itself (no visible effect) and leaked one DC per status message.
+// 087 : la couleur vient du TEXTE (WM_CTLCOLORSTATIC du dialogue). Les deux appels
+// SendMessage(..., GetDC(...)) etaient sans effet et fuyaient un DC par message.
 void showStatusMessage(const wchar_t* message, BOOL isError) {
+    (void)isError;
     if (hStatusMessage) {
         SetWindowTextW(hStatusMessage, message);
         InvalidateRect(hStatusMessage, NULL, TRUE);
         UpdateWindow(hStatusMessage);
-
-        // Change color based on message type | Changer la couleur selon le type de message
-        if (isError) {
-            SendMessage(hStatusMessage, WM_CTLCOLORSTATIC, (WPARAM)GetDC(hStatusMessage), (LPARAM)hStatusMessage);
-        }
-        else {
-            SendMessage(hStatusMessage, WM_CTLCOLORSTATIC, (WPARAM)GetDC(hStatusMessage), (LPARAM)hStatusMessage);
-        }
 
         SetTimer(hConfigDialog, 2, 5000, NULL);
     }

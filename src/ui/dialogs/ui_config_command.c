@@ -16,11 +16,108 @@
 #include <uxtheme.h>
 #include "ui_config_internal.h"
 #include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_logic.h"
 
 /*
  * ui_config_command.c: WM_COMMAND handler for the F10 settings dialog.
  * Pure move-split from ui_main.c (V8.10). UI thread only.
+ *
+ * 087: Save validates the distance fields (ui_collect_distances_for_save), the HUD
+ * combos preview live through g_config (ui_cfg_hud_preview), and the Rename button
+ * only retargets the preset when it really opens the rename dialog.
  */
+
+// Reports an invalid distance field: status message (red), beep, focus on the field.
+// Nothing has been written to the working copy or to disk at this point.
+// Signale un champ de distance invalide : message de statut, bip, focus sur le champ.
+static void ui_report_bad_distance(HWND edit, const wchar_t* modeName, UiDistStatus status,
+    float hubMin, float hubMax) {
+    wchar_t msg[220];
+    switch (status) {
+    case UI_DIST_EMPTY:
+        swprintf(msg, 220, L"\u26A0 Error: %ls distance is empty - enter a number greater than 0", modeName);
+        break;
+    case UI_DIST_NOT_POSITIVE:
+        swprintf(msg, 220, L"\u26A0 Error: %ls distance must be greater than 0", modeName);
+        break;
+    case UI_DIST_OUT_OF_RANGE:
+        if (hubMin > 0.0f && hubMax > 0.0f) {
+            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be between %.1f and %.1f (server limits)",
+                modeName, hubMin, hubMax);
+        }
+        else if (hubMin > 0.0f) {
+            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be at least %.1f (server limit)", modeName, hubMin);
+        }
+        else {
+            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be at most %.1f (server limit)", modeName, hubMax);
+        }
+        break;
+    case UI_DIST_NOT_NUMBER:
+    default:
+        swprintf(msg, 220, L"\u26A0 Error: %ls distance is not a valid number", modeName);
+        break;
+    }
+    showStatusMessage(msg, TRUE);
+    MessageBeep(MB_ICONWARNING);
+    if (edit && IsWindow(edit)) {
+        SetFocus(edit);
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+    }
+}
+
+// Reads + validates the three distance edits for a Save (see ui_config_internal.h).
+BOOL ui_collect_distances_for_save(float* outWhisper, float* outNormal, float* outShout) {
+    PluginConfig* cfg = ui_cfg();
+    *outWhisper = cfg->distanceWhisper;
+    *outNormal = cfg->distanceNormal;
+    *outShout = cfg->distanceShout;
+
+    // In a hub zone the edits show the ZONE's distances (updateDynamicInterface). They
+    // must not be stored as the player's own distances: keep the personal working-copy
+    // values. | Dans une zone les champs affichent les distances de la zone : on garde
+    // les distances personnelles de la copie de travail.
+    if (currentZoneIndex != -1) {
+        return TRUE;
+    }
+
+    const BOOL limitsActive = shouldApplyDistanceLimits();
+    const struct {
+        HWND edit;
+        const wchar_t* name;
+        double hubMin;
+        double hubMax;
+    } fields[3] = {
+        { hDistanceWhisperEdit, L"Whisper", hubMinimumWhisper, hubMaximumWhisper },
+        { hDistanceNormalEdit, L"Normal", hubMinimumNormal, hubMaximumNormal },
+        { hDistanceShoutEdit, L"Shout", hubMinimumShout, hubMaximumShout },
+    };
+    float parsed[3] = { 0.0f, 0.0f, 0.0f };
+
+    for (int i = 0; i < 3; i++) {
+        wchar_t text[32] = L"";
+        UiDistStatus status = UI_DIST_EMPTY;
+        if (fields[i].edit) {
+            if (GetWindowTextLengthW(fields[i].edit) >= 32) {
+                status = UI_DIST_NOT_NUMBER; // would be cut by the 32-char buffer
+            }
+            else {
+                GetWindowTextW(fields[i].edit, text, 32);
+                status = ui_dist_parse(text, limitsActive, (float)fields[i].hubMin,
+                    (float)fields[i].hubMax, &parsed[i]);
+            }
+        }
+        if (status != UI_DIST_OK) {
+            ui_report_bad_distance(fields[i].edit, fields[i].name, status,
+                (float)fields[i].hubMin, (float)fields[i].hubMax);
+            return FALSE;
+        }
+    }
+
+    *outWhisper = parsed[0];
+    *outNormal = parsed[1];
+    *outShout = parsed[2];
+    return TRUE;
+}
 
 LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         switch (LOWORD(wParam)) {
@@ -113,24 +210,29 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             }
             break;
 
-        case 215: // HUD theme combo — live overlay preview | combo thème HUD — aperçu live
+        // HUD combos — live preview (087): the overlay reads g_config.hud*, not the dialog's
+        // working copy, so the choice is pushed into g_config (no file save) and the overlay
+        // is refreshed. Closing the dialog without Save restores the values from dialog open.
+        // Combos HUD — aperçu live : le choix est poussé dans g_config (sans sauvegarde) ;
+        // fermer sans Save restaure les valeurs d'ouverture.
+        case 215: // HUD theme combo | combo thème HUD
             if (HIWORD(wParam) == CBN_SELCHANGE) {
                 ui_read_hud_theme_from_combo();
-                voice_overlay_refresh_theme();
+                ui_cfg_hud_preview(UI_HUD_PART_THEME);
             }
             break;
 
-        case 216: // HUD position combo — live overlay reposition | combo position HUD — reposition live
+        case 216: // HUD position combo | combo position HUD
             if (HIWORD(wParam) == CBN_SELCHANGE) {
                 ui_read_hud_position_from_combo();
-                voice_overlay_refresh_position();
+                ui_cfg_hud_preview(UI_HUD_PART_POSITION);
             }
             break;
 
-        case 217: // HUD size combo — live overlay resize | combo taille HUD — redimensionnement live
+        case 217: // HUD size combo | combo taille HUD
             if (HIWORD(wParam) == CBN_SELCHANGE) {
                 ui_read_hud_size_from_combo();
-                voice_overlay_refresh_size();
+                ui_cfg_hud_preview(UI_HUD_PART_SIZE);
             }
             break;
 
@@ -243,9 +345,17 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             break;
         }
 
+        // "\ConanSandbox\Saved" is appended below: a game folder that leaves no room for it
+        // gets a message (wcscat_s used to abort the whole TeamSpeak process here).
+        // Un dossier trop long donne un message au lieu de faire planter TeamSpeak.
+        if (!ui_game_folder_fits(displayedPathText, MAX_PATH)) {
+            showStatusMessage(L"\u26A0 Error: Game path is too long", TRUE);
+            break;
+        }
+
         // Construire le chemin complet (displayedPathText + \ConanSandbox\Saved)
         wcscpy_s(pathToSave, MAX_PATH, displayedPathText);
-        wcscat_s(pathToSave, MAX_PATH, L"\\ConanSandbox\\Saved");
+        wcscat_s(pathToSave, MAX_PATH, UI_SAVED_SUBPATH);
 
         if (enableLogConfig) {
             char logMsg[512];
@@ -321,19 +431,26 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
     }
 }
            else if (currentCategory == 2) {
-               // === CATÉGORIE 2 : ADVANCED OPTIONS (reste inchangé) ===
+               // === CATÉGORIE 2 : ADVANCED OPTIONS ===
+               // Validate the distance fields FIRST: an empty / non-numeric / out-of-range
+               // field is refused with a status message and nothing is overwritten
+               // (it used to become 0.5 m silently and report "saved successfully").
+               float whisperValue, normalValue, shoutValue;
+               if (!ui_collect_distances_for_save(&whisperValue, &normalValue, &shoutValue)) {
+                   break;
+               }
+
                ui_cfg()->enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
                ui_cfg()->enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
                ui_cfg()->enableVoiceToggle = (IsDlgButtonChecked(hwnd, 204) == BST_CHECKED);
 
+               // writeFullConfiguration() takes the distances as text and stores them in the
+               // working copy itself.
                wchar_t distWhisper[32], distNormal[32], distShout[32];
-               GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
-               GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
-               GetWindowTextW(hDistanceShoutEdit, distShout, 32);
+               swprintf(distWhisper, 32, L"%.1f", whisperValue);
+               swprintf(distNormal, 32, L"%.1f", normalValue);
+               swprintf(distShout, 32, L"%.1f", shoutValue);
 
-               ui_cfg()->distanceWhisper = (float)_wtof(distWhisper);
-               ui_cfg()->distanceNormal = (float)_wtof(distNormal);
-               ui_cfg()->distanceShout = (float)_wtof(distShout);
                ui_read_hud_theme_from_combo();
                ui_read_hud_position_from_combo();
                ui_read_hud_size_from_combo();
@@ -391,6 +508,13 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             // Save current voice mode before modifying | Sauvegarder le mode vocal actuel
             float currentVoiceDistance = localVoiceData.voiceDistance;
 
+            // Validate the distance fields first (nothing is overwritten when one is invalid)
+            // Valider d'abord les champs de distance (rien n'est ecrase s'ils sont invalides)
+            float whisperValue, normalValue, shoutValue;
+            if (!ui_collect_distances_for_save(&whisperValue, &normalValue, &shoutValue)) {
+                break;
+            }
+
             // Get values from interface | Récupérer les valeurs de l'interface
             ui_cfg()->enableDistanceMuting = (IsDlgButtonChecked(hwnd, 201) == BST_CHECKED);
             ui_cfg()->enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
@@ -398,16 +522,6 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             ui_read_hud_theme_from_combo();
             ui_read_hud_position_from_combo();
             ui_read_hud_size_from_combo();
-
-            wchar_t distWhisper[32], distNormal[32], distShout[32];
-            GetWindowTextW(hDistanceWhisperEdit, distWhisper, 32);
-            GetWindowTextW(hDistanceNormalEdit, distNormal, 32);
-            GetWindowTextW(hDistanceShoutEdit, distShout, 32);
-
-            // Convert distances | Convertir les distances
-            float whisperValue = (float)_wtof(distWhisper);
-            float normalValue = (float)_wtof(distNormal);
-            float shoutValue = (float)_wtof(distShout);
 
             // Update global distances | Mettre à jour les distances globales
             ui_cfg()->distanceWhisper = whisperValue;
@@ -462,9 +576,16 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             // Handle preset rename buttons | Gérer boutons rename
             else if (LOWORD(wParam) >= 950 && LOWORD(wParam) < 950 + MAX_VOICE_PRESETS) {
                 int presetIndex = LOWORD(wParam) - 950;
-                renamePresetIndex = presetIndex;
 
-                if (!hPresetRenameDialog || !IsWindow(hPresetRenameDialog)) {
+                if (hPresetRenameDialog && IsWindow(hPresetRenameDialog)) {
+                    // The rename dialog is modeless and already open for its preset: a second
+                    // click on any Rename button must not retarget it (the OK button would then
+                    // rename the wrong preset) — just bring it to the front.
+                    // Deja ouvert : ne pas changer de cible, juste le remettre devant.
+                    SetForegroundWindow(hPresetRenameDialog);
+                }
+                else {
+                    renamePresetIndex = presetIndex; // set only when the dialog is really created
                     const wchar_t RENAME_DIALOG_CLASS[] = L"PresetRenameDialogClass";
                     WNDCLASSW wc = { 0 };
                     wc.lpfnWndProc = PresetRenameDialogProc;

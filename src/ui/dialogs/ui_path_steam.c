@@ -25,6 +25,7 @@
 #pragma comment(lib, "uxtheme.lib")
 #endif
 #include "ui_config_internal.h"
+#include "ui/config/ui_config_logic.h"
 
 /*
  * ui_path_steam.c: game-folder browse + Steam auto-detect.
@@ -74,16 +75,26 @@ void browseSavedPath(HWND hwnd) {
 
                     // ✅ 7. Stocker dans une variable TEMPORAIRE pour éviter d'écraser displayedPathText
                     if (SUCCEEDED(hr) && pszFilePath) {
-                        wchar_t tempSelectedPath[MAX_PATH];
-                        wcscpy_s(tempSelectedPath, MAX_PATH, pszFilePath);
+                        // A folder so long that "\ConanSandbox\Saved" would not fit in MAX_PATH is
+                        // refused with a message. wcscpy_s of a >= MAX_PATH path used to trigger the
+                        // CRT invalid-parameter handler, which terminates TeamSpeak.
+                        // Dossier trop long : message au lieu d'un plantage de TeamSpeak.
+                        if (!ui_game_folder_fits(pszFilePath, MAX_PATH)) {
+                            showStatusMessage(L"\u26A0 Error: Selected path is too long", TRUE);
+                            MessageBeep(MB_ICONWARNING);
+                        }
+                        else {
+                            wchar_t tempSelectedPath[MAX_PATH];
+                            ui_wcs_copy(tempSelectedPath, MAX_PATH, pszFilePath);
 
-                        // ✅ Afficher seulement le dossier du jeu (SANS \ConanSandbox\Saved)
-                        wcscpy_s(displayedPathText, MAX_PATH, tempSelectedPath);
+                            // ✅ Afficher seulement le dossier du jeu (SANS \ConanSandbox\Saved)
+                            ui_wcs_copy(displayedPathText, MAX_PATH, tempSelectedPath);
 
-                        // ✅ Forcer le redessin de l'image pour afficher le nouveau texte
-                        if (hSavedPathBg && IsWindow(hSavedPathBg)) {
-                            InvalidateRect(hSavedPathBg, NULL, TRUE);
-                            UpdateWindow(hSavedPathBg);
+                            // ✅ Forcer le redessin de l'image pour afficher le nouveau texte
+                            if (hSavedPathBg && IsWindow(hSavedPathBg)) {
+                                InvalidateRect(hSavedPathBg, NULL, TRUE);
+                                UpdateWindow(hSavedPathBg);
+                            }
                         }
 
                         CoTaskMemFree(pszFilePath);

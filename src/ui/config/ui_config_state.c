@@ -1,5 +1,6 @@
 #include "ui/config/ui_config_state.h"
 
+#include "ui/config/ui_config_logic.h"
 #include "plugin_internal.h"
 #include "ui/plugin_ui_compat.h"
 #include "core/util/log.h"
@@ -13,6 +14,20 @@
 
 static PluginConfig s_f10Cfg;
 static volatile long s_f10DialogActive = 0;
+
+/* HUD options that are currently "saved": the values at dialog open, replaced
+   by the working copy's values after every commit. The HUD live preview
+   (ui_cfg_hud_preview) pushes unsaved combo choices into g_config; closing the
+   dialog without saving puts these values back. UI thread only. */
+static int s_hudSavedTheme = 0;
+static int s_hudSavedPosition = 0;
+static int s_hudSavedSize = 0;
+
+typedef struct UiHudValues {
+    int theme;
+    int position;
+    int size;
+} UiHudValues;
 
 PluginConfig* ui_cfg(void) {
     if (InterlockedCompareExchange(&s_f10DialogActive, 0, 0)) {
@@ -49,14 +64,57 @@ void ui_cfg_publish_legacy_mirrors(void) {
     localVoiceData.voiceDistance = voice_mode_get_current_distance();
 }
 
+/* ConfigMutator: write the three HUD options into the live g_config. */
+static void ui_cfg_hud_mutator(PluginConfig* g, void* ctx) {
+    const UiHudValues* v = (const UiHudValues*)ctx;
+    g->hudTheme = v->theme;
+    g->hudPosition = v->position;
+    g->hudSize = v->size;
+}
+
 void ui_cfg_dialog_begin(void) {
     config_copy(&s_f10Cfg);
+    s_hudSavedTheme = s_f10Cfg.hudTheme;
+    s_hudSavedPosition = s_f10Cfg.hudPosition;
+    s_hudSavedSize = s_f10Cfg.hudSize;
     InterlockedExchange(&s_f10DialogActive, 1);
     ui_cfg_publish_legacy_mirrors();
 }
 
 void ui_cfg_dialog_end(void) {
-    InterlockedExchange(&s_f10DialogActive, 0);
+    /* Idempotent: only the call that really closes the dialog restores. */
+    if (!InterlockedExchange(&s_f10DialogActive, 0)) {
+        return;
+    }
+
+    /* Closed without Save: undo a HUD live preview that was never committed. */
+    PluginConfig cur;
+    config_copy(&cur);
+    if (cur.hudTheme != s_hudSavedTheme || cur.hudPosition != s_hudSavedPosition
+        || cur.hudSize != s_hudSavedSize) {
+        UiHudValues saved = { s_hudSavedTheme, s_hudSavedPosition, s_hudSavedSize };
+        config_modify(ui_cfg_hud_mutator, &saved);
+        voice_overlay_refresh_theme();
+        voice_overlay_refresh_position();
+        voice_overlay_refresh_size();
+    }
+}
+
+void ui_cfg_hud_preview(unsigned parts) {
+    if (!InterlockedCompareExchange(&s_f10DialogActive, 0, 0)) {
+        return;
+    }
+    UiHudValues v = { s_f10Cfg.hudTheme, s_f10Cfg.hudPosition, s_f10Cfg.hudSize };
+    config_modify(ui_cfg_hud_mutator, &v);
+    if (parts & UI_HUD_PART_THEME) {
+        voice_overlay_refresh_theme();
+    }
+    if (parts & UI_HUD_PART_POSITION) {
+        voice_overlay_refresh_position();
+    }
+    if (parts & UI_HUD_PART_SIZE) {
+        voice_overlay_refresh_size();
+    }
 }
 
 void ui_cfg_get_active_saved_path(wchar_t* out, size_t outLen) {
@@ -98,16 +156,35 @@ void ui_cfg_set_active_saved_path_full(const wchar_t* savedPathFull) {
     }
 }
 
-void ui_cfg_commit(void) {
-    PluginConfig* cfg = ui_cfg();
-    config_clamp(cfg);
-    config_apply(cfg);
-    config_save();
-    log_set_enabled(cfg->debugMode);
+/* ConfigMutator: copy the dialog-owned fields of the working copy into g_config. */
+static void ui_cfg_commit_mutator(PluginConfig* g, void* ctx) {
+    ui_cfg_merge_dialog_fields(g, (const PluginConfig*)ctx);
+}
 
-    if ((VoiceMode)currentVoiceMode != voice_mode_get_current()) {
-        voice_mode_apply((VoiceMode)currentVoiceMode);
+void ui_cfg_commit(void) {
+    if (InterlockedCompareExchange(&s_f10DialogActive, 0, 0)) {
+        /* Merge ONLY what the dialog edits. The working copy is a snapshot from
+           dialog open; copying all of it (config_apply) used to overwrite newer
+           DefaultsAppliedServer / AutomaticSavedPath values written meanwhile by
+           other threads. */
+        config_clamp(&s_f10Cfg);
+        const PluginConfig work = s_f10Cfg;
+        config_modify(ui_cfg_commit_mutator, (void*)&work);
+
+        /* These HUD values are now permanent: Cancel must not revert them. */
+        s_hudSavedTheme = work.hudTheme;
+        s_hudSavedPosition = work.hudPosition;
+        s_hudSavedSize = work.hudSize;
     }
+    config_save();
+
+    PluginConfig now;
+    config_copy(&now);
+    log_set_enabled(now.debugMode);
+
+    /* No voice_mode_apply() here: the dialog never changes the voice mode, and
+       re-applying the stale currentVoiceMode mirror could only revert a mode
+       the player switched by hotkey while the dialog was open. */
     cepos_invalidate_send_cache();
     cepos_signal_send_pending();
     ts3_audio_request_recompute_all();

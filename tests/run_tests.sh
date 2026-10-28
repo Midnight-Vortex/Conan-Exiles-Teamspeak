@@ -207,6 +207,12 @@ run_suite proto_flush_test \
     src/ts/proximity/ts3_3d.c \
     src/core/proximity/proximity_math.c
 
+# 087 — F10 dialog pure helpers (bounded copy, path length, distance parser,
+# voice_presets.cfg validation, commit field ownership). Header-only
+# (src/ui/config/ui_config_logic.h), pure C.
+run_suite ui_config_logic_test \
+    tests/ui_config_logic_test.c
+
 # 088 — multi-producer deferred-chat ring (real spin lock + ring, pthreads).
 run_suite ui_chat_ring_test \
     tests/ui_chat_ring_test.c

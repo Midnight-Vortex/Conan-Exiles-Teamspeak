@@ -20,6 +20,35 @@
 extern HBRUSH g_hHudComboBrush;
 extern BOOL g_configDialogDestroying;
 
+/* Control IDs of the clickable labels next to the checkboxes. They must stay
+   unique inside the dialog: 2001-2005 are the owner-drawn key boxes (created in
+   ui_config_controls.c, drawn in ui_config_draw.c). Before 087 the labels used
+   2001-2004 as well, so GetDlgItem() could return the wrong control.
+   IDs uniques des libelles de cases a cocher (2001-2005 = boites de touches). */
+#define IDC_LABEL_AUTOPATCH   2010 /* "Automatic Patch Find" (Patch Configuration tab) */
+#define IDC_LABEL_DISTMUTING  2011 /* distance-based muting   (Advanced tab) */
+#define IDC_LABEL_CHANSWITCH  2012 /* automatic channel switching (Advanced tab) */
+#define IDC_LABEL_VOICETOGGLE 2013 /* voice mode toggle button (Advanced tab) */
+
+/* Image cache (ui_config_draw.c). Resource images used by the owner-draw code
+   are decoded ONCE (on first use) and kept until the dialog is gone, instead of
+   one LoadImageW per control per WM_DRAWITEM. The cache owns the handles: never
+   DeleteObject/DestroyIcon what these return.
+   Cache d'images : chaque ressource est decodee UNE fois puis liberee a la
+   fermeture du dialogue. */
+HBITMAP ui_image_cache_get(int resourceId);  /* NULL when the resource is missing */
+HICON ui_checkmark_icon_get(void);           /* 16x16 IDI_CHECKMARK, NULL when missing */
+/* Frees the cache, the category backgrounds (hBackground*Bitmap) and the check
+   icon and NULLs the shared handles. Call after the dialog window is destroyed. */
+void ui_image_cache_release(void);
+
+/* Save helper (ui_config_command.c): reads and validates the three distance
+   edits. TRUE = all valid (values returned). FALSE = one field is invalid: a
+   status message was shown and NOTHING must be overwritten. In a hub zone the
+   edits display the zone's distances, so the personal working-copy distances are
+   returned unchanged. */
+BOOL ui_collect_distances_for_save(float* outWhisper, float* outNormal, float* outShout);
+
 /* HUD combo helpers shared between control creation (ui_config_controls.c)
    and the Save/preview handlers in WM_COMMAND (ui_main.c). */
 void ui_sync_hud_theme_combo(void);
