@@ -4,25 +4,23 @@
 #include "ts/proximity/ts3_ceping_wire.h"
 #include "ts/proximity/ts3_client_limits.h"
 #include "core/util/log.h"
-#include "core/util/poll_interval.h"
 #include "plugin.h"
 
 #include <windows.h>
 #include <string.h>
 
-/* Same 30 ms floor as CEPOS / CEDRAIN: important wire traffic rides the
-   plugin poll tick. Still no idle traffic — only armed by a position update. */
-#define CEPING_SEND_MIN_MS      PLUGIN_POLL_INTERVAL_MS
+/* One heartbeat per second. CEPING is diagnostics only (loss/staleness), and
+   every send is relayed by the server to ALL clients (N^2 traffic) — at the
+   30 ms tick it cost as much as CEPOS itself. The position tick still ARMS
+   the send (no idle traffic); this floor decides how often it really goes
+   out. Nothing downstream depends on a faster rate: the receiver only logs
+   sequence gaps, and PLAYER_TABLE_STALE_MS (120 s) is independent of CEPING. */
+#define CEPING_SEND_MIN_MS      1000
 
-/* Per-client last seen sequence. Callback thread is the only owner (send,
-   receive, clear and reset all run there), so no lock is needed — same
-   contract as the CEPOS send state. */
-typedef struct CepingPeer {
-    unsigned long lastSeq;
-    unsigned char hasSeq;
-} CepingPeer;
-
-static CepingPeer g_peers[TS3_MAX_CLIENT_ID];
+/* Per-client receive state (last seen sequence + loss-log throttle). Callback
+   thread is the only owner (send, receive, clear and reset all run there), so
+   no lock is needed — same contract as the CEPOS send state. */
+static CepingTrack g_peers[TS3_MAX_CLIENT_ID];
 
 /* Set from any thread (pos watcher), consumed on the callback thread. */
 static volatile long g_sendPending = 0;
@@ -74,9 +72,9 @@ void ts3_ceping_flush(void) {
     now = GetTickCount64();
     if (g_lastSendMs != 0 && now - g_lastSendMs < CEPING_SEND_MIN_MS) {
         /* Not yet time. Drop the flag instead of re-arming a wakeup: the pos
-           watcher re-signals on its next 30 ms tick, so a heartbeat is never
-           lost and the callback thread is never spun just to wait out the
-           rate. */
+           watcher re-signals on its next 30 ms tick, so the heartbeat goes
+           out at the first tick after the 1 s floor and the callback thread
+           is never spun just to wait out the rate. */
         InterlockedExchange(&g_sendPending, 0);
         return;
     }
@@ -94,7 +92,8 @@ void ts3_ceping_flush(void) {
 int ts3_ceping_on_plugin_command(const char* pluginName, const char* pluginCommand,
     anyID invokerClientID) {
     unsigned long seq = 0;
-    CepingPeer* peer;
+    CepingTrack* peer;
+    CepingObserved seen;
 
     if (!pluginCommand || pluginShuttingDown) {
         return 0;
@@ -116,16 +115,21 @@ int ts3_ceping_on_plugin_command(const char* pluginName, const char* pluginComma
         return 1;
     }
 
+    /* lastSeq only moves forward (reordered packets are ignored), and the loss
+       line is rate limited per peer: a peer cannot flood the log by sending
+       wild sequence numbers. */
     peer = &g_peers[invokerClientID];
-    if (peer->hasSeq) {
-        const unsigned long missed = ceping_seq_gap(peer->lastSeq, seq);
-        if (missed > 0) {
+    seen = ceping_track_observe(peer, seq, GetTickCount64());
+    if (seen.log) {
+        if (seen.suppressed > 0) {
+            log_debug("CEPING: peer %u lost %lu update(s) (+%lu earlier loss event(s) not logged)",
+                (unsigned)invokerClientID, seen.missed, seen.suppressed);
+        }
+        else {
             log_debug("CEPING: peer %u lost %lu update(s)",
-                (unsigned)invokerClientID, missed);
+                (unsigned)invokerClientID, seen.missed);
         }
     }
-    peer->lastSeq = seq;
-    peer->hasSeq = 1;
     return 1;
 }
 

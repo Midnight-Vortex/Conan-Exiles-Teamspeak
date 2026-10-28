@@ -11,11 +11,19 @@
  *
  * Every API call is deduplicated: settings once per connection, listener and
  * client positions only when moved beyond an epsilon (old plugin flooded the
- * API with identical 3D updates under load).
+ * API with identical 3D updates under load). On top of that:
+ *  - a client whose channelset3DAttributes call FAILED is skipped for
+ *    TS3D_RETRY_BACKOFF_MS (negative cache) instead of being retried — and
+ *    failing again — on every pass;
+ *  - one ts3d_apply pass makes at most TS3D_MAX_SETS_PER_PASS client API calls;
+ *    the remaining clients continue round-robin on the next pass, and
+ *    ts3d_has_pending() tells the dispatcher that more work is waiting.
  *
  * Thread contract:
  *  - ts3d_init / ts3d_set_listener / ts3d_set_client_pos / ts3d_apply /
- *    ts3d_reset: TS callback thread ONLY (raw API goes through the adapter).
+ *    ts3d_has_pending / ts3d_invalidate_client / ts3d_reset: TS callback
+ *    thread ONLY (raw API goes through the adapter; all state is owned by that
+ *    one thread, so no locks).
  *  - ts3d_on_custom_rolloff: TS audio thread — pure, no locks, no API.
  */
 
@@ -35,13 +43,21 @@ void ts3d_set_client_pos(anyID clientID, float x, float y, float z);
 /* 7.4 custom rolloff — neutral 1.0, attenuation lives in the PCM path. */
 void ts3d_on_custom_rolloff(anyID clientID, float distance, float* volume);
 
-/* Push listener + all known players to TS 3D. Callback thread ONLY. */
+/* Push listener + known players to TS 3D (at most TS3D_MAX_SETS_PER_PASS
+   client API calls per pass, rest on the next pass). Callback thread ONLY. */
 void ts3d_apply(void);
+
+/* 1 when the last ts3d_apply pass was capped and clients are still waiting
+   (true for at most ~500 ms after that pass, so it can never spin the
+   dispatcher). Meant for the single "is there CEDRAIN work?" aggregator
+   (ts3_pending_work_any). Callback thread ONLY. */
+int ts3d_has_pending(void);
 
 /* Clear all dedup state (disconnect / new connection). Callback thread. */
 void ts3d_reset(void);
 
-/* Drop per-client dedup so the next apply pushes a fresh 3D position. */
+/* Drop per-client dedup + failure backoff so the next apply pushes a fresh 3D
+   position. Callback thread ONLY. */
 void ts3d_invalidate_client(anyID clientID);
 
 #endif /* TS3_PROXIMITY_TS3_3D_H */

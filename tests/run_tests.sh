@@ -139,6 +139,24 @@ run_suite talk_state_test \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
+# 083 — CEPOS received-name sanitising (pure wire helper).
+run_suite cepos_wire_test \
+    tests/cepos_wire_test.c
+
+# 083 — real ts3_cemode/ceping/cepos/3d against stubs + fake clock.
+# -iquote makes the shim plugin.h win over src/plugin.h; GetTickCount64 is defined in the test.
+run_suite proto_flush_test \
+    -iquote tests/support/proto_shim \
+    -Itests/support/win32_shim \
+    -Isdk/include \
+    -include tests/support/proto_shim/proto_compat.h \
+    tests/proto_flush_test.c \
+    src/ts/proximity/ts3_cemode.c \
+    src/ts/proximity/ts3_ceping.c \
+    src/ts/proximity/ts3_cepos.c \
+    src/ts/proximity/ts3_3d.c \
+    src/core/proximity/proximity_math.c
+
 # 088 — multi-producer deferred-chat ring (real spin lock + ring, pthreads).
 run_suite ui_chat_ring_test \
     tests/ui_chat_ring_test.c

@@ -1,6 +1,6 @@
 # CE-Protokoll — Plugin-Commands und Hub-Schema
 
-**Gilt ab:** V8.14 · **Status:** eingefroren (Wire-Regeln)
+**Gilt ab:** V8.14 · **Stand:** Review-Fixes 083 (CEPING 1 Hz, CEPOS-Sendepfad, CEDRAIN nur an sich selbst) · **Status:** eingefroren (Wire-Regeln)
 
 Diese Seite beschreibt **alles, was zwei Plugins ueber den TeamSpeak-Server
 austauschen**, und **alles, was ein Server-Admin dem Plugin vorgibt**. Sie ist die
@@ -36,11 +36,11 @@ entscheidet, welches Modul die Nachricht bekommt.
 
 | Praefix | Laenge | Nutzlast | Wann gesendet | Modul |
 |---|---|---|---|---|
-| `CEPOS:` | 6 | Base64 von `CeposPacket` (**56 Byte, eingefroren**) | Bewegung (gedrosselt) + 1 Hz Keepalive | `ts3_cepos.c` |
-| `CEDRAIN:` | 8 | `1` (Dummy) | Intern: Aufweck-Signal an den Callback-Thread | `ts3_entry.c` |
+| `CEPOS:` | 6 | Base64 von `CeposPacket` (**56 Byte, eingefroren**) | Bewegung (gedrosselt, Boden 30 ms) + 1 Hz Keepalive; im Leerlauf nur der Keepalive (4c) | `ts3_cepos.c` |
+| `CEDRAIN:` | 8 | `1` (Dummy) | Intern: Aufweck-Signal an den Callback-Thread — seit 083 nur an den **eigenen** Client adressiert (siehe 2.3) | Sender `ts3_adapter.c`, Empfaenger `ts3_entry.c` |
 | `CEVER:` | 6 | Versionstext, z. B. `8.0.4` | Beim Verbinden + einmalige Antwort pro Peer | `ts3_plugin_version.c` |
-| `CEMODE:` | 7 | `1;<mode>;<distanzDm>` | **Nur bei Moduswechsel** (Flanke) + Connect; Sende-Boden 30 ms | `ts3_cemode.c` |
-| `CEPING:` | 7 | `1;<seq>` | Liveness-Heartbeat, 30 ms-Tick waehrend Positionsupdates | `ts3_ceping.c` |
+| `CEMODE:` | 7 | `1;<mode>;<distanzDm>` | **Nur bei Moduswechsel** (Flanke) + Connect; Sende-Boden 30 ms; ein Wechsel, der waehrend des Sendens passiert, geht nie verloren (4.2) | `ts3_cemode.c` |
+| `CEPING:` | 7 | `1;<seq>` | Liveness-Heartbeat, **1× pro Sekunde** (vom Positions-Tick angestossen, im Leerlauf nichts) | `ts3_ceping.c` |
 | `CEAUTH:` | 7 | `1;<steamID64>` | Weiche Identitaet: Connect + einmalige Antwort pro Peer; Sende-Boden 30 ms | `ts3_ceauth.c` |
 
 ### 2.1 Warum die Praefixe nicht kollidieren
@@ -65,11 +65,43 @@ onPluginCommandEvent
   ├─ ts3_ceauth_on_plugin_command    -> CEAUTH:
   ├─ cepos_on_plugin_command         -> CEPOS:
   └─ (Rest) CEDRAIN: -> Sammel-Abarbeitung aller offenen Arbeiten
+                         (nur das CEDRAIN des eigenen Clients; fremde werden ignoriert)
 ```
 
 **Rueckgabe-Vertrag:** `1` = „war mein Praefix" (auch wenn die Nachricht
 verworfen wurde, z. B. kaputte Daten). `0` = „nicht mein Praefix". So wird eine
 defekte Nachricht nie doppelt geparst.
+
+### 2.3 `CEDRAIN:` — das interne Aufweck-Signal (Review-Fix 083)
+
+`CEDRAIN:1` ist **kein Spieler-Datum**, sondern ein Trick: Das TeamSpeak-SDK hat
+keinen Timer-Callback. Damit der Callback-Thread trotzdem „sofort“ Arbeit
+abholt, schickt der Wakeup-Thread sich selbst ein Plugin-Command — dessen
+Ankunft ruft `ts3plugin_onPluginCommandEvent` auf dem Callback-Thread auf.
+
+```text
+VORHER (bis 8.0.14)                     JETZT
+Wakeup-Thread -> Server -> ALLE         Wakeup-Thread -> Server -> nur ICH
+   (N Clients × 33/s relayt = N²)          (Ziel: PluginCommandTarget_CLIENT, eigene ID)
+```
+
+- **Warum:** Serverweit gesendet, relayt der Server jedes Aufwecken eines
+  Clients an alle anderen (~33/s pro Client, N² im Server) — und jeder
+  Empfaenger fuehrte die *fremden* Drains aus. Reiner Verlust.
+- **Fallback:** Ob der TS-Server ein an den Absender selbst adressiertes
+  Command zurueckschickt, ist nicht garantiert. Der Wakeup-Thread prueft das
+  zur Laufzeit: Kommt ca. 2 s lang (mindestens 5 Sends) **kein** eigenes
+  CEDRAIN zurueck, schaltet er automatisch auf den alten serverweiten Versand
+  um (bekannt funktionierend). Neue Verbindung / Tab-Wechsel starten die
+  Pruefung neu. Drains koennen also nie dauerhaft ausfallen.
+- **Empfang:** `ts3_entry.c` fuehrt nur das CEDRAIN des **eigenen** Clients aus;
+  das von anderen Clients (alte Plugin-Version, Fallback-Modus) wird ignoriert.
+- **Wire-Format** bleibt `CEDRAIN:1`; alte Clients verstehen es unveraendert.
+
+Umsetzung: `src/ts/adapter/ts3_adapter.c` (Wakeup-Thread),
+`src/core/util/drain_target.h` (reine Entscheidungslogik),
+`src/ts/entry/ts3_entry.c` (Filter). Das ist das Arbeitspaket ADAPTER; die
+Details stehen in dessen Aenderungsdokument.
 
 ---
 
@@ -80,7 +112,7 @@ defekte Nachricht nie doppelt geparst.
 2. **Senden nur vom Callback-Thread** ueber `ts3_send_plugin_command_server()`.
    Andere Threads setzen ein Flag und rufen `ts3_request_wakeup()`; gesendet
    wird spaeter im CEDRAIN-Durchlauf. (Einzige Ausnahme: der Wakeup-Thread
-   selbst sendet `CEDRAIN:1`.)
+   selbst sendet `CEDRAIN:1` — seit 083 nur an den eigenen Client, siehe 2.3.)
 3. **Nutzlast versionieren.** Neue Kommandos beginnen mit einer Zahl und `;`
    (z. B. `CEMODE:1;2;600`). Ein Empfaenger, der die Version nicht kennt,
    verwirft die Nachricht still. Ein **zusaetzliches Feld hinten anhaengen**
@@ -94,9 +126,12 @@ defekte Nachricht nie doppelt geparst.
    `ts3_client_id_valid()` pruefen, Zahlen auf Wertebereich pruefen
    (`isfinite`, Min/Max), Strings terminieren.
 6. **Drosseln.** Jedes Kommando braucht eine Mindestpause zwischen zwei Sends.
-   Wichtige Sends (`CEPOS`, `CEMODE`, `CEPING`, `CEAUTH`) teilen sich denselben
-   Boden `PLUGIN_POLL_INTERVAL_MS` (30 ms). Flankenereignisse (Moduswechsel)
-   senden zusaetzlich nur bei echter Aenderung.
+   Zustandsdaten, auf die ein Peer sofort reagieren muss (`CEPOS`, `CEMODE`,
+   `CEAUTH`), teilen sich den Boden `PLUGIN_POLL_INTERVAL_MS` (30 ms) —
+   Flankenereignisse (Moduswechsel) senden zusaetzlich nur bei echter
+   Aenderung. **Reine Diagnose** (`CEPING`) bekommt einen eigenen, langsamen
+   Boden (1000 ms): jeder Send wird vom Server an *alle* Clients relayt (N²),
+   und eine Diagnose darf nicht so viel Verkehr kosten wie die Position selbst.
 7. **Keine Geheimnisse.** Alles ist fuer jeden Client lesbar und faelschbar —
    also niemals Passwoerter, Tokens oder Rechte darueber transportieren.
 8. **CEPOS bleibt eingefroren.** Die 56 Byte duerfen nicht wachsen. Neue
@@ -163,6 +198,16 @@ Wer ein `CEMODE:` von einem bisher unbekannten Client bekommt, antwortet
 Zwei Sends liegen mindestens `PLUGIN_POLL_INTERVAL_MS` (30 ms) auseinander —
 derselbe Boden wie CEPOS/CEDRAIN, kein extra 250-ms-Warten.
 
+**Kein verlorener Moduswechsel (083):** Der Sender setzt vor dem Senden zuerst
+sein „Es ist etwas zu senden“-Flag auf 0 (*claim*) und liest **danach** den
+Modus. Wechselt der Spieler genau in diesem Moment den Modus (anderer Thread),
+setzt dieser Wechsel das Flag wieder auf 1 und loest einen eigenen Send aus.
+Frueher wurde das Flag erst *nach* dem Senden geloescht — der Wechsel wurde
+dabei mit geloescht, und die Peers behielten den alten Modus, weil CEMODE kein
+periodisches Auffrischen hat. Schlaegt ein Send fehl (`sendPluginCommand`
+liefert 0), wird das Flag bis zu 5× neu gesetzt, danach gibt der Sender mit
+einer Logzeile auf (kein Endlos-Spin).
+
 ### 4.3 Kein Ersatz fuer CEPOS
 
 `CEMODE` transportiert **kein Position**. Die Lautstaerkeberechnung nutzt
@@ -191,28 +236,66 @@ Beispiel: `CEPING:1;42`.
 ### 4a.2 Wann gesendet wird
 
 Der Sender erhoeht bei jedem tatsaechlichen Senden seinen Zaehler. Der
-Heartbeat haengt am Positions-Tick (derselbe Ausloeser wie CEPOS) und nutzt
-denselben Sende-Boden **`PLUGIN_POLL_INTERVAL_MS` (30 ms)**. Solange Positionen
-kommen, laeuft CEPING im Gleichschritt mit CEPOS; ein Sequenzsprung von 1
-entspricht damit einem verpassten 30-ms-Tick, nicht einer verpassten Sekunde.
-Bewegt sich der Spieler nicht bzw. kommen keine Positionen, wird auch kein
-CEPING gesendet — im Leerlauf entsteht kein Zusatzverkehr.
+Heartbeat haengt am Positions-Tick (derselbe Ausloeser wie CEPOS): jeder Tick
+(~30 ms) *meldet* „ein Heartbeat waere faellig“, tatsaechlich gesendet wird aber
+nur, wenn der letzte Send **mindestens 1000 ms** (`CEPING_SEND_MIN_MS`) zurueckliegt.
+Ist es noch nicht so weit, wird die Meldung verworfen (kein Aufweck-Spin); der
+naechste Tick meldet erneut. Bewegt sich der Spieler nicht bzw. kommen keine
+Positionen, wird auch kein CEPING gesendet — im Leerlauf entsteht kein
+Zusatzverkehr.
 
-### 4a.3 Verlusterkennung (wraparound-sicher)
+**Warum 1000 ms und nicht 30 ms (Review-Fix 083)?** Der Commit `dda9cbe` hatte
+CEPING von 1000 ms auf den 30-ms-Tick gezogen („eine Uhr fuer alles“). Aber
+jeder Send geht ueber den Server an *alle* Clients: bei N Spielern sind das
+N² Zustellungen pro Tick. CEPING ist nur Diagnose — bei 30 ms kostete sie genauso
+viel Server-Verkehr wie die Position selbst (CEPOS). Der urspruengliche Entwurf
+(`doku/aenderungen/034`) sah deshalb 1 Hz vor.
 
-Der Empfaenger merkt sich pro Peer die zuletzt gesehene `seq`. Bei der naechsten
+Was sich dadurch aendert — und was nicht:
+
+| Was | Wirkung |
+|---|---|
+| Sequenzsprung von 1 | bedeutet jetzt „eine Sekunde ohne Heartbeat“ statt „ein 30-ms-Tick fehlt“ |
+| Verlusterkennung | gleich gut: ein Paketverlust ist an der Luecke in `seq` sichtbar, egal wie langsam der Zaehler laeuft |
+| Schwellen / Veralten | **keine Abhaengigkeit**: der Empfaenger *loggt* nur Luecken. Die Spieler-Tabelle verfaellt unabhaengig davon nach `PLAYER_TABLE_STALE_MS` (120 s); Info-Panel und Audio lesen CEPING nicht |
+| Server-Verkehr | CEPING sinkt von ~33 auf ~1 Nachricht/s pro Client (rund 97 % weniger) |
+
+### 4a.3 Verlusterkennung (wraparound-sicher, reorder-sicher, gedrosselt)
+
+Der Empfaenger merkt sich pro Peer die zuletzt gesehene `seq` (`CepingTrack`,
+reine Logik in `ceping_track_observe`, `ts3_ceping_wire.h`). Bei der naechsten
 Nachricht:
 
 ```text
 Sprung um 1        -> nichts verloren
 Sprung um N (>1)   -> N-1 Heartbeats verloren  -> log_debug("peer X lost N-1")
-gleiche seq        -> Duplikat                 -> 0
-kleinere seq       -> Reihenfolge vertauscht   -> 0 (kein Phantomverlust)
+gleiche seq        -> Duplikat                 -> ignoriert
+kleinere seq       -> Reihenfolge vertauscht   -> ignoriert, lastSeq bleibt!
+(sehr viel kleiner -> Peer wurde neu gestartet -> neue Basis, kein Verlust)
 ```
 
-Die Differenz wird als **uint32 mit Ueberlauf** gerechnet (`ceping_seq_gap`),
-damit der Zaehlerwechsel von `0xFFFFFFFF` auf `0` korrekt als „consecutive"
-gilt und kein riesiger Scheinverlust entsteht.
+Die Differenz wird als **uint32 mit Ueberlauf** gerechnet, damit der
+Zaehlerwechsel von `0xFFFFFFFF` auf `0` korrekt als „consecutive“ gilt.
+
+**Nur vorwaerts fortschreiben (Review-Fix 083).** Frueher wurde `lastSeq` bei
+*jeder* Nachricht ueberschrieben — auch bei einer aelteren. Kamen die Pakete als
+10, 12, 11, 13 an, meldete das System bei 12 einen Verlust, setzte `lastSeq` bei
+11 *zurueck* und meldete bei 13 gleich noch einen. Jetzt rueckt `lastSeq` nur bei
+echten Vorwaertsspruengen (`0 < diff <= 0x7FFFFFFF`) vor; eine verspaetete 11
+ist ein stilles Nichts. (Den einen Verdacht bei 12 kann man nicht vermeiden —
+in dem Moment ist 11 noch nicht da.)
+
+**Neustart eines Peers.** Faellt die Zahl um mehr als `CEPING_REORDER_WINDOW`
+(16) zurueck, hat der Peer sein Plugin neu gestartet (Zaehler beginnt bei 1).
+Dann wird die neue Zahl als Basis uebernommen — ohne diese Regel wuerde ein
+neu gestarteter Peer ignoriert, bis sein Zaehler den alten Wert eingeholt hat.
+
+**Log-Drossel.** Ein boeswilliger Peer kann beliebige `seq`-Spruenge senden
+(`CEPING:1;1`, `CEPING:1;999999`, ...). Jede Luecke ergab frueher eine eigene
+Logzeile. Jetzt darf jeder Peer **hoechstens eine Verlust-Zeile pro Sekunde**
+schreiben; die uebrigen Ereignisse werden gezaehlt und in der naechsten Zeile
+als `(+N earlier loss event(s) not logged)` nachgereicht. Die Tabelle ist je
+Peer getrennt (`TS3_MAX_CLIENT_ID`-Slots, nur vom Callback-Thread beschrieben).
 
 ### 4a.4 Kein Ersatz fuer irgendetwas
 
@@ -278,6 +361,74 @@ gibt es keinen periodischen Verkehr.
 CEAUTH beeinflusst **weder Audio noch Position noch Modus**. Faellt es aus
 (alter Client, Steam offline, Paketverlust), fehlt nur die SteamID-Zeile im
 Info-Panel — alles andere laeuft unveraendert.
+
+---
+
+## 4c. `CEPOS:` — Sendepfad und Empfang (Review-Fixes 083)
+
+Das Wire-Format ist **unveraendert** (56 Byte, siehe 3.1). Geaendert wurde, *wie
+billig* der Sender entscheidet, ob er senden muss, und wie vorsichtig der
+Empfaenger mit dem Namen umgeht.
+
+### 4c.1 Billige Aenderungspruefung zuerst
+
+Der Positions-Tick meldet etwa alle 30 ms „vielleicht ist ein Send faellig“.
+Frueher baute `cepos_flush` *jedes Mal* das komplette Paket, nur um danach
+festzustellen, dass sich nichts geaendert hat. Dabei fielen an: ein Aufruf der
+TeamSpeak-API (`getClientSelfVariableAsString` plus `freeMemory`) fuer den
+eigenen Nickname, die Berechnung der Sprechdistanz und etwas Trigonometrie —
+rund 33× pro Sekunde, auch wenn der Spieler stillstand.
+
+Jetzt in dieser Reihenfolge (`cepos_flush`):
+
+```text
+1. Schon was zu tun?   Erster Send / Keepalive (1 s) / Cache ungueltig  -> senden
+2. Position bewegt?    |dx|,|dy|,|dz| >= 0,08 m gegenueber dem letzten Send -> senden
+3. Nickname (max. 1×/s neu gelesen) anders als zuletzt gesendet?       -> senden
+4. Sprechdistanz anders (>= 0,05 m)?                                    -> senden
+sonst: nichts tun, Flag loeschen (kein Paket, kein Base64, kein TS-API-Aufruf)
+```
+
+Das Paket (`cepos_build_local`) wird erst gebaut, wenn wirklich gesendet wird —
+mit der schon ermittelten Distanz und dem schon bekannten Namen.
+
+**Eigener Nickname: hoechstens 1× pro Sekunde neu lesen.** Der Name steckt im
+Cache `g_ownNick` (schon auf die 15 Zeichen des Wire-Felds gekuerzt). Neu
+gelesen wird, wenn der Cache aelter als `CEPOS_NICK_REFRESH_MS` (1000 ms) ist,
+beim Keepalive und nach einem Reset (neue Verbindung). Eine Umbenennung
+erreicht die Peers dadurch mit **bis zu ~1 s Verzoegerung** (frueher ~30 ms) —
+fuer eine Namensanzeige unkritisch. Schlaegt das Lesen fehl, bleibt der letzte
+gute Name (vorher: kurzzeitig `Player`, was die Peers umschalten liess);
+`Player` ist nur noch die Rueckfalloption, solange noch nie ein Name gelesen
+wurde.
+
+**Was bewusst gleich schnell bleibt:** Bewegung, Moduswechsel (Cache-Invalidierung),
+Einstellungsaenderung und Distanzaenderung gehen weiterhin **im naechsten
+30-ms-Tick** raus. Die Sprechdistanz wird dafuer bei jedem Flush neu ermittelt —
+sie kann sich auch ohne Bewegung aendern (Hub-Beschreibung, Rasse), und das soll
+sofort bei den Peers ankommen. Der Keepalive behaelt seine Periode von 1 s.
+
+### 4c.2 Namen vom Peer sind Fremdeingabe
+
+`playerName` kommt unbereinigt von einem anderen Client (16 Byte, evtl. ohne
+Endnull). Er wird in die Spielertabelle geschrieben, im UI angezeigt und ins
+Log geschrieben. Ein Name mit eingebettetem Zeilenumbruch haette eine
+gefaelschte Logzeile erzeugt (*Log Injection*). Jetzt ersetzt
+`cepos_wire_sanitize_name` (`ts3_cepos_wire.h`) jedes Byte `< 0x20` und `0x7F`
+durch `?`, **bevor** der Name gespeichert oder geloggt wird. Bytes `>= 0x80`
+bleiben (UTF-8-Namen wie „Jörg“ bleiben heil). Das Wire-Format aendert sich nicht.
+
+### 4c.3 Was mit empfangenen Positionen passiert (3D, kein Wire-Kommando)
+
+Nach dem Empfang schreibt `ts3_3d` die Positionen der hoerbaren Peers per
+`channelset3DAttributes` in TeamSpeak (fuer die Richtung beim Hoeren). Seit 083
+gilt dort:
+
+| Regel | Warum |
+|---|---|
+| Schlug der API-Aufruf fuer einen Client fehl, wird er **1 s lang nicht erneut versucht** | sonst wurde er bei jedem Durchlauf neu versucht und scheiterte jedes Mal neu |
+| Pro `ts3d_apply`-Durchlauf **hoechstens 64** Client-API-Aufrufe; der Rest kommt reihum im naechsten Durchlauf dran | zappelnde Peers kosteten sonst je einen Aufruf pro Durchlauf |
+| `ts3d_has_pending()` meldet „Rest wartet“ (hoechstens ~500 ms lang) | damit der Sammel-Durchlauf (CEDRAIN) den Rest zuegig abholt, statt auf den naechsten Zufallstreffer zu warten |
 
 ---
 
@@ -385,4 +536,6 @@ neue Daten braucht, erweitert nicht das alte Paket, sondern legt einen neuen,
 klar abgegrenzten Kanal daneben — dann koennen alte und neue Teilnehmer
 gleichzeitig weiterarbeiten. Und Zusatzinfos duerfen nie zur Voraussetzung fuer
 die Kernfunktion werden: faellt `CEMODE` aus, funktioniert Proximity-Audio
-unveraendert weiter.
+unveraendert weiter. Und: **Verkehr kostet im Relay-Netz quadratisch** — alles,
+was ein Server an alle verteilt, braucht eine Drossel, die zum Zweck passt
+(Diagnose: 1 Hz; Position: 30 ms; Wake-up: gar nicht ueber den Server).

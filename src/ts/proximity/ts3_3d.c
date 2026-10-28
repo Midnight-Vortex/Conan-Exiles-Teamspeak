@@ -19,6 +19,15 @@
 #define TS3D_CULL_MARGIN  1.25f
 #define TS3D_CULL_PAD_M   2.0f
 
+/* A channelset3DAttributes call that failed is not retried for this long. */
+#define TS3D_RETRY_BACKOFF_MS   1000
+/* Max client-position API calls (successful or failed) per ts3d_apply pass.
+   The rest continues round-robin on the next pass. */
+#define TS3D_MAX_SETS_PER_PASS  64
+/* ts3d_has_pending() stays true at most this long after a capped pass, so a
+   dispatcher that never gets to run ts3d_apply again cannot spin on it. */
+#define TS3D_PENDING_WINDOW_MS  500
+
 /* All state below is TS callback thread only — no locks needed. */
 
 /* 7.1 settings dedup */
@@ -36,6 +45,15 @@ static float g_lastClientX[TS3_MAX_CLIENT_ID];
 static float g_lastClientY[TS3_MAX_CLIENT_ID];
 static float g_lastClientZ[TS3_MAX_CLIENT_ID];
 static char  g_clientValid[TS3_MAX_CLIENT_ID];
+
+/* 7.3b negative cache: tick (ms) until which a client whose last API call
+   failed is skipped. 0 = no backoff. */
+static ULONGLONG g_retryUntilMs[TS3_MAX_CLIENT_ID];
+
+/* 7.5 per-pass cap bookkeeping */
+static int g_rrCursor = 0;                 /* snapshot index where the next pass resumes */
+static volatile long g_applyPending = 0;   /* a capped pass left work behind */
+static ULONGLONG g_applyPendingUntilMs = 0;
 
 /* ---- 7.1 one-time settings -------------------------------------------------- */
 
@@ -144,26 +162,43 @@ void ts3d_set_listener(float x, float y, float z,
 
 /* ---- 7.3 client positions ----------------------------------------------------- */
 
-void ts3d_set_client_pos(anyID clientID, float x, float y, float z) {
+/* Returns 1 when an API call was made (success OR failure) — the per-pass cap
+   counts those; deduped / backed-off clients cost nothing and return 0. */
+static int ts3d_push_client(anyID clientID, float x, float y, float z) {
     if (!ts3_thread_is_callback() || !ts3_is_connected()
         || !ts3_client_id_valid(clientID)) {
-        return;
+        return 0;
     }
     if (g_clientValid[clientID]
         && fabsf(x - g_lastClientX[clientID]) < TS3D_POS_EPS
         && fabsf(y - g_lastClientY[clientID]) < TS3D_POS_EPS
         && fabsf(z - g_lastClientZ[clientID]) < TS3D_POS_EPS) {
-        return;
+        return 0;
+    }
+
+    /* Negative cache: after a failed call, leave this client alone for a
+       moment instead of retrying (and re-failing) on every pass. */
+    if (g_retryUntilMs[clientID] != 0) {
+        if (GetTickCount64() < g_retryUntilMs[clientID]) {
+            return 0;
+        }
+        g_retryUntilMs[clientID] = 0;
     }
 
     const TS3_VECTOR position = { x, y, z };
     if (!ts3_set_3d_client(clientID, &position)) {
-        return;
+        g_retryUntilMs[clientID] = GetTickCount64() + TS3D_RETRY_BACKOFF_MS;
+        return 1;
     }
     g_lastClientX[clientID] = x;
     g_lastClientY[clientID] = y;
     g_lastClientZ[clientID] = z;
     g_clientValid[clientID] = 1;
+    return 1;
+}
+
+void ts3d_set_client_pos(anyID clientID, float x, float y, float z) {
+    (void)ts3d_push_client(clientID, x, y, z);
 }
 
 /* ---- 7.4 custom rolloff (audio thread — pure) ---------------------------------- */
@@ -204,6 +239,7 @@ void ts3d_apply(void) {
 
     PosSample local;
     if (!pos_get_current(&local)) {
+        InterlockedExchange(&g_applyPending, 0);
         return; /* no fresh own position — keep last known 3D state */
     }
 
@@ -220,16 +256,43 @@ void ts3d_apply(void) {
 
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
-    for (int i = 0; i < count; i++) {
+
+    /* At most TS3D_MAX_SETS_PER_PASS API calls per pass (jittering peers would
+       otherwise cost one call each, every pass). A capped pass resumes at the
+       next unvisited snapshot index, so every client gets its turn. */
+    int sets = 0;
+    int visited = 0;
+    const int start = (count > 0 && g_rrCursor >= 0 && g_rrCursor < count) ? g_rrCursor : 0;
+    while (visited < count) {
+        const int i = (start + visited) % count;
+        visited++;
         if (!ts3_client_id_valid(players[i].clientID)) {
             continue;
         }
         if (!ts3d_in_hear_range(&local, &players[i])) {
             continue;
         }
-        ts3d_set_client_pos(players[i].clientID,
+        sets += ts3d_push_client(players[i].clientID,
             players[i].x, players[i].y, players[i].z);
+        if (sets >= TS3D_MAX_SETS_PER_PASS) {
+            break;
+        }
     }
+
+    if (visited < count) {
+        g_rrCursor = (start + visited) % count;
+        g_applyPendingUntilMs = now + TS3D_PENDING_WINDOW_MS;
+        InterlockedExchange(&g_applyPending, 1);
+    }
+    else {
+        g_rrCursor = 0;
+        InterlockedExchange(&g_applyPending, 0);
+    }
+}
+
+int ts3d_has_pending(void) {
+    return InterlockedCompareExchange(&g_applyPending, 0, 0) != 0
+        && GetTickCount64() < g_applyPendingUntilMs;
 }
 
 /* ---- reset ------------------------------------------------------------------------ */
@@ -239,6 +302,7 @@ void ts3d_invalidate_client(anyID clientID) {
         return;
     }
     g_clientValid[clientID] = 0;
+    g_retryUntilMs[clientID] = 0;
     g_lastClientX[clientID] = 0.0f;
     g_lastClientY[clientID] = 0.0f;
     g_lastClientZ[clientID] = 0.0f;
@@ -248,4 +312,8 @@ void ts3d_reset(void) {
     g_settingsApplied = 0;
     memset(&g_lastListener, 0, sizeof(g_lastListener));
     memset(g_clientValid, 0, sizeof(g_clientValid));
+    memset(g_retryUntilMs, 0, sizeof(g_retryUntilMs));
+    g_rrCursor = 0;
+    g_applyPendingUntilMs = 0;
+    InterlockedExchange(&g_applyPending, 0);
 }
