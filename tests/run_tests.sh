@@ -16,7 +16,12 @@ cd "$ROOT"
 OUT="tests/out"
 mkdir -p "$OUT"
 
-CFLAGS=(-O2 -Wall -Wextra -I. -Isrc)
+# -ffp-contract=off: never fuse a*b+c into one FMA instruction. The release DLL
+# is built by MSVC with /fp:precise, which does not contract either; GCC does it
+# by default as soon as the target has FMA (e.g. a newer CI image), and then the
+# bit-identity checks in audio_fx_test (new DSP code vs. the old code) would
+# compare two differently rounded results instead of the two algorithms.
+CFLAGS=(-O2 -ffp-contract=off -Wall -Wextra -I. -Isrc)
 
 FAILED=0
 RESULTS=()
@@ -138,6 +143,114 @@ run_suite talk_state_test \
     src/core/proximity/talk_state.c \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
+
+# 084 — audio helpers (cave bit-identity, lowpass, seqlock tri-state, voice cap, render helpers)
+run_suite audio_fx_test \
+    -Isdk/include \
+    tests/audio_fx_test.c
+
+# 084 — voice cap property test against the real voice_modes.c
+run_suite voice_cap_test \
+    -Itests/support/win32_shim \
+    tests/voice_cap_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/voice/voice_modes.c \
+    src/core/proximity/zone_resolve.c
+
+# 084 — REAL ts3_proximity_audio.c on the host (PCM hot path, recompute, unmute, expiry)
+run_suite audio_pcm_test \
+    -Isdk/include \
+    -Itests/support/audio_shim -Itests/support/win32_shim \
+    tests/audio_pcm_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/hrtf.c \
+    src/core/proximity/player_table.c \
+    src/core/proximity/proximity_math.c \
+    src/core/proximity/zone_resolve.c \
+    src/core/proximity/occlusion.c \
+    src/core/proximity/occlusion_params.c
+
+# 082 — CEVER version table (tombstones) + move return codes. Header-only, needs -Isdk/include for anyID.
+run_suite adapter_lifecycle_test \
+    -Isdk/include \
+    tests/adapter_lifecycle_test.c
+
+# 086 — move retry backoff schedule (header-only chan_move_backoff.h).
+run_suite chan_move_backoff_test \
+    tests/chan_move_backoff_test.c
+
+# 086 — real channel_manage.c against TS/Win32 stubs (move failure, cooldown, password rule, rescan).
+run_suite channel_manage_test \
+    -Isdk/include -Itests/support/win32_shim \
+    tests/channel_manage_test.c \
+    tests/support/win32_shim/win32_shim.c
+
+# 086 — real ts3_server_profile.c against stubs (Root choice, scalar getters, reset wipe).
+run_suite server_profile_test \
+    -Isdk/include -Itests/support/win32_shim \
+    tests/server_profile_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/hub/hub_parser.c \
+    src/core/proximity/zone_resolve.c \
+    src/core/proximity/proximity_math.c \
+    src/core/proximity/occlusion_params.c
+
+# 086 — real nick_anonymize.c against stubs (connection binding, UTF-8 buffers, no real name in log).
+run_suite nick_anonymize_test \
+    -Isdk/include -Itests/support/win32_shim \
+    tests/nick_anonymize_test.c \
+    tests/support/win32_shim/win32_shim.c
+
+# 086 — key-tracking reset / hotkey notify requests handled by the poller thread.
+run_suite voice_keys_test \
+    -Itests/support/win32_shim \
+    tests/voice_keys_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/zone_resolve.c
+
+# 085 — HTTP request helpers (header parsing, browser guard, Content-Length, throttle, backoff).
+run_suite http_request_test \
+    tests/http_request_test.c
+
+# 085 — Pos.txt / legacy HTTP line parser + sample sanity (header-only pos_parse.h).
+run_suite pos_parse_test \
+    tests/pos_parse_test.c
+
+# 085 — plugin.cfg text parse / clamp (NaN/Inf) / UTF-8 decision (header-only config_text.h).
+run_suite config_text_test \
+    tests/config_text_test.c
+
+# 083 — CEPOS received-name sanitising (pure wire helper).
+run_suite cepos_wire_test \
+    tests/cepos_wire_test.c
+
+# 083 — real ts3_cemode/ceping/cepos/3d against stubs + fake clock.
+# -iquote makes the shim plugin.h win over src/plugin.h; GetTickCount64 is defined in the test.
+run_suite proto_flush_test \
+    -iquote tests/support/proto_shim \
+    -Itests/support/win32_shim \
+    -Isdk/include \
+    -include tests/support/proto_shim/proto_compat.h \
+    tests/proto_flush_test.c \
+    src/ts/proximity/ts3_cemode.c \
+    src/ts/proximity/ts3_ceping.c \
+    src/ts/proximity/ts3_cepos.c \
+    src/ts/proximity/ts3_3d.c \
+    src/core/proximity/proximity_math.c
+
+# 087 — F10 dialog pure helpers (bounded copy, path length, distance parser,
+# voice_presets.cfg validation, commit field ownership). Header-only
+# (src/ui/config/ui_config_logic.h), pure C.
+run_suite ui_config_logic_test \
+    tests/ui_config_logic_test.c
+
+# 088 — multi-producer deferred-chat ring (real spin lock + ring, pthreads).
+run_suite ui_chat_ring_test \
+    tests/ui_chat_ring_test.c
+
+# 088 — start/stop worker-handle hand-off (overlay monitor thread), pthreads.
+run_suite ui_worker_slot_test \
+    tests/ui_worker_slot_test.c
 
 # V8.6c — layering guard (no ts/ or ui/ include under src/core/).
 echo "=== layering_guard ==="

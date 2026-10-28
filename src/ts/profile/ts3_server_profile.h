@@ -11,9 +11,13 @@
  * (9.2) and holds the active profile (9.3).
  *
  * Thread contract:
- *  - server_profile_tick / _on_description_update / _reset:
- *    TS callback thread ONLY.
- *  - server_profile_get / getters: any thread (private lock, struct copy).
+ *  - server_profile_tick / _on_description_update / _on_channel_list_changed
+ *    / _reset: TS callback thread ONLY.
+ *  - server_profile_get / server_profile_get_local_race: any thread (private
+ *    lock, struct copy).
+ *  - Scalar getters (max volume, force flags, nickname randomizer, realistic
+ *    audio, filter intensity, hrtf, listen bonus): any thread, lock-free
+ *    (086: published as atomics when a profile is applied / reset).
  */
 
 #include "core/hub/hub_parser.h"
@@ -33,6 +37,12 @@ int server_profile_on_description_update(uint64 channelID);
    Reloads and applies immediately; hotkeys are left unchanged. */
 int server_profile_on_channel_edited(uint64 channelID);
 
+/* 086: a channel was created / deleted / moved / edited (0 = unknown). Sets a
+   dirty flag + wakeup only; the next server_profile_tick re-resolves the Root
+   channel once (TS fires one event per channel on connect). The cached Root ID
+   stays valid until the rescan replaced it. Callback thread ONLY. */
+void server_profile_on_channel_list_changed(uint64 channelID);
+
 /* 9.3 activate a parsed profile (also used by the update handler). */
 void server_profile_apply(const HubSettings* settings);
 
@@ -47,6 +57,10 @@ float server_profile_get_max_volume(void);
 
 /* 1 when the server forces hub<->ingame auto-move. Any thread. */
 int server_profile_force_auto_channel(void);
+
+/* 1 when the server forces distance-based muting on (0 without profile).
+   086: lock-free scalar, replaces server_profile_get() copies. Any thread. */
+int server_profile_force_distance_muting(void);
 
 /* 079: root key ForceSpeakersOn (0 without profile). Any thread. */
 int server_profile_force_speakers_on(void);
@@ -85,7 +99,8 @@ int server_profile_get_hrtf_enabled(void);
    Returns 100.0 without profile. Any thread. */
 float server_profile_get_filter_intensity(void);
 
-/* Drop everything (disconnect / new connection). Callback thread. */
+/* Drop everything (disconnect / new connection); wipes the legacy root-channel
+   password from memory (086). Callback thread. */
 void server_profile_reset(void);
 
 #endif /* TS3_PROFILE_TS3_SERVER_PROFILE_H */

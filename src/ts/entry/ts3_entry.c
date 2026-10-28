@@ -3,12 +3,20 @@
  *
  * Thread contract: every function in this file is called by TeamSpeak on its
  * callback/UI thread. Each event marks the callback thread and forwards to
- * the adapter; nothing here blocks.
+ * the adapter; nothing here blocks. Exceptions that are safe from any thread:
+ *  - ts3plugin_registerPluginID only stores the ID and requests a wakeup.
+ *  - the PCM edit events (audio thread) do no API calls and take no locks.
+ * CEDRAIN: the dispatcher below runs only for this client's own CEDRAIN (the
+ * wakeup thread addresses it to the own client; foreign ones are ignored and
+ * the arrival of the own one is reported to the adapter's self-check).
+ * Shutdown additionally joins the deferred overlay start thread, see
+ * overlay_deferred_start_thread.
  */
 
 #include "ts3_exports.h"
 
 #include "core/util/log.h"
+#include "core/util/drain_target.h"
 #include "core/config/config.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/proximity_math.h"
@@ -27,6 +35,7 @@
 #include "core/voice/voice_modes.h"
 #include "core/http/pos_http_server.h"
 #include "plugin_modules.h"
+#include "sdk/include/teamspeak/public_errors.h"
 #include "ts/nick/nick_anonymize.h"
 #include "ui/overlay/voice_overlay.h"
 #include "ui/plugin_ui_compat.h"
@@ -47,6 +56,23 @@ static volatile long g_overlay_want_immediate = 0;
    Only the callback thread creates/joins/closes it. */
 static HANDLE g_overlayThread = NULL;
 
+/* Shutdown gate of the deferred start (review fix). The deferred thread used
+   to check "not shutting down" and call overlay_start() later, so
+   overlay_stop() on the callback thread could run in between and the overlay
+   (window + monitor thread) would be created AFTER the stop. Two flags make
+   the outcome deterministic (Dekker pattern, every access is an Interlocked
+   full barrier, no lock is held across window creation):
+     - g_overlayStartClosed:     shutdown sets it first; afterwards no NEW
+                                 overlay_start() may begin.
+     - g_overlayStartInProgress: the thread sets it BEFORE re-checking the
+                                 closed flag and clears it after overlay_start()
+                                 returned.
+   Either the thread sees "closed" and builds nothing, or shutdown sees "in
+   progress" and waits (overlay_wait_start_done) until the start finished — so
+   overlay_stop() never runs before or during a start, only after it. */
+static volatile long g_overlayStartClosed = 0;
+static volatile long g_overlayStartInProgress = 0;
+
 static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
     (void)arg;
     for (int waited = 0; waited < 4000 && !pluginShuttingDown; waited += 50) {
@@ -55,11 +81,15 @@ static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
         }
         Sleep(50);
     }
-    if (pluginShuttingDown || !InterlockedCompareExchange(&g_overlay_armed, 0, 0)) {
+    InterlockedExchange(&g_overlayStartInProgress, 1);
+    if (InterlockedCompareExchange(&g_overlayStartClosed, 0, 0)
+        || pluginShuttingDown || !InterlockedCompareExchange(&g_overlay_armed, 0, 0)) {
+        InterlockedExchange(&g_overlayStartInProgress, 0);
         return 0;
     }
     overlay_ui_mark_thread();
     overlay_start();
+    InterlockedExchange(&g_overlayStartInProgress, 0);
 
     MSG msg;
     while (!pluginShuttingDown && GetMessage(&msg, NULL, 0, 0) > 0) {
@@ -78,6 +108,9 @@ static unsigned __stdcall overlay_deferred_start_thread(void* arg) {
 }
 
 static void overlay_schedule_start(void) {
+    if (pluginShuttingDown) {
+        return; /* a thread started now would outlive the shutdown join */
+    }
     if (InterlockedCompareExchange(&g_overlay_armed, 1, 0) != 0) {
         return;
     }
@@ -91,6 +124,24 @@ static void overlay_schedule_start(void) {
     g_overlayThread = (HANDLE)_beginthreadex(NULL, 0, overlay_deferred_start_thread, NULL, 0, NULL);
     if (!g_overlayThread) {
         InterlockedExchange(&g_overlay_armed, 0);
+    }
+}
+
+/* Shutdown: close the start gate (no new overlay_start() can begin) ... */
+static void overlay_close_start_gate(void) {
+    InterlockedExchange(&g_overlayStartClosed, 1);
+}
+
+/* ... and wait for an overlay_start() that already began. Must run before
+   overlay_stop(), so the stop can never overtake the start. */
+static void overlay_wait_start_done(void) {
+    DWORD waitedMs = 0;
+    while (InterlockedCompareExchange(&g_overlayStartInProgress, 0, 0)) {
+        Sleep(5);
+        waitedMs += 5;
+        if (waitedMs == 10000) {
+            log_write("SHUTDOWN: overlay start slow to finish - waiting");
+        }
     }
 }
 
@@ -234,6 +285,14 @@ void ts3plugin_setFunctionPointers(const struct TS3Functions funcs) {
 
 void ts3plugin_registerPluginID(const char* id) {
     ts3_adapter_set_plugin_id(id);
+    /* TeamSpeak registers the ID AFTER ts3plugin_init. A plugin enabled while
+       already connected tried its CEVER broadcast in init, before any ID
+       existed, and sendPluginCommand was refused. Now that the ID is known,
+       wake the drain: it sends the remembered broadcast. Flag + wakeup only —
+       no TS API from here (this may not be the callback thread). */
+    if (ts3_version_broadcast_pending()) {
+        ts3_request_wakeup();
+    }
 }
 
 static struct PluginHotkey* ts3_create_hotkey(const char* keyword, const char* description) {
@@ -324,6 +383,7 @@ int ts3plugin_init(void) {
             }
         }
     }
+    InterlockedExchange(&g_overlayStartClosed, 0);
     plugin_ui_init();
     pos_autodetect_saved_path();
     pos_watcher_set_update_callback(ts3_on_local_position_update);
@@ -355,15 +415,17 @@ int ts3plugin_init(void) {
    0. Leave ingame for hub (TS API still valid; 057).
    1. Stop accepting work: audio to passthrough (PCM path inert),
       pluginShuttingDown set (UI/overlay code stops touching HWNDs/GDI),
-      deferred overlay start disarmed.
+      deferred overlay start disarmed and its start gate closed.
    2. Stop + JOIN every plugin thread, in dependency order:
       a) key monitor (it spawns settings-dialog threads — stop it first)
       b) settings dialog (WM_CLOSE + join; may still read pos/config state)
       c) pos watcher (stop event + join; deletes its lock AFTER the join,
          safe now because the dialog thread that read pos state is gone)
-      d) overlay monitor (join) + overlay UI thread (WM_QUIT + join; the
-         overlay thread destroys its own HWND), then overlay_finalize()
-         deletes overlayTextLock — only safe after that join.
+      d) wait until a deferred overlay_start() that already began has
+         returned (overlay_wait_start_done), THEN overlay monitor (join) +
+         overlay UI thread (WM_QUIT + join; the overlay thread destroys its
+         own HWND), then overlay_finalize() deletes overlayTextLock — only
+         safe after that join.
    3. Invalidate snapshots / reset module state (pure, no TS API calls).
    4. Adapter shutdown: joins the wakeup thread and clears the connection
       identity — after this ANY TS API call is a programming error (the
@@ -377,11 +439,13 @@ void ts3plugin_shutdown(void) {
     ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
     plugin_ui_shutdown();
     InterlockedExchange(&g_overlay_armed, 0);
+    overlay_close_start_gate();
     /* 2: stop + join all plugin threads */
     removeKeyMonitoring();
     settings_dialog_shutdown();
     pos_http_server_stop();
     pos_watcher_stop();
+    overlay_wait_start_done(); /* the deferred start must be finished before the stop */
     overlay_stop();
     overlay_join_ui_thread();
     overlay_finalize();
@@ -455,6 +519,10 @@ static void ts3_reset_connection_state(void) {
     ts3d_reset();
     chan_reset();
     server_profile_reset();
+    /* CEVER table: replied flags and versions of the old session must not
+       leak into the new one (peers would never get our reply again, and stale
+       versions showed up in the info panel). Pure reset, no TS API. */
+    ts3_version_reset();
     /* Keep g_savedNickname across disconnect/tab reset so hub restore still
        works when the TS client reconnects with the anonymized digits name. */
 }
@@ -463,12 +531,12 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
     (void)errorNumber;
     ts3_thread_mark_callback();
 
-    if (newStatus == STATUS_CONNECTION_ESTABLISHED) {
-        ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
-    }
-
     /* Adapter decides whether this event concerns the active tab; events of
-       background tabs (disconnect or connect) are ignored entirely. */
+       background tabs (disconnect or connect) are ignored entirely. The audio
+       mode is touched only AFTER this decision: a background tab finishing its
+       connect used to force the ACTIVE tab's audio to passthrough. For an
+       accepted connect, ts3_reset_connection_state() below does the quiesce
+       (passthrough is its first statement). */
     const int accepted = ts3_on_connect_status_changed(serverConnectionHandlerID, newStatus);
     if (!accepted) {
         return;
@@ -486,12 +554,16 @@ void ts3plugin_onConnectStatusChangeEvent(uint64 serverConnectionHandlerID, int 
         ts3_bootstrap_connected_session();
         /* Drop stale offline chat (e.g. voice keys pressed before connect). */
         ts3_plugin_clear_pending_chat();
-        /* Self-test from Phase 3: exercise queue + wakeup + channel queries. */
-        Ts3Command cmd;
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.type = TS3_CMD_LOG_CHANNEL_LIST;
-        ts3_cmd_queue_push(&cmd);
-        ts3_request_wakeup();
+        /* Self-test from Phase 3: exercise queue + wakeup + channel queries.
+           Debug logging only — the command writes server channel names into
+           plugin.log, which must not happen in production. */
+        if (log_is_enabled()) {
+            Ts3Command cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.type = TS3_CMD_LOG_CHANNEL_LIST;
+            ts3_cmd_queue_push(&cmd);
+            ts3_request_wakeup();
+        }
     }
 }
 
@@ -518,6 +590,8 @@ void ts3plugin_currentServerConnectionChanged(uint64 serverConnectionHandlerID) 
  * >>> ADD NEW PENDING SOURCES HERE <<<  (V8.2 fix 2 was a forgotten entry.) */
 static int ts3_pending_work_any(void) {
     return ts3_cmd_queue_nonempty()
+        || plugin_ui_has_pending_sync()
+        || ts3_version_broadcast_pending()
         || voice_mode_has_pending_notify()
         || ts3_plugin_has_pending_chat()
         || cepos_send_pending()
@@ -526,6 +600,7 @@ static int ts3_pending_work_any(void) {
         || ts3_ceauth_send_pending()
         || ts3_audio_has_pending_unmutes()
         || ts3_audio_has_pending_recompute()
+        || ts3d_has_pending()   /* capped 3D pass left clients behind (083), <= 500 ms */
         || chan_has_pending_work();
 }
 
@@ -578,8 +653,27 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
     }
 
     if (pluginCommand && strncmp(pluginCommand, "CEDRAIN:", 8) == 0) {
+        /* The wakeup thread addresses CEDRAIN to this client only, but a
+           server-wide fallback (or an older plugin version) still delivers the
+           drains of OTHER clients here: ignore those — running a foreign drain
+           costs a full dispatcher pass for nothing. The arrival of our OWN
+           CEDRAIN is recorded first: it is the echo the wakeup thread's
+           self-check waits for. Own id unknown (0) or sender not reported (0)
+           -> never drop a drain (fail-open, see drain_accept_invoker). */
+        const anyID localId = ts3_get_local_client_id();
+        if (!drain_accept_invoker(localId, invokerClientID)) {
+            return;
+        }
+        if (drain_target_echo_is_own(localId, invokerClientID)) {
+            ts3_wakeup_note_own_echo();
+        }
         if (!ts3_pending_work_any()) {
             return;
+        }
+        /* UI mirror sync requested off the callback thread (pos watcher / HTTP
+           notify): the mirrors are written here only, see plugin.h. */
+        if (plugin_ui_has_pending_sync()) {
+            plugin_ui_flush_pending_sync();
         }
         if (ts3_cmd_queue_nonempty()) {
             ts3_cmd_queue_drain();
@@ -601,6 +695,9 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         }
         if (ts3_ceauth_send_pending()) {
             ts3_ceauth_flush();
+        }
+        if (ts3_version_broadcast_pending()) {
+            ts3_version_flush_broadcast();
         }
         if (ts3_audio_has_pending_recompute()) {
             ts3_audio_flush_recomputes();
@@ -697,6 +794,114 @@ void ts3plugin_onClientMoveMovedEvent(uint64 serverConnectionHandlerID, anyID cl
     ts3_on_client_move(serverConnectionHandlerID, clientID, newChannelID);
 }
 
+/* Client timed out. TS reports the client as gone (newChannelID 0): same
+   cleanup as a normal leave. The own client timing out is followed by the
+   DISCONNECTED status event, the own-client branch of ts3_on_client_move
+   handles it like any own move. */
+void ts3plugin_onClientMoveTimeoutEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, const char* timeoutMessage) {
+    (void)oldChannelID;
+    (void)newChannelID;
+    (void)visibility;
+    (void)timeoutMessage;
+    ts3_on_client_move(serverConnectionHandlerID, clientID, 0);
+}
+
+/* Client kicked from its channel: it stays on the server and lands in another
+   channel (newChannelID != 0) — exactly a move, including the own client. */
+void ts3plugin_onClientKickFromChannelEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, anyID kickerID, const char* kickerName, const char* kickerUniqueIdentifier, const char* kickMessage) {
+    (void)oldChannelID;
+    (void)visibility;
+    (void)kickerID;
+    (void)kickerName;
+    (void)kickerUniqueIdentifier;
+    (void)kickMessage;
+    ts3_on_client_move(serverConnectionHandlerID, clientID, newChannelID);
+}
+
+/* Client kicked from the server: gone (newChannelID 0), like a leave. */
+void ts3plugin_onClientKickFromServerEvent(uint64 serverConnectionHandlerID, anyID clientID, uint64 oldChannelID, uint64 newChannelID, int visibility, anyID kickerID, const char* kickerName, const char* kickerUniqueIdentifier, const char* kickMessage) {
+    (void)oldChannelID;
+    (void)newChannelID;
+    (void)visibility;
+    (void)kickerID;
+    (void)kickerName;
+    (void)kickerUniqueIdentifier;
+    (void)kickMessage;
+    ts3_on_client_move(serverConnectionHandlerID, clientID, 0);
+}
+
+/* Server answer to a command that carried one of OUR plugin return codes
+   (currently: requestClientMove). Return value contract (SDK): 1 = the plugin
+   handled it, TeamSpeak prints nothing; 0 = TeamSpeak continues as usual
+   (prints the error). Success is swallowed, failure is reported to the
+   channel module and still printed by TeamSpeak exactly as before. Codes that
+   are not ours (or NULL/empty) return 0 = unchanged behaviour. */
+int ts3plugin_onServerErrorEvent(uint64 serverConnectionHandlerID, const char* errorMessage, unsigned int error, const char* returnCode, const char* extraMessage) {
+    (void)extraMessage;
+
+    ts3_thread_mark_callback();
+    if (!returnCode || !returnCode[0]
+        || serverConnectionHandlerID != ts3_get_active_connection()) {
+        return 0;
+    }
+    if (!ts3_consume_move_return_code(returnCode)) {
+        return 0;
+    }
+    if (error == ERROR_ok) {
+        return 1;
+    }
+    log_write("TS-EVT: requestClientMove failed err=%u (%s)", error,
+        errorMessage ? errorMessage : "");
+    chan_on_move_failed(error);
+    return 0;
+}
+
+/* Channel list changes (channel created / deleted / moved / edited): the
+   channel and profile modules cache channel IDs (hub, ingame, Root). They
+   keep the old IDs until the next re-resolve, so just tell them and make sure
+   a drain follows. 0 = unknown channel. Callback thread, active tab only. */
+static void ts3_on_channel_list_changed(uint64 serverConnectionHandlerID, uint64 channelID) {
+    ts3_thread_mark_callback();
+    if (serverConnectionHandlerID != ts3_get_active_connection()) {
+        return;
+    }
+    chan_on_channel_list_changed(channelID);
+    server_profile_on_channel_list_changed(channelID);
+    if (chan_has_pending_work()) {
+        ts3_request_wakeup();
+    }
+}
+
+/* Fires once per existing channel while the channel list is received and for
+   channels that appear later. */
+void ts3plugin_onNewChannelEvent(uint64 serverConnectionHandlerID, uint64 channelID, uint64 channelParentID) {
+    (void)channelParentID;
+    ts3_on_channel_list_changed(serverConnectionHandlerID, channelID);
+}
+
+void ts3plugin_onNewChannelCreatedEvent(uint64 serverConnectionHandlerID, uint64 channelID, uint64 channelParentID, anyID invokerID, const char* invokerName, const char* invokerUniqueIdentifier) {
+    (void)channelParentID;
+    (void)invokerID;
+    (void)invokerName;
+    (void)invokerUniqueIdentifier;
+    ts3_on_channel_list_changed(serverConnectionHandlerID, channelID);
+}
+
+void ts3plugin_onDelChannelEvent(uint64 serverConnectionHandlerID, uint64 channelID, anyID invokerID, const char* invokerName, const char* invokerUniqueIdentifier) {
+    (void)invokerID;
+    (void)invokerName;
+    (void)invokerUniqueIdentifier;
+    ts3_on_channel_list_changed(serverConnectionHandlerID, channelID);
+}
+
+void ts3plugin_onChannelMoveEvent(uint64 serverConnectionHandlerID, uint64 channelID, uint64 newChannelParentID, anyID invokerID, const char* invokerName, const char* invokerUniqueIdentifier) {
+    (void)newChannelParentID;
+    (void)invokerID;
+    (void)invokerName;
+    (void)invokerUniqueIdentifier;
+    ts3_on_channel_list_changed(serverConnectionHandlerID, channelID);
+}
+
 void ts3plugin_onChannelDescriptionUpdateEvent(uint64 serverConnectionHandlerID, uint64 channelID) {
     ts3_thread_mark_callback();
     if (serverConnectionHandlerID != ts3_get_active_connection()) {
@@ -738,6 +943,9 @@ void ts3plugin_onUpdateChannelEditedEvent(uint64 serverConnectionHandlerID, uint
         plugin_ui_sync_from_config();
         plugin_ui_on_hub_profile_updated();
     }
+    /* A renamed Root/hub/ingame channel invalidates the cached channel IDs.
+       After the edit handling above: that one still relies on the old cache. */
+    ts3_on_channel_list_changed(serverConnectionHandlerID, channelID);
 }
 
 /* PTT indicator on the range HUD: highlight border while the local client

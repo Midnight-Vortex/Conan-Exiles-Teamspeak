@@ -15,6 +15,11 @@
 /* Same 30 ms floor as CEPOS / CEDRAIN. Edge-triggered; this only caps bursts. */
 #define CEMODE_SEND_MIN_MS      PLUGIN_POLL_INTERVAL_MS
 
+/* A failed send re-arms the pending flag so the mode edge is not lost, but
+   only this many times in a row: a send that keeps failing must not keep the
+   CEDRAIN dispatcher spinning. */
+#define CEMODE_SEND_RETRY_MAX   5
+
 /* One slot per client ID (sparse, bounded by TS3_MAX_CLIENT_ID). Written by
    the callback thread, read by the info panel — which TeamSpeak may call from
    its UI thread, so the table needs a lock (same reasoning as the CEVER map
@@ -47,6 +52,7 @@ static volatile long g_sendPending = 0;
 
 /* Send state — TS callback thread only. */
 static ULONGLONG g_lastSendMs = 0;
+static int g_sendFailures = 0;
 
 static const char* cemode_mode_name(unsigned char mode) {
     switch (mode) {
@@ -91,6 +97,7 @@ void ts3_cemode_flush(void) {
     char command[CEMODE_CMD_MAX];
     ULONGLONG now;
     long distanceDm;
+    VoiceMode mode;
 
     if (!ts3_thread_is_callback() || !ts3_is_connected() || pluginShuttingDown) {
         return;
@@ -105,18 +112,40 @@ void ts3_cemode_flush(void) {
         return;
     }
 
-    distanceDm = cemode_wire_distance_dm(voice_mode_get_current_distance());
-    if (!cemode_wire_format((int)voice_mode_get_current(), distanceDm,
-            command, sizeof(command))) {
-        InterlockedExchange(&g_sendPending, 0); /* unsendable — do not spin */
-        return;
+    /* Claim the pending flag BEFORE reading the mode (same pattern as
+       audio_recompute_all_impl). A mode switch on another thread that lands
+       after this point re-sets the flag and wakes CEDRAIN again, so its edge
+       gets its own send. Clearing the flag AFTER the send (old order) wiped
+       such a signal: its CAS failed because the flag was still 1, and the
+       peers kept the old mode until the next unrelated CEMODE. */
+    InterlockedExchange(&g_sendPending, 0);
+
+    /* Read the mode ONCE and derive the distance from that same value, so mode
+       and distance on the wire always belong together. */
+    mode = voice_mode_get_current();
+    distanceDm = cemode_wire_distance_dm(voice_mode_get_distance(mode));
+    if (!cemode_wire_format((int)mode, distanceDm, command, sizeof(command))) {
+        return; /* unsendable — stay claimed (not re-armed), do not spin */
     }
 
     if (ts3_send_plugin_command_server(command)) {
         g_lastSendMs = now;
+        g_sendFailures = 0;
         log_debug("CEMODE: SEND %s", command);
+        return;
     }
-    InterlockedExchange(&g_sendPending, 0);
+
+    /* The command did not leave. Re-arm so the edge is retried instead of
+       silently lost, but give up after a few attempts (no endless spin). */
+    if (++g_sendFailures <= CEMODE_SEND_RETRY_MAX) {
+        InterlockedExchange(&g_sendPending, 1);
+        ts3_request_wakeup();
+    }
+    else {
+        g_sendFailures = 0;
+        log_write("CEMODE: send failed %d times in a row - giving up until the next mode change",
+            CEMODE_SEND_RETRY_MAX + 1);
+    }
 }
 
 /* ---- receive --------------------------------------------------------------- */
@@ -185,6 +214,7 @@ void ts3_cemode_reset(void) {
     memset(g_peers, 0, sizeof(g_peers));
     LeaveCriticalSection(&g_peersLock);
     g_lastSendMs = 0;
+    g_sendFailures = 0;
     InterlockedExchange(&g_sendPending, 0);
 }
 

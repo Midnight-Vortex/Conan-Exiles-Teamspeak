@@ -108,6 +108,176 @@ static void test_small_buffer(void) {
     CHECK(ceping_wire_format(1, NULL, 16) == 0, "NULL buffer -> 0");
 }
 
+/* ---- receive-side tracking (083) ------------------------------------------ */
+
+/* Feed a list of sequences at the same instant; return the number of loss log
+   lines and (via out) the total of heartbeats reported lost. */
+static int feed(CepingTrack* t, const unsigned long* seqs, int n,
+    unsigned long long nowMs, unsigned long* totalMissed) {
+    int lines = 0;
+    int i;
+
+    *totalMissed = 0;
+    for (i = 0; i < n; i++) {
+        const CepingObserved o = ceping_track_observe(t, seqs[i], nowMs);
+        if (o.log) {
+            lines++;
+            *totalMissed += o.missed;
+        }
+    }
+    return lines;
+}
+
+static void test_track_basic(void) {
+    CepingTrack t;
+    CepingObserved o;
+
+    printf("[6] tracking — baseline, forward steps, duplicates\n");
+
+    memset(&t, 0, sizeof(t));
+    o = ceping_track_observe(&t, 100, 5000);
+    CHECK(o.missed == 0 && !o.log, "first message is the baseline, no loss");
+    CHECK(t.hasSeq && t.lastSeq == 100, "baseline stored");
+
+    o = ceping_track_observe(&t, 101, 5030);
+    CHECK(o.missed == 0 && !o.log && t.lastSeq == 101, "consecutive: nothing lost, lastSeq advances");
+
+    o = ceping_track_observe(&t, 101, 5060);
+    CHECK(o.missed == 0 && !o.log && t.lastSeq == 101, "duplicate: ignored");
+
+    o = ceping_track_observe(&t, 105, 5090);
+    CHECK(o.missed == 3 && o.log && t.lastSeq == 105, "forward jump of 4: 3 lost, logged, lastSeq advances");
+
+    CHECK(ceping_track_observe(NULL, 1, 0).log == 0, "NULL track is harmless");
+}
+
+static void test_track_reorder(void) {
+    CepingTrack t;
+    unsigned long seqs[] = { 10, 12, 11, 13 };
+    unsigned long missed;
+    CepingObserved o;
+
+    printf("[7] tracking — reordered packets never move lastSeq backwards\n");
+
+    memset(&t, 0, sizeof(t));
+    CHECK(feed(&t, seqs, 4, 1000, &missed) == 1, "10,12,11,13: exactly one loss line (was two)");
+    CHECK(missed == 1, "10,12,11,13: only the unavoidable 12 gap is reported");
+    CHECK(t.lastSeq == 13, "10,12,11,13: lastSeq ends at 13");
+
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 20, 0);
+    (void)ceping_track_observe(&t, 22, 0);
+    (void)ceping_track_observe(&t, 21, 0);
+    CHECK(t.lastSeq == 22, "late 21 after 22: lastSeq stays 22");
+    o = ceping_track_observe(&t, 23, 5000);
+    CHECK(o.missed == 0 && !o.log, "23 after the late 21: consecutive to 22, no phantom loss");
+}
+
+static void test_track_wrap(void) {
+    CepingTrack t;
+    CepingObserved o;
+
+    printf("[8] tracking — uint32 wraparound\n");
+
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 0xFFFFFFFEUL, 0);
+    o = ceping_track_observe(&t, 0xFFFFFFFFUL, 1);
+    CHECK(o.missed == 0 && t.lastSeq == 0xFFFFFFFFUL, "FFFFFFFE -> FFFFFFFF consecutive");
+    o = ceping_track_observe(&t, 0x00000000UL, 2);
+    CHECK(o.missed == 0 && !o.log && t.lastSeq == 0, "FFFFFFFF -> 0 consecutive (wrap), no loss");
+    o = ceping_track_observe(&t, 0x00000003UL, 3);
+    CHECK(o.missed == 2 && o.log && t.lastSeq == 3, "0 -> 3 after the wrap: 2 lost");
+
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 0xFFFFFFFFUL, 0);
+    o = ceping_track_observe(&t, 0x00000001UL, 5000);
+    CHECK(o.missed == 1 && o.log, "FFFFFFFF -> 1: skips 0 -> 1 lost");
+
+    /* Reorder across the wrap: 0 arrives late after 1. */
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 0xFFFFFFFFUL, 0);
+    (void)ceping_track_observe(&t, 1, 0);
+    (void)ceping_track_observe(&t, 0, 0);
+    CHECK(t.lastSeq == 1, "late 0 after 1 across the wrap: lastSeq stays 1");
+
+    /* Largest forward step the algorithm accepts. */
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 0, 0);
+    o = ceping_track_observe(&t, 0x7FFFFFFFUL, 5000);
+    CHECK(o.missed == 0x7FFFFFFEUL && o.log, "forward step 0x7FFFFFFF is a forward step");
+}
+
+static void test_track_restart(void) {
+    CepingTrack t;
+    CepingObserved o;
+
+    printf("[9] tracking — peer restart (counter back near 0) is re-based\n");
+
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 5000, 0);
+
+    o = ceping_track_observe(&t, 4990, 0);
+    CHECK(o.missed == 0 && !o.log && t.lastSeq == 5000,
+        "10 steps back is reordering (inside the window): ignored");
+    o = ceping_track_observe(&t, 5000 - CEPING_REORDER_WINDOW, 0);
+    CHECK(t.lastSeq == 5000, "exactly the window size back: still reordering");
+
+    o = ceping_track_observe(&t, 1, 0);
+    CHECK(o.missed == 0 && !o.log, "counter fell back far: no phantom loss");
+    CHECK(t.lastSeq == 1, "counter fell back far: baseline re-based to 1");
+    o = ceping_track_observe(&t, 2, 0);
+    CHECK(o.missed == 0 && !o.log && t.lastSeq == 2, "tracking continues after the re-base");
+    o = ceping_track_observe(&t, 4, 5000);
+    CHECK(o.missed == 1 && o.log, "a real loss after the re-base is detected again");
+}
+
+static void test_track_throttle(void) {
+    CepingTrack t;
+    CepingObserved o;
+    unsigned long i;
+    int lines;
+
+    printf("[10] tracking — loss log throttle (<= 1 line per peer per second)\n");
+
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 0, 1000);
+
+    o = ceping_track_observe(&t, 1000, 1000);
+    CHECK(o.log && o.missed == 999 && o.suppressed == 0, "first loss is logged immediately");
+
+    lines = 0;
+    for (i = 2; i <= 20; i++) { /* attacker: 19 more wild jumps in the same second */
+        o = ceping_track_observe(&t, i * 1000UL, 1500);
+        if (o.log) {
+            lines++;
+        }
+    }
+    CHECK(lines == 0, "19 further jumps within 1 s: no log line");
+    CHECK(t.suppressed == 19, "...but all 19 are counted");
+
+    o = ceping_track_observe(&t, 21000UL, 1999);
+    CHECK(!o.log, "999 ms after the last line: still throttled");
+
+    o = ceping_track_observe(&t, 22000UL, 2000);
+    CHECK(o.log && o.suppressed == 20 && o.missed == 999, "after 1 s: one line carrying the suppressed count");
+    CHECK(t.suppressed == 0, "suppressed counter reset after reporting");
+
+    o = ceping_track_observe(&t, 23000UL, 2100);
+    CHECK(!o.log && t.suppressed == 1, "throttle window restarts after each line");
+
+    /* Clock going backwards must not wedge the log forever. */
+    memset(&t, 0, sizeof(t));
+    (void)ceping_track_observe(&t, 0, 90000);
+    o = ceping_track_observe(&t, 10, 90000);
+    CHECK(o.log, "first loss logs");
+    o = ceping_track_observe(&t, 20, 100);
+    CHECK(o.log, "now < lastLogMs (clock reset): allowed instead of throttled forever");
+
+    /* A clean (cleared) peer starts fresh. */
+    memset(&t, 0, sizeof(t));
+    CHECK(ceping_track_observe(&t, 7, 0).log == 0 && t.hasSeq, "zeroed state = fresh peer");
+}
+
 int main(void) {
     printf("ceping wire codec tests\n");
     test_round_trip();
@@ -115,6 +285,11 @@ int main(void) {
     test_forward_compat();
     test_seq_gap();
     test_small_buffer();
+    test_track_basic();
+    test_track_reorder();
+    test_track_wrap();
+    test_track_restart();
+    test_track_throttle();
     if (g_failures) {
         printf("FAILED: %d check(s)\n", g_failures);
         return 1;

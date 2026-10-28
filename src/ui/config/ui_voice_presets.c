@@ -1,5 +1,6 @@
 #include "plugin_internal.h"
 #include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_logic.h"
 #include "ui/plugin_ui_compat.h"
 #include "resource.h"
 #ifdef CONAN_EXILES_TS_EXPORTS
@@ -269,15 +270,29 @@ BOOL renameVoicePreset(int presetIndex, const char* newName) {
 }
 
 // Save presets to configuration file | Sauvegarder les presets dans le fichier de configuration
+//
+// 087: the file is written to "voice_presets.cfg.tmp" first and only then moved over the
+// real file (MoveFileExW REPLACE_EXISTING | WRITE_THROUGH). It used to be opened with
+// "w" directly, which truncates the file at once: a failed/half write (disk full, crash,
+// TeamSpeak killed) lost ALL presets, and the fclose/ferror results were never checked.
+// The file format is unchanged.
+// 087 : ecriture dans un .tmp puis remplacement atomique ; erreurs verifiees.
 void savePresetsToConfigFile(void) {
     const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
 
     wchar_t presetFile[MAX_PATH];
-    swprintf(presetFile, MAX_PATH, L"%s\\voice_presets.cfg", configFolder);
+    wchar_t tmpFile[MAX_PATH];
+    if (swprintf(presetFile, MAX_PATH, L"%s\\voice_presets.cfg", configFolder) < 0
+        || swprintf(tmpFile, MAX_PATH, L"%s\\voice_presets.cfg.tmp", configFolder) < 0) {
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Voice presets config path too long");
+        }
+        return;
+    }
 
     FILE* file = NULL;
-    errno_t err = _wfopen_s(&file, presetFile, L"w");
+    errno_t err = _wfopen_s(&file, tmpFile, L"w");
     if (err != 0 || !file) {
         if (enableLogConfig) {
             mumbleAPI.log(ownID, "ERROR: Failed to create voice presets config file");
@@ -285,8 +300,10 @@ void savePresetsToConfigFile(void) {
         return;
     }
 
+    int writeFailed = 0;
+
     // Write current preset index | Écrire l'index du preset actuel
-    fwprintf(file, L"CurrentPreset=%d\n\n", currentPresetIndex);
+    if (fwprintf(file, L"CurrentPreset=%d\n\n", currentPresetIndex) < 0) writeFailed = 1;
 
     // Write all presets | Écrire tous les presets
     for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
@@ -294,19 +311,37 @@ void savePresetsToConfigFile(void) {
         size_t converted = 0;
         mbstowcs_s(&converted, wName, PRESET_NAME_MAX_LENGTH, voicePresets[i].name, _TRUNCATE);
 
-        fwprintf(file, L"[Preset%d]\n", i);
-        fwprintf(file, L"Name=%s\n", wName);
-        fwprintf(file, L"Whisper=%.1f\n", voicePresets[i].whisperDistance);
-        fwprintf(file, L"Normal=%.1f\n", voicePresets[i].normalDistance);
-        fwprintf(file, L"Shout=%.1f\n", voicePresets[i].shoutDistance);
-        fwprintf(file, L"WhisperKey=%d\n", voicePresets[i].whisperKey);
-        fwprintf(file, L"NormalKey=%d\n", voicePresets[i].normalKey);
-        fwprintf(file, L"ShoutKey=%d\n", voicePresets[i].shoutKey);
-        fwprintf(file, L"VoiceToggleKey=%d\n", voicePresets[i].voiceToggleKey);
-        fwprintf(file, L"IsUsed=%s\n\n", voicePresets[i].isUsed ? L"true" : L"false");
+        if (fwprintf(file, L"[Preset%d]\n", i) < 0) writeFailed = 1;
+        if (fwprintf(file, L"Name=%s\n", wName) < 0) writeFailed = 1;
+        if (fwprintf(file, L"Whisper=%.1f\n", voicePresets[i].whisperDistance) < 0) writeFailed = 1;
+        if (fwprintf(file, L"Normal=%.1f\n", voicePresets[i].normalDistance) < 0) writeFailed = 1;
+        if (fwprintf(file, L"Shout=%.1f\n", voicePresets[i].shoutDistance) < 0) writeFailed = 1;
+        if (fwprintf(file, L"WhisperKey=%d\n", voicePresets[i].whisperKey) < 0) writeFailed = 1;
+        if (fwprintf(file, L"NormalKey=%d\n", voicePresets[i].normalKey) < 0) writeFailed = 1;
+        if (fwprintf(file, L"ShoutKey=%d\n", voicePresets[i].shoutKey) < 0) writeFailed = 1;
+        if (fwprintf(file, L"VoiceToggleKey=%d\n", voicePresets[i].voiceToggleKey) < 0) writeFailed = 1;
+        if (fwprintf(file, L"IsUsed=%s\n\n", voicePresets[i].isUsed ? L"true" : L"false") < 0) writeFailed = 1;
     }
 
-    fclose(file);
+    if (ferror(file)) writeFailed = 1;
+    if (fflush(file) != 0) writeFailed = 1;
+    if (fclose(file) != 0) writeFailed = 1;
+
+    if (writeFailed) {
+        DeleteFileW(tmpFile);
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Writing voice presets failed - previous file kept");
+        }
+        return;
+    }
+
+    if (!MoveFileExW(tmpFile, presetFile, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(tmpFile);
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: Replacing voice presets file failed - previous file kept");
+        }
+        return;
+    }
 
     if (enableLogConfig) {
         mumbleAPI.log(ownID, "Voice presets saved to config file");
@@ -314,6 +349,13 @@ void savePresetsToConfigFile(void) {
 }
 
 // Load presets from configuration file | Charger les presets depuis le fichier de configuration
+//
+// 087: the file is user-editable text and is validated while it is read: a malformed
+// "[PresetX]" header ignores the whole section (it used to become preset 0 and overwrite
+// it), the index must be in range, distances must be finite numbers (clamped to
+// 0.5..500 m, same as config_clamp) and keys must be real virtual-key codes (1..255).
+// Anything invalid keeps the value the preset already had (the defaults).
+// 087 : le fichier est valide a la lecture (en-tete, index, distances, touches).
 void loadPresetsFromConfigFile(void) {
     const wchar_t* configFolder = config_get_folder_path();
     if (!configFolder) return;
@@ -341,45 +383,48 @@ void loadPresetsFromConfigFile(void) {
 
         // Parse current preset index | Parser l'index du preset actuel
         if (wcsncmp(line, L"CurrentPreset=", 14) == 0) {
-            currentPresetIndex = _wtoi(line + 14);
+            currentPresetIndex = ui_preset_parse_current(line + 14, MAX_VOICE_PRESETS);
         }
         // Parse preset section | Parser la section preset
         else if (wcsncmp(line, L"[Preset", 7) == 0) {
-            wchar_t* endBracket = wcschr(line, L']');
-            if (endBracket) {
-                *endBracket = L'\0';
-                currentPreset = _wtoi(line + 7);
+            // Invalid header -> currentPreset = -1: the lines below are ignored.
+            if (!ui_preset_parse_header(line, MAX_VOICE_PRESETS, &currentPreset)) {
+                currentPreset = -1;
+                if (enableLogConfig) {
+                    mumbleAPI.log(ownID, "WARNING: voice_presets.cfg - invalid [PresetN] header ignored");
+                }
             }
         }
         // Parse preset properties | Parser les propriétés du preset
         else if (currentPreset >= 0 && currentPreset < MAX_VOICE_PRESETS) {
+            VoiceRangePreset* preset = &voicePresets[currentPreset];
             if (wcsncmp(line, L"Name=", 5) == 0) {
                 size_t converted = 0;
-                wcstombs_s(&converted, voicePresets[currentPreset].name, PRESET_NAME_MAX_LENGTH, line + 5, _TRUNCATE);
+                wcstombs_s(&converted, preset->name, PRESET_NAME_MAX_LENGTH, line + 5, _TRUNCATE);
             }
             else if (wcsncmp(line, L"Whisper=", 8) == 0) {
-                voicePresets[currentPreset].whisperDistance = (float)_wtof(line + 8);
+                ui_preset_parse_distance(line + 8, &preset->whisperDistance);
             }
             else if (wcsncmp(line, L"Normal=", 7) == 0) {
-                voicePresets[currentPreset].normalDistance = (float)_wtof(line + 7);
+                ui_preset_parse_distance(line + 7, &preset->normalDistance);
             }
             else if (wcsncmp(line, L"Shout=", 6) == 0) {
-                voicePresets[currentPreset].shoutDistance = (float)_wtof(line + 6);
+                ui_preset_parse_distance(line + 6, &preset->shoutDistance);
             }
             else if (wcsncmp(line, L"WhisperKey=", 11) == 0) {
-                voicePresets[currentPreset].whisperKey = _wtoi(line + 11);
+                ui_preset_parse_key(line + 11, &preset->whisperKey);
             }
             else if (wcsncmp(line, L"NormalKey=", 10) == 0) {
-                voicePresets[currentPreset].normalKey = _wtoi(line + 10);
+                ui_preset_parse_key(line + 10, &preset->normalKey);
             }
             else if (wcsncmp(line, L"ShoutKey=", 9) == 0) {
-                voicePresets[currentPreset].shoutKey = _wtoi(line + 9);
+                ui_preset_parse_key(line + 9, &preset->shoutKey);
             }
             else if (wcsncmp(line, L"VoiceToggleKey=", 15) == 0) {
-                voicePresets[currentPreset].voiceToggleKey = _wtoi(line + 15);
+                ui_preset_parse_key(line + 15, &preset->voiceToggleKey);
             }
             else if (wcsncmp(line, L"IsUsed=", 7) == 0) {
-                voicePresets[currentPreset].isUsed = (wcscmp(line + 7, L"true") == 0);
+                preset->isUsed = (wcscmp(line + 7, L"true") == 0);
             }
         }
     }
@@ -402,14 +447,27 @@ void loadPresetsFromConfigFile(void) {
 void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhisper, const wchar_t* distNormal, const wchar_t* distShout) {
     // Construire le chemin COMPLET (avec \ConanSandbox\Saved)
     wchar_t savedPathFull[MAX_PATH];
+    int pathOk = 1;
 
     /* Caller-supplied gameFolder wins over stale F10 label text (preset load,
-       background autodetect). displayedPathText is only a UI mirror. */
+       background autodetect). displayedPathText is only a UI mirror.
+       087: a folder that leaves no room for "\ConanSandbox\Saved" is NOT stored
+       (a truncated path would be wrong); the callers show a message for it. */
     if (gameFolder && wcslen(gameFolder) > 0) {
-        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", gameFolder);
+        if (ui_game_folder_fits(gameFolder, MAX_PATH)) {
+            swprintf(savedPathFull, MAX_PATH, L"%s%s", gameFolder, UI_SAVED_SUBPATH);
+        }
+        else {
+            pathOk = 0;
+        }
     }
     else if (wcslen(displayedPathText) > 0) {
-        swprintf(savedPathFull, MAX_PATH, L"%s\\ConanSandbox\\Saved", displayedPathText);
+        if (ui_game_folder_fits(displayedPathText, MAX_PATH)) {
+            swprintf(savedPathFull, MAX_PATH, L"%s%s", displayedPathText, UI_SAVED_SUBPATH);
+        }
+        else {
+            pathOk = 0;
+        }
     }
     else {
         PluginConfig cfg;
@@ -423,10 +481,16 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
             savedBase = cfg.savedPath;
         }
         if (savedBase) {
-            wcsncpy_s(savedPathFull, MAX_PATH, savedBase, _TRUNCATE);
+            ui_wcs_copy(savedPathFull, MAX_PATH, savedBase);
         }
         else {
             wcscpy_s(savedPathFull, MAX_PATH, L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Conan Exiles\\ConanSandbox\\Saved");
+        }
+    }
+    if (!pathOk) {
+        savedPathFull[0] = L'\0';
+        if (enableLogConfig) {
+            mumbleAPI.log(ownID, "ERROR: writeFullConfiguration - game folder too long, path not stored");
         }
     }
 
@@ -434,19 +498,26 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
     float currentVoiceDistance = localVoiceData.voiceDistance;
 
     // Update user distances WITHOUT clamping | Mettre à jour les distances SANS limites
-    ui_cfg()->distanceWhisper = (float)_wtof(distWhisper);
-    ui_cfg()->distanceNormal = (float)_wtof(distNormal);
-    ui_cfg()->distanceShout = (float)_wtof(distShout);
+    // 087: strict parse — text that is not a finite number > 0 leaves the working-copy
+    // value untouched (_wtof turned it into 0, which config_clamp then made 0.5 m).
+    {
+        float parsed = 0.0f;
+        if (ui_dist_parse(distWhisper, 0, 0.0f, 0.0f, &parsed) == UI_DIST_OK) ui_cfg()->distanceWhisper = parsed;
+        if (ui_dist_parse(distNormal, 0, 0.0f, 0.0f, &parsed) == UI_DIST_OK) ui_cfg()->distanceNormal = parsed;
+        if (ui_dist_parse(distShout, 0, 0.0f, 0.0f, &parsed) == UI_DIST_OK) ui_cfg()->distanceShout = parsed;
+    }
 
-    // Update mod file path | Mettre à jour le chemin du fichier mod
-    size_t converted = 0;
-    char modFilePathTemp[MAX_PATH] = "";
-    wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
-    snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
+    if (pathOk) {
+        // Update mod file path | Mettre à jour le chemin du fichier mod
+        size_t converted = 0;
+        char modFilePathTemp[MAX_PATH] = "";
+        wcstombs_s(&converted, modFilePathTemp, MAX_PATH, savedPathFull, _TRUNCATE);
+        snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFilePathTemp);
 
-    /* Active-path global: the compat bridge routes it into the matching cfg
-       field (AutomaticSavedPath when auto mode, SavedPath otherwise). */
-    ui_cfg_set_active_saved_path_full(savedPathFull);
+        /* Active-path global: the compat bridge routes it into the matching cfg
+           field (AutomaticSavedPath when auto mode, SavedPath otherwise). */
+        ui_cfg_set_active_saved_path_full(savedPathFull);
+    }
 
     // Restore current voice mode instead of forcing Normal | Restaurer le mode de voix actuel au lieu de forcer Normal
     if (fabsf(currentVoiceDistance - ui_cfg()->distanceWhisper) < fabsf(currentVoiceDistance - ui_cfg()->distanceNormal) &&
@@ -464,9 +535,15 @@ void writeFullConfiguration(const wchar_t* gameFolder, const wchar_t* distWhispe
        canonically via config_save(). */
     plugin_ui_on_settings_saved();
 
-    // Reinstall keyboard monitoring | Réinstaller la surveillance du clavier
-    removeKeyMonitoring();
-    installKeyMonitoring();
+    /* 087: the old "removeKeyMonitoring(); installKeyMonitoring();" pair was removed.
+       It stopped and restarted the hotkey thread on the dialog thread at every Save,
+       preset load and dialog open — racing with plugin shutdown (the hotkey thread could
+       be started again after shutdown had joined it) and blocking up to 5 s in the
+       join. It was never needed: key_watcher.c re-reads g_config.configUIKey on every
+       loop and voice_mode_hotkey_poll() takes a config_copy() each tick, so new hotkeys
+       apply by themselves.
+       087 : la paire remove/installKeyMonitoring a ete supprimee (course avec l'arret
+       du plugin) ; les nouvelles touches sont relues a chaque tour par le thread. */
 }
 
 // ============================================================================

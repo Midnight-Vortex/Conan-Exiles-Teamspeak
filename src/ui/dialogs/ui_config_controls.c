@@ -26,6 +26,7 @@
 #endif
 #include "ui_config_internal.h"
 #include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_logic.h"
 
 /*
  * ui_config_controls.c: WM_CREATE control layout + HUD combo helpers.
@@ -150,6 +151,12 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
     (void)wParam;
     (void)lParam;
         g_configDialogDestroying = FALSE;
+        // A key capture that was still running when the previous dialog closed must
+        // not survive into this one (it would bind the first key that is held down,
+        // typically F10 that opened the dialog).
+        // Une capture de touche restee active a la fermeture ne doit pas survivre.
+        isCapturingKey = FALSE;
+        captureKeyTarget = 0;
         // Shared brush for HUD theme combo styling (WM_CTLCOLOR* handlers).
         // Pinceau partagé pour le style du combo thème HUD (gestionnaires WM_CTLCOLOR*).
         if (!g_hHudComboBrush) {
@@ -174,26 +181,31 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Emoji");
 
-        hBackgroundBitmap = LoadBackgroundFromResource(IDB_BACKGROUND);
+        // The three category backgrounds are freed by ui_image_cache_release() once
+        // the dialog window is destroyed (they used to leak on every open).
+        // Les trois fonds de categorie sont liberes par ui_image_cache_release().
+        if (!hBackgroundBitmap) {
+            hBackgroundBitmap = LoadBackgroundFromResource(IDB_BACKGROUND);
+        }
 
-        hBackgroundAdvancedBitmap = LoadBackgroundFromResource(IDB_Background_Plugin_Settings);
+        if (!hBackgroundAdvancedBitmap) {
+            hBackgroundAdvancedBitmap = LoadBackgroundFromResource(IDB_Background_Plugin_Settings);
+        }
         if (!hBackgroundAdvancedBitmap && enableLogGeneral) {
             mumbleAPI.log(ownID, "WARNING: Advanced background image (IDB_Background_Plugin_Settings) not loaded");
         }
 
-        hBackgroundPresetsBitmap = LoadBackgroundFromResource(IDB_Background_Voice_Presets);
+        if (!hBackgroundPresetsBitmap) {
+            hBackgroundPresetsBitmap = LoadBackgroundFromResource(IDB_Background_Voice_Presets);
+        }
 
         // Disable double buffering to reduce flickering | Désactiver le double buffering pour réduire les scintillements
         SetWindowLongPtr(hwnd, GWL_EXSTYLE,
             GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_COMPOSITED);
 
-        // Get real dimensions of IDB_Main_Button_01 image | Récupérer les dimensions réelles de l'image IDB_Main_Button_01
-        HMODULE hModuleBtn = NULL;
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            (LPCWSTR)ConfigDialogProc, &hModuleBtn);
-
-        HBITMAP hTempBitmap = (HBITMAP)LoadImageW(hModuleBtn, MAKEINTRESOURCEW(IDB_Main_Button_01),
-            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+        // Get real dimensions of IDB_Main_Button_01 image (cached bitmap — not deleted here)
+        // Récupérer les dimensions réelles de l'image IDB_Main_Button_01 (bitmap en cache)
+        HBITMAP hTempBitmap = ui_image_cache_get(IDB_Main_Button_01);
 
         int imageWidth = 170;  // Valeur par défaut au cas où l'image ne charge pas
         int imageHeight = 40;  // Valeur par défaut
@@ -203,7 +215,6 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             GetObject(hTempBitmap, sizeof(BITMAP), &bm);
             imageWidth = bm.bmWidth;   // ✅ Largeur RÉELLE de l'image
             imageHeight = bm.bmHeight; // ✅ Hauteur RÉELLE de l'image
-            DeleteObject(hTempBitmap);
 
             if (enableLogGeneral) {
                 char logMsg[128];
@@ -270,85 +281,60 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         wchar_t savedPathFromConfig[MAX_PATH] = L"";
         wchar_t automaticPathFromConfig[MAX_PATH] = L"";
 
-        // ✅ CORRECTION CRITIQUE : Lire le fichier de config CORRECTEMENT
-        const wchar_t* configFolder = config_get_folder_path();
-        if (configFolder) {
-            wchar_t configFile[MAX_PATH];
-            swprintf(configFile, MAX_PATH, L"%s\\plugin.cfg", configFolder);
-            FILE* f = _wfopen(configFile, L"r");
-            if (f) {
-                wchar_t line[512];
-                BOOL foundAutomaticPatchFind = FALSE;
-                BOOL automaticPatchFindEnabled = FALSE;
+        // Path label: read the LOADED configuration instead of re-parsing plugin.cfg
+        // here. config.c decodes the file correctly (UTF-8 or ANSI, review fix 085);
+        // a second ANSI reader in the dialog garbled non-Latin-1 paths (Cyrillic, CJK).
+        // Libelle du chemin : lire la configuration chargee (config.c decode le fichier).
+        {
+            PluginConfig loaded;
+            config_copy(&loaded);
+            ui_wcs_copy(automaticPathFromConfig, MAX_PATH, loaded.automaticSavedPath); // truncating
+            ui_wcs_copy(savedPathFromConfig, MAX_PATH, loaded.savedPath);              // truncating
+            const BOOL automaticPatchFindEnabled = loaded.automaticPatchFind ? TRUE : FALSE;
 
-                // ✅ LIRE TOUTES LES LIGNES EN UNE SEULE PASSE
-                while (fgetws(line, 512, f)) {
-                    wchar_t* p = line;
-                    while (*p == L' ' || *p == L'\t') p++;
-                    wchar_t* end = p + wcslen(p) - 1;
-                    while (end > p && (*end == L'\r' || *end == L'\n' || *end == L' ' || *end == L'\t')) {
-                        *end = L'\0';
-                        end--;
-                    }
-
-                    if (wcsncmp(p, L"AutomaticPatchFind=", 19) == 0) {
-                        wchar_t* value = p + 19;
-                        while (*value == L' ' || *value == L'\t') value++;
-                        foundAutomaticPatchFind = TRUE;
-                        automaticPatchFindEnabled = (wcsncmp(value, L"true", 4) == 0 || wcsncmp(value, L"True", 4) == 0);
-                    }
-                    else if (wcsncmp(p, L"AutomaticSavedPath=", 19) == 0) {
-                        wchar_t* pathStart = p + 19;
-                        while (*pathStart == L' ' || *pathStart == L'\t') pathStart++;
-                        wcscpy_s(automaticPathFromConfig, MAX_PATH, pathStart);
-                    }
-                    else if (wcsncmp(p, L"SavedPath=", 10) == 0) {
-                        wchar_t* pathStart = p + 10;
-                        while (*pathStart == L' ' || *pathStart == L'\t') pathStart++;
-                        wcscpy_s(savedPathFromConfig, MAX_PATH, pathStart);
-                    }
+            if (automaticPatchFindEnabled && wcslen(automaticPathFromConfig) > 0) {
+                // Mode automatique : afficher le chemin automatique
+                ui_wcs_copy(displayedPathText, MAX_PATH, automaticPathFromConfig);
+                wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
+                if (conanSandbox) {
+                    *conanSandbox = L'\0';
                 }
-                fclose(f);
-
-                // ✅ DÉCIDER APRÈS AVOIR TOUT LU
-                if (automaticPatchFindEnabled && wcslen(automaticPathFromConfig) > 0) {
-                    // Mode automatique : afficher le chemin automatique
-                    wcscpy_s(displayedPathText, MAX_PATH, automaticPathFromConfig);
-                    wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
-                    if (conanSandbox) {
-                        *conanSandbox = L'\0';
-                    }
-                }
-                else if (wcslen(savedPathFromConfig) > 0) {
-                    // Mode manuel : afficher le chemin manuel
-                    wcscpy_s(displayedPathText, MAX_PATH, savedPathFromConfig);
-                    wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
-                    if (conanSandbox) {
-                        *conanSandbox = L'\0';
-                    }
-                }
-                else {
-                    // Aucun chemin configuré
-                    wcscpy_s(displayedPathText, MAX_PATH, L"(Not configured)");
+            }
+            else if (wcslen(savedPathFromConfig) > 0) {
+                // Mode manuel : afficher le chemin manuel
+                ui_wcs_copy(displayedPathText, MAX_PATH, savedPathFromConfig);
+                wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
+                if (conanSandbox) {
+                    *conanSandbox = L'\0';
                 }
             }
             else {
-                // Fichier de config n'existe pas
+                // Aucun chemin configuré
                 wcscpy_s(displayedPathText, MAX_PATH, L"(Not configured)");
             }
         }
-        else {
-            // Impossible d'obtenir le dossier de config
-            wcscpy_s(displayedPathText, MAX_PATH, L"(Not configured)");
+
+        // Automatic mode: the path box shows the detected Steam folder. It is resolved
+        // ONCE here (the owner-draw handler used to query the registry + parse
+        // libraryfolders.vdf on every repaint and now just prints displayedPathText).
+        // Mode automatique : dossier detecte, resolu UNE fois ici (plus a chaque dessin).
+        if (ui_cfg()->automaticPatchFind) {
+            wchar_t autoPathFull[MAX_PATH] = L"";
+            if (findConanExilesAutomatic(autoPathFull, MAX_PATH)) {
+                ui_wcs_copy(displayedPathText, MAX_PATH, autoPathFull);
+                wchar_t* conanSandbox = wcsstr(displayedPathText, L"\\ConanSandbox\\Saved");
+                if (conanSandbox) {
+                    *conanSandbox = L'\0';
+                }
+            }
+            else {
+                wcscpy_s(displayedPathText, MAX_PATH, L"(Not found)");
+            }
         }
 
-        HMODULE hModule = NULL;
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            (LPCWSTR)ConfigDialogProc, &hModule);
-
-
-        hPathBoxBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Path_Box),
-            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+        // hPathBoxBitmap aliases the cached bitmap (freed by ui_image_cache_release()).
+        // hPathBoxBitmap = bitmap du cache (libere par ui_image_cache_release()).
+        hPathBoxBitmap = ui_image_cache_get(IDB_Path_Box);
 
         int pathBoxWidth = 380;
         int pathBoxHeight = 35;
@@ -360,8 +346,7 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             SendMessage(hSavedPathBg, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)hPathBoxBitmap);
         }
 
-        HBITMAP hBrowseTemp = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Browse_Button),
-            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+        HBITMAP hBrowseTemp = ui_image_cache_get(IDB_Browse_Button); // cached — not deleted here
 
         int browseBtnWidth = 100;
         int browseBtnHeight = 35;
@@ -370,7 +355,6 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             GetObject(hBrowseTemp, sizeof(BITMAP), &bmBrowse);
             browseBtnWidth = bmBrowse.bmWidth;
             browseBtnHeight = bmBrowse.bmHeight;
-            DeleteObject(hBrowseTemp);
         }
 
         int pathX = 40;
@@ -379,13 +363,9 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         int browseX = pathX + pathBoxWidth + browseGap;
         int browseY = pathY + ((pathBoxHeight - browseBtnHeight) / 2);
 
-        // Load checkmark icon from resources | Charger l'icône checkmark depuis les ressources
-        HMODULE hModuleCheckmark = NULL;
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            (LPCWSTR)ConfigDialogProc, &hModuleCheckmark);
-
-        HICON hCheckIcon = (HICON)LoadImageW(hModuleCheckmark, MAKEINTRESOURCEW(IDI_CHECKMARK),
-            IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+        // Checkmark icon from the image cache (destroyed by ui_image_cache_release())
+        // Icône checkmark issue du cache (détruite par ui_image_cache_release())
+        HICON hCheckIcon = ui_checkmark_icon_get();
 
         // Automatic patch find checkbox | Checkbox pour la recherche automatique de patch
         hAutomaticPatchFindCheck = CreateWindowW(L"BUTTON", L"",
@@ -399,9 +379,9 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         }
 
         HWND hAutomaticPatchFindLabel = CreateWindowW(L"STATIC", L"Automatic Patch Find",
-            WS_CHILD | SS_LEFT | SS_NOTIFY | WS_DISABLED,  // ✅ ENLEVER WS_VISIBLE
+            WS_CHILD | SS_LEFT | SS_NOTIFY,  // ✅ ENLEVER WS_VISIBLE (no WS_DISABLED: a disabled static never gets the click)
             80, 222, 400, 20,
-            hwnd, (HMENU)2004, NULL, NULL);
+            hwnd, (HMENU)IDC_LABEL_AUTOPATCH, NULL, NULL);
         ApplyFontToControl(hAutomaticPatchFindLabel, hFont);
 
         SetWindowSubclass(hAutomaticPatchFindLabel, CheckboxLabelProc, 200, (DWORD_PTR)hAutomaticPatchFindCheck);
@@ -429,7 +409,7 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         HWND hDistanceMutingLabel = CreateWindowW(L"STATIC", L"",
             WS_CHILD | SS_LEFT | SS_NOTIFY,
-            85, 147, 295, 20, hwnd, (HMENU)2001, NULL, NULL);
+            85, 147, 295, 20, hwnd, (HMENU)IDC_LABEL_DISTMUTING, NULL, NULL);
         ApplyFontToControl(hDistanceMutingLabel, hFont);
 
         SetWindowSubclass(hDistanceMutingLabel, CheckboxLabelProc, 201, (DWORD_PTR)hEnableDistanceMutingCheck);
@@ -446,7 +426,7 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         HWND hChannelSwitchingLabel = CreateWindowW(L"STATIC", L"",
             WS_CHILD | SS_LEFT | SS_NOTIFY,  // ✅ ENLEVER WS_VISIBLE
-            85, 167, 375, 20, hwnd, (HMENU)2002, NULL, NULL);
+            85, 167, 375, 20, hwnd, (HMENU)IDC_LABEL_CHANSWITCH, NULL, NULL);
         ApplyFontToControl(hChannelSwitchingLabel, hFont);
 
         SetWindowSubclass(hChannelSwitchingLabel, CheckboxLabelProc, 203, (DWORD_PTR)hEnableAutomaticChannelChangeCheck);
@@ -463,18 +443,14 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         HWND hVoiceToggleLabel = CreateWindowW(L"STATIC", L"",
             WS_CHILD | SS_LEFT | SS_NOTIFY,  // ✅ ENLEVER WS_VISIBLE
-            85, 187, 375, 20, hwnd, (HMENU)2003, NULL, NULL);
+            85, 187, 375, 20, hwnd, (HMENU)IDC_LABEL_VOICETOGGLE, NULL, NULL);
         ApplyFontToControl(hVoiceToggleLabel, hFont);
 
         SetWindowSubclass(hVoiceToggleLabel, CheckboxLabelProc, 204, (DWORD_PTR)hEnableVoiceToggleCheck);
 
-        // Get real dimensions of IDB_Key_Box_01 | Récupérer les dimensions réelles de IDB_Key_Box_01
-        HMODULE hModuleKey = NULL;
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            (LPCWSTR)ConfigDialogProc, &hModuleKey);
-
-        HBITMAP hKeyBoxTemp = (HBITMAP)LoadImageW(hModuleKey, MAKEINTRESOURCEW(IDB_Key_Box_01),
-            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+        // Get real dimensions of IDB_Key_Box_01 (cached bitmap — not deleted here)
+        // Récupérer les dimensions réelles de IDB_Key_Box_01 (bitmap en cache)
+        HBITMAP hKeyBoxTemp = ui_image_cache_get(IDB_Key_Box_01);
 
         int keyBoxWidth = 110;  // Valeur par défaut
         int keyBoxHeight = 30;  // Valeur par défaut
@@ -484,7 +460,6 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             GetObject(hKeyBoxTemp, sizeof(BITMAP), &bmKey);
             keyBoxWidth = bmKey.bmWidth;
             keyBoxHeight = bmKey.bmHeight;
-            DeleteObject(hKeyBoxTemp);
 
             if (enableLogGeneral) {
                 char logMsg[128];

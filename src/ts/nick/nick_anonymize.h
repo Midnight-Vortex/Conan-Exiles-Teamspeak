@@ -12,6 +12,11 @@
  * Thread contract: everything here runs on the TS callback thread ONLY
  * (all functions call the TS API via the adapter). No locks needed.
  *
+ * 086: the saved real name is bound to the connection it came from (server
+ * UID + connection handler ID). After a tab or server switch a name saved on
+ * the OTHER connection is dropped instead of being restored onto this one.
+ * The real name is never written to the log.
+ *
  * Layering (V8.6): this module lives under ts/ because it is fully TS-coupled
  * (every non-pure function drives the TS API through the adapter), exactly
  * like channel_manage (doku/015). The header needs only the SDK integer type
@@ -39,7 +44,8 @@ void nick_on_connected(void);
 void nick_anonymize_before_ingame(uint64 ingameChannelID);
 
 /* 12.3 restore the saved name (arrival in hub / auto-move back).
-   No-op when nothing was anonymized. */
+   No-op when nothing was anonymized; a name saved on another connection is
+   dropped, not restored. */
 void nick_restore_in_hub(void);
 
 /* Drop saved state without touching the TS API (disconnect / shutdown). */

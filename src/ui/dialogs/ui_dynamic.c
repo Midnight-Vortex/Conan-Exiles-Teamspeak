@@ -1,5 +1,6 @@
 #include "plugin_internal.h"
 #include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_logic.h"
 #include "ui/plugin_ui_compat.h"
 #include "resource.h"
 #ifdef CONAN_EXILES_TS_EXPORTS
@@ -25,6 +26,14 @@
 // ============================================================================
 
 // Handle distance edit changes with smart filtering | Gérer les changements d'édition de distance avec filtrage intelligent
+//
+// 087: this runs on EVERY accepted keystroke (EN_CHANGE). It only updates the dialog's
+// working copy and the dynamic UI — nothing is written to g_config / plugin.cfg here.
+// Persisting happens on Save (or a preset load). It used to call saveVoiceSettings()
+// per keystroke: typing "150" wrote the file 3 times, broadcast 3 times, and made
+// Cancel useless because the whole working copy had already been committed.
+// 087 : chaque frappe ne modifie QUE la copie de travail et l'interface ; la
+// sauvegarde se fait avec Save (ou le chargement d'un preset).
 static float* ui_cfg_distance_ptr(int editId) {
     PluginConfig* cfg = ui_cfg();
     switch (editId) {
@@ -64,10 +73,13 @@ void handleDistanceEditChange(int editId) {
 
     wchar_t text[32];
     GetWindowTextW(hEdit, text, 32);
-    float newValue = (float)_wtof(text);
+    // Strict parse (no server limits here — they are applied by the filter below).
+    // Partial input while typing ("", ".", "abc", "nan") is simply ignored.
+    float newValue = 0.0f;
+    const BOOL parsedOk = (ui_dist_parse(text, 0, 0.0f, 0.0f, &newValue) == UI_DIST_OK);
 
     // Validate value with filtering | Valider la valeur avec filtrage
-    if (newValue > 0) {
+    if (parsedOk && newValue > 0) {
         BOOL valueChanged = FALSE;
         float correctedValue = newValue;
 
@@ -139,15 +151,31 @@ void handleDistanceEditChange(int editId) {
             }
         }
 
-        // Save and update interface if necessary | Sauvegarder et mettre à jour l'interface si nécessaire
+        // Update interface if necessary (working copy only — see the note above)
+        // Mettre à jour l'interface si nécessaire (copie de travail uniquement)
         if (valueChanged) {
-            saveVoiceSettings();
             updateDynamicInterface();
             forceInterfaceRefresh();
         }
     }
 }
 
+
+// Writes a distance as "%.1f" into an edit, but only when the edit is not focused and
+// its current text differs. | Ecrit la distance en "%.1f" si le champ n'a pas le focus
+// et que son texte differe.
+static void ui_set_distance_edit_text(HWND hEdit, float value) {
+    if (!hEdit || GetFocus() == hEdit) {
+        return;
+    }
+    wchar_t wanted[32];
+    swprintf(wanted, 32, L"%.1f", value);
+    wchar_t current[32] = L"";
+    GetWindowTextW(hEdit, current, 32);
+    if (wcscmp(current, wanted) != 0) {
+        SetWindowTextW(hEdit, wanted);
+    }
+}
 
 // Update dynamic interface | Mettre à jour l'interface dynamique
 void updateDynamicInterface() {
@@ -258,33 +286,25 @@ void updateDynamicInterface() {
         newShout = validateDistanceValue(ui_cfg()->distanceShout, (float)hubMinimumShout, (float)hubMaximumShout, "Shout");
     }
 
-    BOOL distanceChanged = FALSE;
-
     // Update UI fields according to current context (zone or user) | Mettre à jour les champs UI (zone ou utilisateur)
-    if (hDistanceWhisperEdit) { wchar_t vt[32]; swprintf(vt, 32, L"%.1f", newWhisper); SetWindowTextW(hDistanceWhisperEdit, vt); }
-    if (hDistanceNormalEdit) { wchar_t vt[32]; swprintf(vt, 32, L"%.1f", newNormal); SetWindowTextW(hDistanceNormalEdit, vt); }
-    if (hDistanceShoutEdit) { wchar_t vt[32]; swprintf(vt, 32, L"%.1f", newShout); SetWindowTextW(hDistanceShoutEdit, vt); }
+    // A field is rewritten ONLY when it does not have the keyboard focus and its text
+    // really differs: rewriting the field the user is typing in (to "%.1f") made the
+    // caret jump and scrambled the digits after every keystroke.
+    // Un champ n'est reecrit que s'il n'a pas le focus ET que son texte differe.
+    ui_set_distance_edit_text(hDistanceWhisperEdit, newWhisper);
+    ui_set_distance_edit_text(hDistanceNormalEdit, newNormal);
+    ui_set_distance_edit_text(hDistanceShoutEdit, newShout);
 
-    // Only update global variables and save if NOT in a zone | Uniquement si HORS d'une zone
+    // Only update the working copy if NOT in a zone | Uniquement si HORS d'une zone
+    // (hub-limit auto-correction). NOT persisted here: that happened silently on every
+    // call (checkbox click, tab switch, keystroke) and committed the whole working copy,
+    // so Cancel could not discard anything. Save persists the corrected values; the
+    // audio path clamps to the hub limits at use time anyway (voice_mode_get_distance).
+    // Corrections de limites serveur : copie de travail seulement ; Save les enregistre.
     if (currentZoneIndex == -1) {
-        if (newWhisper != ui_cfg()->distanceWhisper) { ui_cfg()->distanceWhisper = newWhisper; distanceChanged = TRUE; }
-        if (newNormal != ui_cfg()->distanceNormal) { ui_cfg()->distanceNormal = newNormal; distanceChanged = TRUE; }
-        if (newShout != ui_cfg()->distanceShout) { ui_cfg()->distanceShout = newShout; distanceChanged = TRUE; }
-    }
-
-    // Always save distance changes | Toujours sauvegarder les changements de distance
-    if (distanceChanged) {
-        saveVoiceSettings();
-        if (ui_cfg()->enableDistanceMuting) { ts3_plugin_apply_proximity_volumes_force(); }
-
-        if (enableLogGeneral) {
-            char saveMsg[256];
-            snprintf(saveMsg, sizeof(saveMsg),
-                "Distances saved to config: Whisper=%.1f, Normal=%.1f, Shout=%.1f (ForceDistanceBasedMuting=%s)",
-                ui_cfg()->distanceWhisper, ui_cfg()->distanceNormal, ui_cfg()->distanceShout,
-                hubForceDistanceBasedMuting ? "TRUE" : "FALSE");
-            mumbleAPI.log(ownID, saveMsg);
-        }
+        if (newWhisper != ui_cfg()->distanceWhisper) { ui_cfg()->distanceWhisper = newWhisper; }
+        if (newNormal != ui_cfg()->distanceNormal) { ui_cfg()->distanceNormal = newNormal; }
+        if (newShout != ui_cfg()->distanceShout) { ui_cfg()->distanceShout = newShout; }
     }
 
     // Force redraw of all messages | Forcer le redessin de tous les messages

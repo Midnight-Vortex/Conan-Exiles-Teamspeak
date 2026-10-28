@@ -108,16 +108,116 @@ HBITMAP LoadBackgroundFromResource(int resourceID) {
     return hBitmap;
 }
 
+// ---- Image cache (087) ------------------------------------------------------
+// EN: WM_DRAWITEM used to call LoadImageW (decode + allocate a DIB section) for
+//     every owner-drawn control on every repaint, and PresetLabelProc did the
+//     same for the check icon on every WM_PAINT. The bitmaps below are decoded
+//     once on first use, owned by this cache, and freed by ui_image_cache_release()
+//     after the dialog window is gone.
+// FR: Les ressources image sont decodees une seule fois (premiere utilisation)
+//     puis liberees par ui_image_cache_release() a la fermeture du dialogue.
+#define UI_IMAGE_CACHE_SLOTS 16
+
+typedef struct UiImageSlot {
+    int resourceId;  // 0 = slot unused
+    HBITMAP bitmap;  // NULL = load failed (not retried on every paint)
+} UiImageSlot;
+
+static UiImageSlot s_imageCache[UI_IMAGE_CACHE_SLOTS];
+static HICON s_checkIcon = NULL;
+static BOOL s_checkIconTried = FALSE;
+
+static HMODULE ui_resource_module(void) {
+    HMODULE hModule = NULL;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)ui_resource_module, &hModule)) {
+        return NULL;
+    }
+    return hModule;
+}
+
+HBITMAP ui_image_cache_get(int resourceId) {
+    if (resourceId == 0) {
+        return NULL;
+    }
+    int freeSlot = -1;
+    for (int i = 0; i < UI_IMAGE_CACHE_SLOTS; i++) {
+        if (s_imageCache[i].resourceId == resourceId) {
+            return s_imageCache[i].bitmap;
+        }
+        if (s_imageCache[i].resourceId == 0 && freeSlot < 0) {
+            freeSlot = i;
+        }
+    }
+
+    HBITMAP bitmap = NULL;
+    HMODULE hModule = ui_resource_module();
+    if (hModule) {
+        bitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(resourceId),
+            IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+    }
+    if (freeSlot < 0) {
+        // Cache full (cannot happen with the ~8 ids used) — do not leak.
+        if (bitmap) {
+            DeleteObject(bitmap);
+        }
+        return NULL;
+    }
+    s_imageCache[freeSlot].resourceId = resourceId;
+    s_imageCache[freeSlot].bitmap = bitmap;
+    return bitmap;
+}
+
+HICON ui_checkmark_icon_get(void) {
+    if (!s_checkIconTried) {
+        s_checkIconTried = TRUE;
+        HMODULE hModule = ui_resource_module();
+        if (hModule) {
+            s_checkIcon = (HICON)LoadImageW(hModule, MAKEINTRESOURCEW(IDI_CHECKMARK),
+                IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+        }
+    }
+    return s_checkIcon;
+}
+
+void ui_image_cache_release(void) {
+    for (int i = 0; i < UI_IMAGE_CACHE_SLOTS; i++) {
+        if (s_imageCache[i].bitmap) {
+            DeleteObject(s_imageCache[i].bitmap);
+        }
+        s_imageCache[i].bitmap = NULL;
+        s_imageCache[i].resourceId = 0;
+    }
+    if (s_checkIcon) {
+        DestroyIcon(s_checkIcon);
+        s_checkIcon = NULL;
+    }
+    s_checkIconTried = FALSE;
+
+    // hPathBoxBitmap aliases a cache entry (freed above) — only forget it.
+    hPathBoxBitmap = NULL;
+
+    // Category backgrounds are loaded by WM_CREATE (LoadBackgroundFromResource).
+    if (hBackgroundBitmap) {
+        DeleteObject(hBackgroundBitmap);
+        hBackgroundBitmap = NULL;
+    }
+    if (hBackgroundAdvancedBitmap) {
+        DeleteObject(hBackgroundAdvancedBitmap);
+        hBackgroundAdvancedBitmap = NULL;
+    }
+    if (hBackgroundPresetsBitmap) {
+        DeleteObject(hBackgroundPresetsBitmap);
+        hBackgroundPresetsBitmap = NULL;
+    }
+}
+
 void DrawButtonWithBitmap(LPDRAWITEMSTRUCT lpDIS) {
     HDC hdc = lpDIS->hDC;
     RECT rect = lpDIS->rcItem;
 
     int ctrlId = lpDIS->CtlID;
     int bitmapResource = IDB_Main_Button_01; // Initialize with default value | Initialiser avec valeur par défaut
-
-    HMODULE hModule = NULL;
-    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        (LPCWSTR)DrawButtonWithBitmap, &hModule);
 
     // Use main image for category and bottom buttons | Utiliser l'image principale pour les boutons de catégorie et du bas
     if (ctrlId == 301 || ctrlId == 302 || ctrlId == 303 || ctrlId == 1 || ctrlId == 11 || ctrlId == 2) {
@@ -132,9 +232,9 @@ void DrawButtonWithBitmap(LPDRAWITEMSTRUCT lpDIS) {
         bitmapResource = IDB_Browse_Button;
     }
 
-    // Charger le bitmap (chaque appel charge une instance locale afin d'éviter conflits de HBITMAP partagés)
-    HBITMAP hButtonBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(bitmapResource),
-        IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+    // Bitmap from the cache (decoded once; owned by the cache, never deleted here)
+    // Bitmap issu du cache (decode une seule fois ; appartient au cache)
+    HBITMAP hButtonBitmap = ui_image_cache_get(bitmapResource);
 
     if (hButtonBitmap) {
         HDC hdcMem = CreateCompatibleDC(hdc);
@@ -277,7 +377,6 @@ void DrawButtonWithBitmap(LPDRAWITEMSTRUCT lpDIS) {
 
         SelectObject(hdcMem, hOldBitmap);
         DeleteDC(hdcMem);
-        DeleteObject(hButtonBitmap);
     }
     else {
         // Fallback : fond gris si l'image ne charge pas
@@ -491,6 +590,11 @@ LRESULT ui_config_on_ctlcolorstatic(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                 SetTextColor(hdcStatic, RGB(108, 117, 125)); // Gris
             }
         }
+        // "Automatic Patch Find" label: gray like a disabled label (it used to be a
+        // WS_DISABLED static, which could never receive the click that toggles the box).
+        else if (controlId == IDC_LABEL_AUTOPATCH) {
+            SetTextColor(hdcStatic, GetSysColor(COLOR_GRAYTEXT));
+        }
         // HUD theme / position / size labels (526, 527, 528): white text on dark background art.
         else if (controlId == 526 || controlId == 527 || controlId == 528) {
             SetTextColor(hdcStatic, RGB(255, 255, 255));
@@ -561,13 +665,8 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
 
-            // Load bitmap resource | Charger la ressource bitmap
-            HMODULE hModule = NULL;
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                (LPCWSTR)ConfigDialogProc, &hModule);
-
-            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Key_Box_01),
-                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            // Bitmap from the cache | Bitmap issu du cache
+            HBITMAP hBitmap = ui_image_cache_get(IDB_Key_Box_01);
 
             if (hBitmap) {
                 HDC hdcMem = CreateCompatibleDC(hdc);
@@ -580,7 +679,6 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                 SelectObject(hdcMem, hOldBitmap);
                 DeleteDC(hdcMem);
-                DeleteObject(hBitmap);
             }
 
             // Draw text with Patch Configuration style | Dessiner le texte avec le style de Patch Configuration
@@ -629,13 +727,8 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
 
-            // Load bitmap resource | Charger la ressource bitmap
-            HMODULE hModule = NULL;
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                (LPCWSTR)ConfigDialogProc, &hModule);
-
-            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Rename_Box_01),
-                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            // Bitmap from the cache | Bitmap issu du cache
+            HBITMAP hBitmap = ui_image_cache_get(IDB_Rename_Box_01);
 
             if (hBitmap) {
                 HDC hdcMem = CreateCompatibleDC(hdc);
@@ -656,7 +749,6 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                 SelectObject(hdcMem, hOldBitmap);
                 DeleteDC(hdcMem);
-                DeleteObject(hBitmap);
 
                 // Draw text centered on image | Dessiner le texte centré sur l'image
                 wchar_t text[32] = L"Rename";
@@ -698,13 +790,8 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
 
-            // Load bitmap resource | Charger la ressource bitmap
-            HMODULE hModule = NULL;
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                (LPCWSTR)ConfigDialogProc, &hModule);
-
-            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Load_Box_01),
-                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            // Bitmap from the cache | Bitmap issu du cache
+            HBITMAP hBitmap = ui_image_cache_get(IDB_Load_Box_01);
 
             if (hBitmap) {
                 HDC hdcMem = CreateCompatibleDC(hdc);
@@ -725,7 +812,6 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                 SelectObject(hdcMem, hOldBitmap);
                 DeleteDC(hdcMem);
-                DeleteObject(hBitmap);
 
                 // Draw text centered on image | Dessiner le texte centré sur l'image
                 wchar_t text[32] = L"Load";
@@ -767,13 +853,8 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
 
-            // Load bitmap resource | Charger la ressource bitmap
-            HMODULE hModule = NULL;
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                (LPCWSTR)ConfigDialogProc, &hModule);
-
-            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Key_Box_01),
-                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            // Bitmap from the cache | Bitmap issu du cache
+            HBITMAP hBitmap = ui_image_cache_get(IDB_Key_Box_01);
 
             if (hBitmap) {
                 HDC hdcMem = CreateCompatibleDC(hdc);
@@ -794,7 +875,6 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                 SelectObject(hdcMem, hOldBitmap);
                 DeleteDC(hdcMem);
-                DeleteObject(hBitmap);
 
                 // Draw text with Patch Configuration style | Dessiner le texte avec le style de Patch Configuration
                 wchar_t text[32] = L"";
@@ -848,13 +928,8 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
 
-            // Charger le bitmap
-            HMODULE hModule = NULL;
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                (LPCWSTR)ConfigDialogProc, &hModule);
-
-            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_Path_Box),
-                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            // Bitmap from the cache | Bitmap issu du cache
+            HBITMAP hBitmap = ui_image_cache_get(IDB_Path_Box);
 
             int bmWidth = rect.right - rect.left;
             int bmHeight = rect.bottom - rect.top;
@@ -879,31 +954,16 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                 SelectObject(hdcMem, hOldBitmap);
                 DeleteDC(hdcMem);
-                DeleteObject(hBitmap);
             }
 
-            // Convertir modFilePath de char* en wchar_t* pour affichage
+            // Text to show = the cached displayedPathText (already without
+            // \ConanSandbox\Saved). It is resolved when the dialog opens, when the
+            // Automatic Patch Find checkbox changes, after Browse and after Save —
+            // NOT here: this runs on every repaint, and the old auto-mode branch
+            // queried the registry and parsed libraryfolders.vdf each time.
+            // Texte = displayedPathText (en cache) ; plus d'acces registre/VDF a chaque dessin.
             wchar_t displayPath[MAX_PATH] = L"";
-
-            if (ui_cfg()->automaticPatchFind) {
-                // Mode automatique : afficher le chemin automatique détecté
-                wchar_t autoPath[MAX_PATH] = L"";
-                if (findConanExilesAutomatic(autoPath, MAX_PATH)) {
-                    // Supprimer \ConanSandbox\Saved pour n'afficher que le dossier du jeu
-                    wcscpy_s(displayPath, MAX_PATH, autoPath);
-                    wchar_t* conanSandbox = wcsstr(displayPath, L"\\ConanSandbox\\Saved");
-                    if (conanSandbox) {
-                        *conanSandbox = L'\0';
-                    }
-                }
-                else {
-                    wcscpy_s(displayPath, MAX_PATH, L"(Not found)");
-                }
-            }
-            else {
-                // Mode manuel : afficher displayedPathText (déjà sans \ConanSandbox\Saved)
-                wcscpy_s(displayPath, MAX_PATH, displayedPathText);
-            }
+            wcscpy_s(displayPath, MAX_PATH, displayedPathText);
 
             if (wcslen(displayPath) == 0) {
                 wcscpy_s(displayPath, MAX_PATH, L"(Not configured)");
@@ -992,7 +1052,6 @@ LRESULT ui_config_on_drawitem(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         // Dessiner les boutons (code existant)
         if (lpDIS->CtlType == ODT_BUTTON) {
-            int ctrlId = lpDIS->CtlID;
             if (ctrlId != 201 && ctrlId != 203 && ctrlId != 204) {
                 DrawButtonWithBitmap(lpDIS);
                 return TRUE;

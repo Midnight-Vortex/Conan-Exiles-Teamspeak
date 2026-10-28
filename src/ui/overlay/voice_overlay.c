@@ -35,6 +35,12 @@
 #define VOICE_OVERLAY_WIDTH_BIG  260
 #define VOICE_OVERLAY_HEIGHT_BIG 88
 
+/* Window class of the HUD. Registered by createVoiceOverlay() (overlay UI
+   thread) against the host exe's HINSTANCE, so it outlives this DLL unless it
+   is unregistered explicitly: voice_overlay_unregister_class(), called from
+   overlay_finalize() after the overlay thread was joined. */
+static const wchar_t g_overlayClassName[] = L"VoiceOverlayClass";
+
 typedef struct {
     COLORREF bg;
     COLORREF border;
@@ -611,15 +617,14 @@ void createVoiceOverlay() {
     if (!g_config.enableVoiceOverlay) return;
 
     // Register window class | Enregistrer la classe de fenêtre
-    const wchar_t OVERLAY_CLASS_NAME[] = L"VoiceOverlayClass";
     WNDCLASSW wc = { 0 };
     wc.lpfnWndProc = VoiceOverlayProc;
     wc.hInstance = GetModuleHandleW(NULL);
-    wc.lpszClassName = OVERLAY_CLASS_NAME;
+    wc.lpszClassName = g_overlayClassName;
     wc.hbrBackground = NULL;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-    UnregisterClassW(OVERLAY_CLASS_NAME, wc.hInstance);
+    UnregisterClassW(g_overlayClassName, wc.hInstance);
     if (RegisterClassW(&wc) == 0) {
         if (enableLogGeneral) {
             mumbleAPI.log(ownID, "ERROR: Failed to register overlay window class");
@@ -646,7 +651,7 @@ void createVoiceOverlay() {
     // WM_NCHITTEST/HTTRANSPARENT remains as a fallback; not related to TS shutdown crashes.
     hVoiceOverlay = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        OVERLAY_CLASS_NAME,
+        g_overlayClassName,
         L"",
         WS_POPUP,
         posX, posY, overlayWidth, overlayHeight,
@@ -746,7 +751,7 @@ void updateVoiceOverlay() {
     }
 
     int contentChanged = (currentZoneIndex != g_overlayLastZone
-        || voice_mode_get_current() != g_overlayLastMode
+        || (int)voice_mode_get_current() != g_overlayLastMode
         || (overlayBorderHighlight ? 1 : 0) != g_overlayLastHighlight);
     ULONGLONG now = GetTickCount64();
     if (!contentChanged && now - g_overlayLastRepaintTick < 400) {
@@ -798,6 +803,14 @@ void destroyVoiceOverlay() {
     plugin_destroy_voice_overlay_safely();
 }
 
+/* Shutdown (callback thread, AFTER the overlay UI thread was joined and its
+   HWND destroyed): drop the window class so no class entry — whose WndProc
+   points into this DLL — survives the unload. Fails harmlessly when the class
+   was never registered or a window of it still exists. */
+void voice_overlay_unregister_class(void) {
+    UnregisterClassW(g_overlayClassName, GetModuleHandleW(NULL));
+}
+
 unsigned __stdcall overlayMonitorThreadEx(void* arg) {
     overlayMonitorThread(arg);
     return 0;
@@ -806,7 +819,10 @@ unsigned __stdcall overlayMonitorThreadEx(void* arg) {
 // Resolution monitor thread | Thread pour surveiller les changements de résolution
 void overlayMonitorThread(void* arg) {
     (void)arg;
-    overlayThreadRunning = TRUE;
+    /* overlayThreadRunning is set by overlay_start() BEFORE this thread is
+       created. Setting it here again would overwrite an overlay_stop() that
+       ran between thread creation and thread start, and the loop would never
+       see the stop request. */
 
     int lastScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     int lastScreenHeight = GetSystemMetrics(SM_CYSCREEN);

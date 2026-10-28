@@ -26,7 +26,7 @@
 #endif
 #include "ui_config_internal.h"
 #include "ui/config/ui_config_state.h"
-#include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_logic.h"
 
 /*
  * ui_config_dialog.c: dialog shell (ConfigDialogProc), category switching, foreground helper, GDI teardown, showConfigInterface + thread entry.
@@ -120,9 +120,9 @@ void ShowCategoryControls(int category) {
     HWND hDistanceNormalLabel = GetDlgItem(hConfigDialog, 510);
     HWND hDistanceShoutLabel = GetDlgItem(hConfigDialog, 511);
     HWND hToggleLabel = GetDlgItem(hConfigDialog, 514);
-    HWND hDistanceMutingLabel = GetDlgItem(hConfigDialog, 2001);
-    HWND hChannelSwitchingLabel = GetDlgItem(hConfigDialog, 2002);
-    HWND hVoiceToggleLabel = GetDlgItem(hConfigDialog, 2003);
+    HWND hDistanceMutingLabel = GetDlgItem(hConfigDialog, IDC_LABEL_DISTMUTING);
+    HWND hChannelSwitchingLabel = GetDlgItem(hConfigDialog, IDC_LABEL_CHANSWITCH);
+    HWND hVoiceToggleLabel = GetDlgItem(hConfigDialog, IDC_LABEL_VOICETOGGLE);
 
     // Preset category controls | Contrôles de la catégorie presets
     HWND hPresetTitle = GetDlgItem(hConfigDialog, 800);
@@ -140,7 +140,7 @@ void ShowCategoryControls(int category) {
         if (hSavedPathButton) ShowWindow(hSavedPathButton, SW_SHOW);
 
         if (hAutomaticPatchFindCheck) ShowWindow(hAutomaticPatchFindCheck, SW_SHOW);
-        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, 2004);
+        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, IDC_LABEL_AUTOPATCH);
         if (hAutomaticPatchFindLabel) ShowWindow(hAutomaticPatchFindLabel, SW_SHOW);
 
         HWND hideControls[] = {
@@ -161,7 +161,7 @@ void ShowCategoryControls(int category) {
             hPresetTitle, hPresetInstructions
         };
 
-        for (int i = 0; i < sizeof(hideControls) / sizeof(HWND); i++) {
+        for (size_t i = 0; i < sizeof(hideControls) / sizeof(hideControls[0]); i++) {
             if (hideControls[i]) ShowWindow(hideControls[i], SW_HIDE);
         }
 
@@ -190,7 +190,7 @@ void ShowCategoryControls(int category) {
 
         // ✅ MASQUER la checkbox et le label Automatic Patch Find
         if (hAutomaticPatchFindCheck) ShowWindow(hAutomaticPatchFindCheck, SW_HIDE);
-        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, 2004);
+        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, IDC_LABEL_AUTOPATCH);
         if (hAutomaticPatchFindLabel) ShowWindow(hAutomaticPatchFindLabel, SW_HIDE);
 
         // Hide Automatic Patch Find controls | Masquer les contrôles Automatic Patch Find
@@ -281,7 +281,7 @@ void ShowCategoryControls(int category) {
         // Hide patch controls | Masquer contrôles patch
         if (hSavedPathBg) ShowWindow(hSavedPathBg, SW_HIDE);
         if (hAutomaticPatchFindCheck) ShowWindow(hAutomaticPatchFindCheck, SW_HIDE);
-        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, 2004);
+        HWND hAutomaticPatchFindLabel = GetDlgItem(hConfigDialog, IDC_LABEL_AUTOPATCH);
         if (hAutomaticPatchFindLabel) ShowWindow(hAutomaticPatchFindLabel, SW_HIDE);
         if (hExplanation1) ShowWindow(hExplanation1, SW_HIDE);
         if (hExplanation2) ShowWindow(hExplanation2, SW_HIDE);
@@ -439,6 +439,10 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         // Tear down order: flag handlers, clear HWND globals, free GDI, exit message loop.
         // Ordre de fermeture : signaler aux handlers, vider les HWND, libérer le GDI, quitter la boucle.
         g_configDialogDestroying = TRUE;
+        // Forget a key capture that is still running (the next dialog must start clean).
+        // Oublier une capture de touche en cours (le prochain dialogue repart propre).
+        isCapturingKey = FALSE;
+        captureKeyTarget = 0;
         hHudThemeCombo = NULL;
         hHudThemeLabel = NULL;
         hHudPositionCombo = NULL;
@@ -458,26 +462,25 @@ LRESULT CALLBACK ConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     return 0;
 }
 
-// Show configuration interface centered on screen | Afficher l'interface de configuration centrée à l'écran
-int showConfigInterface() {
-    if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Function started");
-    }
-
-    ui_cfg_dialog_begin();
-
+// Everything showConfigInterface() does after ui_cfg_dialog_begin(): autodetect, COM,
+// window class, window, message loop. Returns 0 on success, -1 on a setup failure.
+// It never touches the config_dialog guard (see showConfigInterface).
+// Tout ce que showConfigInterface() fait apres ui_cfg_dialog_begin().
+static int showConfigInterfaceRun(void) {
     // Try automatic patch find if enabled | Essayer le patch automatique si activé
     if (ui_cfg()->automaticPatchFind) {
         wchar_t automaticPath[MAX_PATH] = L"";
         if (findConanExilesAutomatic(automaticPath, MAX_PATH)) {
             ui_cfg_set_active_saved_path_full(automaticPath);
             size_t converted = 0;
-            wcstombs_s(&converted, modFilePath, MAX_PATH, automaticPath, _TRUNCATE);
-            strcat_s(modFilePath, MAX_PATH, "\\Pos.txt");
+            char modFileBase[MAX_PATH] = "";
+            wcstombs_s(&converted, modFileBase, MAX_PATH, automaticPath, _TRUNCATE);
+            // snprintf truncates; strcat_s would abort TeamSpeak on a ~250 character path.
+            snprintf(modFilePath, MAX_PATH, "%s\\Pos.txt", modFileBase);
 
             // Save automatic path to config immediately | Sauvegarder le chemin automatique immédiatement
             wchar_t gameFolder[MAX_PATH];
-            wcscpy_s(gameFolder, MAX_PATH, automaticPath);
+            ui_wcs_copy(gameFolder, MAX_PATH, automaticPath);
             wchar_t* conanSandbox = wcsstr(gameFolder, L"\\ConanSandbox\\Saved");
             if (conanSandbox) {
                 *conanSandbox = L'\0';
@@ -510,11 +513,10 @@ int showConfigInterface() {
     if (FAILED(hr)) {
         if (enableLogGeneral) {
             char errorMsg[128];
-            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: COM initialization failed with HRESULT: 0x%08X", hr);
+            snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: COM initialization failed with HRESULT: 0x%08lX", (unsigned long)hr);
             mumbleAPI.log(ownID, errorMsg);
         }
         MessageBoxW(NULL, L"Failed to initialize COM", L"Error", MB_OK | MB_ICONERROR);
-        config_dialog_close();
         return -1;
     }
 
@@ -523,14 +525,6 @@ int showConfigInterface() {
     }
 
     const wchar_t CONFIG_CLASS_NAME[] = L"ModernConfigClass";
-
-    // Charger l'image de fond depuis la ressource AVANT d'enregistrer la classe
-    if (!hBackgroundBitmap) {
-        hBackgroundBitmap = LoadBackgroundFromResource(IDB_BACKGROUND);
-        if (hBackgroundBitmap && enableLogGeneral) {
-            mumbleAPI.log(ownID, "Background bitmap loaded for class background");
-        }
-    }
 
     // ✅ IMPORTANT : Utiliser NULL_BRUSH pour empêcher Windows de peindre le fond
     WNDCLASSW wc = { 0 };
@@ -552,7 +546,6 @@ int showConfigInterface() {
             mumbleAPI.log(ownID, errorMsg);
         }
         CoUninitialize();
-        config_dialog_close();
         return -1;
     }
 
@@ -592,8 +585,8 @@ int showConfigInterface() {
             snprintf(errorMsg, sizeof(errorMsg), "showConfigInterface: CreateWindowExW failed with error: %lu", error);
             mumbleAPI.log(ownID, errorMsg);
         }
+        UnregisterClassW(CONFIG_CLASS_NAME, wc.hInstance);
         CoUninitialize();
-        config_dialog_close();
         return -1;
     }
 
@@ -633,14 +626,45 @@ int showConfigInterface() {
         mumbleAPI.log(ownID, "showConfigInterface: Message loop exited");
     }
 
-    CoUninitialize();
-    config_dialog_close();
+    // The window (and its children / owned popups) is gone — release the window
+    // class again so it does not stay registered for the lifetime of TeamSpeak.
+    // La fenetre est detruite : la classe n'a plus de raison de rester enregistree.
+    UnregisterClassW(CONFIG_CLASS_NAME, wc.hInstance);
 
+    CoUninitialize();
+    return 0;
+}
+
+// Show configuration interface centered on screen | Afficher l'interface de configuration centrée à l'écran
+//
+// Guard contract (087): showConfigInterface() NEVER calls config_dialog_close().
+// The code that won config_dialog_try_open() (settings_dialog_thread in
+// key_watcher.c) releases the guard exactly once. It used to be released here AND
+// by the caller, so a third dialog could start while the second one was open.
+// Every exit path below passes through ui_cfg_dialog_end(), otherwise ui_cfg()
+// would keep returning the stale working copy after a failed setup.
+// Contrat du garde : cette fonction n'appelle JAMAIS config_dialog_close().
+int showConfigInterface() {
     if (enableLogGeneral) {
-        mumbleAPI.log(ownID, "showConfigInterface: Function completed successfully");
+        mumbleAPI.log(ownID, "showConfigInterface: Function started");
     }
 
-    return 0;
+    ui_cfg_dialog_begin();
+
+    const int result = showConfigInterfaceRun();
+
+    // Window gone (or never created): free the cached images / backgrounds / icon and
+    // close the working copy (restores an unsaved HUD preview). Safe to repeat.
+    ui_image_cache_release();
+    ui_cfg_dialog_end();
+
+    if (enableLogGeneral) {
+        mumbleAPI.log(ownID, result == 0
+            ? "showConfigInterface: Function completed successfully"
+            : "showConfigInterface: Function failed");
+    }
+
+    return result;
 }
 
 // Path selection dialog thread | Thread pour la boîte de dialogue de sélection de chemin

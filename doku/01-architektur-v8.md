@@ -143,6 +143,17 @@ Zweifel: Flag — Fluten ist der teure Fehler.
   Flag + `SetEvent`; ein einziger dedizierter **Wakeup-Thread** sendet den
   `CEDRAIN`-Befehl (gedrosselt auf 1×/30 ms, urgent umgeht die Drossel) und wird
   beim Shutdown vor dem Zustands-Teardown gejoint.
+- **Seit Review-Fix 082** geht `CEDRAIN:1` nur noch an den **eigenen** Client
+  (`PluginCommandTarget_CLIENT`, Ziel `{eigene ID, 0}`) statt an den ganzen Server.
+  Vorher schickte jeder Client im Spiel ~33 Drains/s an alle anderen (N²-Relays), und
+  jeder fuehrte die fremden Drains aus. Ob TeamSpeak ein an den Absender selbst
+  adressiertes Kommando zurueckliefert, ist nicht verifiziert: Der Callback-Thread meldet
+  das Eintreffen des eigenen CEDRAIN (Echo); bleibt es nach ≥ 5 Sends und 2 s aus,
+  wechselt der Wakeup-Thread fuer den Rest der Verbindung auf den serverweiten Versand
+  (eine Zeile im Log). Ein 250-ms-Watchdog sorgt dafuer, dass diese Entscheidung auch ohne
+  weitere Anforderungen faellt. Neue Verbindung / Tab-Wechsel probiert CLIENT erneut. Der
+  Dispatcher ignoriert CEDRAINs anderer Clients (fail-open, wenn die eigene ID oder der
+  Absender unbekannt ist). Reine Logik: `src/core/util/drain_target.h`.
 
 **Diskoverbarkeit im Code:** Neue Pending-Quellen traegt man an genau einem Marker ein
 (`>>> ADD NEW PENDING SOURCES HERE <<<` in `ts3_entry.c`), neue Kommandotypen am
@@ -174,12 +185,13 @@ Jeder Zustand hat ab V8 **genau einen** schreibenden Besitzer:
 
 | Zustand | Besitzer (Schreiber) | Leser |
 |---|---|---|
-| `plugin.cfg` / `g_config` | Callback-Thread (Apply/Save via Queue) | alle (Read-Only-Sicht) |
+| `plugin.cfg` / `g_config` | jeder Thread nur ueber `config_modify` (nur eigene Felder, unter Lock) + `config_save` (serialisiert, atomar) — Review-Fix 085 | alle (Read-Only-Sicht, Strings via `config_copy`) |
 | Render-Rampen (Gain/Pan aktuell) | Audio-Thread | niemand sonst |
 | Ziel-Werte (Snapshots) | Callback-Thread | Audio-Thread (Seqlock) |
 | Hotkey-Zustand | EIN Poller-Thread | Callback via Queue-Kommandos |
 | Kanal-IDs, Verbindungs-Epoche | Callback-Thread (atomar publiziert) | alle |
 | Overlay-Fenster (HWND) | Overlay-Thread | andere nur via PostMessage |
+| HUD-Spiegel (`zones`/`races`/`hub*`/`currentZoneIndex`) | Callback-Thread (Fremd-Threads fordern den Sync per Flag an, Review-Fix 088) | Overlay, Dialog |
 
 **Warum?** Fast jeder schwer findbare V7-Bug war ein "zwei Schreiber"-Bug: zwei Config-
 Writer, zwei Hotkey-Poller, Reset-Pfad schreibt in Audio-Rampen. Ein Besitzer = eine Wahrheit.
@@ -192,11 +204,14 @@ So arbeitet `ts3plugin_shutdown()` (`src/ts/entry/ts3_entry.c`) es heute ab
 0. **Ingame verlassen:** `chan_leave_ingame_on_plugin_disable()` — eigener
    Client aus Ingame in den Hub (TS-API noch erlaubt, Aenderung 057).
 1. **Annahme stoppen:** Audio auf Passthrough, `pluginShuttingDown` gesetzt,
-   verzoegerte Overlay-Starts entschaerft.
+   verzoegerte Overlay-Starts entschaerft und ihr Start-Tor geschlossen (082).
 2. **Threads stoppen + joinen** (Abhaengigkeits-Reihenfolge): Hotkey-Poller →
-   Settings-Dialog (WM_CLOSE + Join) → Pos-Watcher (Event + Join) →
+   Settings-Dialog (WM_CLOSE + Join; seit 082/088 auch fuer den Dialog aus
+   „Plugins → Einstellungen“) → HTTP-Listener → Pos-Watcher (Event + Join) →
+   warten, bis ein bereits begonnener verzoegerter `overlay_start()` fertig ist →
    Overlay-Monitor (Join) + Overlay-UI (WM_QUIT + Join; zerstoert sein HWND
-   selbst) → `overlayTextLock` erst nach dem Join loeschen.
+   selbst) → `overlayTextLock` erst nach dem Join loeschen, Fensterklasse
+   abmelden (088).
 3. **Modul-Zustand zuruecksetzen:** Player-Tabelle, CEPOS, CEMODE, CEPING, CEAUTH, 3D,
    Channel, Profil, Nick, Version, Audio-Snapshots (pure Resets, keine TS-API).
 4. **Adapter schliessen:** joint den Wakeup-Thread, loescht die

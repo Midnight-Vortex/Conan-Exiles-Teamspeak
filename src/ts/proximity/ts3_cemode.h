@@ -33,7 +33,10 @@ void ts3_cemode_signal_send_pending(void);
 /* 1 when a send is waiting. Any thread. */
 int ts3_cemode_send_pending(void);
 
-/* Broadcast own mode if pending and not rate limited. TS callback ONLY. */
+/* Broadcast own mode if pending and not rate limited. TS callback ONLY.
+   Claims the pending flag BEFORE reading the mode, so a mode switch on another
+   thread that lands during the flush re-arms the flag instead of being wiped;
+   a failed send re-arms it too (bounded retries). */
 void ts3_cemode_flush(void);
 
 /* Handle an incoming plugin command. Returns 1 when it was a CEMODE command

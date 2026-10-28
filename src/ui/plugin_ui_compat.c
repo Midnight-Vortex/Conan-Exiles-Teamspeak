@@ -9,6 +9,7 @@
 #include "ts/proximity/ts3_cepos.h"
 #include "ts/proximity/ts3_proximity_audio.h"
 #include "ui/overlay/voice_overlay.h"
+#include "ui/util/ui_worker_slot.h"
 #include "plugin_modules.h"
 
 #include <stdio.h>
@@ -17,12 +18,12 @@
 #include <process.h>
 #include <shellapi.h>
 
-static mumble_error_t compat_mumble_log(mumble_plugin_id_t callerID, const char* message) {
+/* Must match MumbleAPI_v_1_0_x::log (mumble_compat.h): returns void. */
+static void compat_mumble_log(mumble_plugin_id_t callerID, const char* message) {
     (void)callerID;
     if (message) {
         log_write("%s", message);
     }
-    return MUMBLE_STATUS_OK;
 }
 
 // Background image
@@ -305,7 +306,21 @@ void plugin_ui_sync_to_config(void) {
     ui_cfg_commit();
 }
 
-void plugin_ui_sync_live_state(void) {
+/* ---- live-state sync: callback thread only (review-fix 088, C6) ------------
+ *
+ * The sync rewrites shared UI state (zones[], races[], zoneCount, raceCount,
+ * currentZoneIndex, currentPlayerRaceIndex, hub* doubles, the position
+ * mirrors) that the overlay thread and the F10 dialog read. It therefore has
+ * exactly ONE writer thread: the TS callback thread.
+ *
+ * Other threads (pos watcher, HTTP inject listener) must not run it. They go
+ * through plugin_ui_on_position_tick(), which only raises g_pendingSync (and a
+ * wakeup); the CEDRAIN dispatcher then calls plugin_ui_flush_pending_sync()
+ * on the callback thread. g_pendingSync is a coalescing flag: any number of
+ * ticks collapse into one sync. */
+static volatile LONG g_pendingSync = 0;
+
+static void ui_sync_live_state_on_callback_thread(void) {
     coordinatesValid = pos_coordinates_valid() ? TRUE : FALSE;
     isConnectedToServer = ts3_is_connected() ? TRUE : FALSE;
 
@@ -321,9 +336,12 @@ void plugin_ui_sync_live_state(void) {
 
     /* V8.5: channel_manage (ts/channel) is the SINGLE source of the hub/ingame
        channel IDs. hubChannelID/ingameChannelID here are DERIVED MIRRORS for the
-       overlay HUD only — refreshed on the callback thread from the canonical
-       getters below. Never assign them anywhere else (grep-enforced: this is the
-       only writer). See doku/aenderungen/023-kanal-id-single-source.md. */
+       overlay HUD only. This function is the ONLY writer and, since 088, it
+       really does run on the callback thread only (plugin_ui_sync_live_state
+       defers every other thread to plugin_ui_flush_pending_sync) — before that
+       the pos-watcher / HTTP threads ran it too. Never assign the mirrors
+       anywhere else. See doku/aenderungen/023-kanal-id-single-source.md and
+       doku/aenderungen/088-review-fixes-ui-threads.md. */
     const uint64 hubId = chan_get_hub_channel_id();
     const uint64 ingameId = chan_get_ingame_channel_id();
     hubChannelID = hubId ? (mumble_channelid_t)hubId : -1;
@@ -386,24 +404,28 @@ void plugin_ui_sync_live_state(void) {
         currentPlayerRaceIndex = -1;
         for (size_t i = 0; i < raceCount; i++) {
             const HubRace* src = &hub.races[i];
-            Race* dst = &races[i];
-            memset(dst, 0, sizeof(*dst));
-            snprintf(dst->name, sizeof(dst->name), "%s", src->name);
-            dst->steamIDCount = (size_t)src->steamIDCount;
-            if (dst->steamIDCount > MAX_STEAMIDS_PER_RACE) {
-                dst->steamIDCount = MAX_STEAMIDS_PER_RACE;
+            /* Build in a local and publish with ONE struct copy: the old
+               in-place memset blanked races[i].name while the overlay thread
+               could be painting it ("Rasse: " with an empty name). */
+            Race built;
+            memset(&built, 0, sizeof(built));
+            snprintf(built.name, sizeof(built.name), "%s", src->name);
+            built.steamIDCount = (size_t)src->steamIDCount;
+            if (built.steamIDCount > MAX_STEAMIDS_PER_RACE) {
+                built.steamIDCount = MAX_STEAMIDS_PER_RACE;
             }
-            for (size_t j = 0; j < dst->steamIDCount; j++) {
-                dst->steamIDs[j] = src->steamIDs[j];
+            for (size_t j = 0; j < built.steamIDCount; j++) {
+                built.steamIDs[j] = src->steamIDs[j];
             }
-            dst->minimumWhisper = src->minWhisper;
-            dst->maximumWhisper = src->maxWhisper;
-            dst->minimumNormal = src->minNormal;
-            dst->maximumNormal = src->maxNormal;
-            dst->minimumShout = src->minShout;
-            dst->maximumShout = src->maxShout;
-            dst->listenAddDistance = src->listenAddDistance;
-            dst->isActive = TRUE;
+            built.minimumWhisper = src->minWhisper;
+            built.maximumWhisper = src->maxWhisper;
+            built.minimumNormal = src->minNormal;
+            built.maximumNormal = src->maxNormal;
+            built.minimumShout = src->minShout;
+            built.maximumShout = src->maxShout;
+            built.listenAddDistance = src->listenAddDistance;
+            built.isActive = TRUE;
+            races[i] = built;
         }
         HubRace localRace;
         if (server_profile_get_local_race(&localRace)) {
@@ -438,6 +460,51 @@ void plugin_ui_sync_live_state(void) {
     currentVoiceMode = (uint8_t)voice_mode_get_current();
 }
 
+/* Raise the pending-sync flag; wake the dispatcher on the 0 -> 1 edge only
+   (the wakeup is pure Win32 flag+event — safe from any thread). */
+static void ui_request_deferred_sync(void) {
+    if (InterlockedExchange(&g_pendingSync, 1) == 0) {
+        ts3_request_wakeup();
+    }
+}
+
+/* Public entry. On the callback thread: run now. Anywhere else: defer (never
+   write the shared HUD state from a foreign thread). */
+void plugin_ui_sync_live_state(void) {
+    if (!ts3_thread_is_callback()) {
+        ui_request_deferred_sync();
+        return;
+    }
+    /* Clear BEFORE reading the sources: a tick that lands during the sync
+       re-raises the flag, so at worst one extra (idempotent) sync follows. */
+    InterlockedExchange(&g_pendingSync, 0);
+    ui_sync_live_state_on_callback_thread();
+}
+
+int plugin_ui_has_pending_sync(void) {
+    return InterlockedCompareExchange(&g_pendingSync, 0, 0) != 0;
+}
+
+/* CEDRAIN dispatcher (callback thread): run the sync a foreign thread asked
+   for, then refresh the HUD so it shows the new zone/race without waiting for
+   the next tick. */
+void plugin_ui_flush_pending_sync(void) {
+    if (!ts3_thread_is_callback()) {
+        return; /* leave the flag set for the real dispatcher */
+    }
+    if (InterlockedCompareExchange(&g_pendingSync, 0, 0) == 0) {
+        return;
+    }
+    if (pluginShuttingDown) {
+        InterlockedExchange(&g_pendingSync, 0);
+        return;
+    }
+    plugin_ui_sync_live_state(); /* clears the flag, then syncs */
+    if (enableVoiceOverlay && hVoiceOverlay) {
+        updateVoiceOverlay();
+    }
+}
+
 void plugin_ui_on_hub_profile_updated(void) {
     plugin_ui_sync_live_state();
     /* Callback thread only (channel description/edit events in ts3_entry.c),
@@ -466,6 +533,10 @@ float getVoiceDistanceForMode(uint8_t voiceMode) {
     }
 }
 
+/* Called from the pos-watcher and HTTP-listener threads (never the callback
+   thread in practice). Does only the thread-safe part itself: queue the
+   live-state sync for the callback thread (plugin_ui_sync_live_state defers
+   automatically off-thread) and post the overlay refresh. */
 void plugin_ui_on_position_tick(void) {
     plugin_ui_sync_live_state();
     localVoiceData.voiceDistance = voice_mode_get_current_distance();
@@ -604,7 +675,27 @@ void plugin_ui_shutdown(void) {
 }
 
 static volatile unsigned long g_overlayUiThreadId = 0;
-static HANDLE g_overlayMonitorHandle = NULL;
+
+/* ---- overlay lifecycle: start vs stop (review-fix 088) ----------------------
+ *
+ * overlay_start() runs on the deferred overlay UI thread (ts3_entry.c);
+ * overlay_stop() runs on the callback thread at shutdown. They can overlap: the
+ * UI thread may pass its "not shutting down" check and then sit in
+ * createVoiceOverlay() while shutdown already started. The monitor thread's
+ * handle is therefore handed over through a UiWorkerSlot (ui_worker_slot.h):
+ * no lock is held across window/thread creation (the callback thread never
+ * waits on the UI thread's window calls), and exactly ONE side — the stopper
+ * or the starter — ends up owning, joining and closing the handle.
+ *
+ * start:  may_start? -> create window -> create monitor -> publish handle; if a
+ *         stop was requested meanwhile, publish hands the handle back and start
+ *         reaps its own monitor.
+ * stop:   request_stop -> join whatever handle it got back.
+ *
+ * The caller (ts3plugin_shutdown) joins the overlay UI thread — the thread
+ * running start — right after overlay_stop, so every path has finished before
+ * overlay_finalize() runs. */
+static UiWorkerSlot g_overlayMonitor = UI_WORKER_SLOT_INIT;
 
 void overlay_ui_mark_thread(void) {
     g_overlayUiThreadId = GetCurrentThreadId();
@@ -621,19 +712,45 @@ void overlay_ui_signal_quit(void) {
     }
 }
 
+/* Join + close a monitor thread whose handle this caller took ownership of. */
+static void overlay_reap_monitor(HANDLE monitor) {
+    /* JOIN (poll loop wakes every 2s); never close a running thread's handle. */
+    if (WaitForSingleObject(monitor, 5000) != WAIT_OBJECT_0) {
+        log_write("SHUTDOWN: overlay monitor thread slow to exit - waiting");
+        WaitForSingleObject(monitor, INFINITE);
+    }
+    CloseHandle(monitor);
+}
+
+static int overlay_shutdown_began(void) {
+    return pluginShuttingDown || !ui_worker_may_start(&g_overlayMonitor);
+}
+
 void overlay_start(void) {
     if (!enableVoiceOverlay) {
         return;
     }
+    if (overlay_shutdown_began()) {
+        return; /* shutdown won the race: build nothing */
+    }
     createVoiceOverlay();
     updateVoiceOverlay();
-    if (!g_overlayMonitorHandle) {
-        overlayThreadRunning = TRUE;
-        g_overlayMonitorHandle = (HANDLE)_beginthreadex(NULL, 0, overlayMonitorThreadEx, NULL, 0, NULL);
-        if (!g_overlayMonitorHandle) {
-            overlayThreadRunning = FALSE;
-            log_write("OVERLAY: monitor thread start failed");
-        }
+    if (ui_worker_has_handle(&g_overlayMonitor)) {
+        return; /* monitor already running */
+    }
+    overlayThreadRunning = TRUE;
+    HANDLE monitor = (HANDLE)_beginthreadex(NULL, 0, overlayMonitorThreadEx, NULL, 0, NULL);
+    if (!monitor) {
+        overlayThreadRunning = FALSE;
+        log_write("OVERLAY: monitor thread start failed");
+        return;
+    }
+    /* Publish. If overlay_stop() already ran (or runs right now) we get the
+       handle back and must end the monitor ourselves. */
+    HANDLE mine = (HANDLE)ui_worker_publish(&g_overlayMonitor, monitor);
+    if (mine) {
+        overlayThreadRunning = FALSE;
+        overlay_reap_monitor(mine);
     }
 }
 
@@ -642,27 +759,26 @@ void overlay_start(void) {
    then joins the overlay UI thread — which destroys its own HWND on exit —
    and calls overlay_finalize() afterwards. HWND destruction and the
    overlayTextLock teardown moved out of here because both must not happen
-   while the overlay thread may still be painting. */
+   while the overlay thread may still be painting.
+   088: synchronised with overlay_start() (see the lifecycle note above). */
 void overlay_stop(void) {
     overlayThreadRunning = FALSE;
-    if (g_overlayMonitorHandle) {
-        /* JOIN (poll loop wakes every 2s); never close a running thread's handle. */
-        if (WaitForSingleObject(g_overlayMonitorHandle, 5000) != WAIT_OBJECT_0) {
-            log_write("SHUTDOWN: overlay monitor thread slow to exit - waiting");
-            WaitForSingleObject(g_overlayMonitorHandle, INFINITE);
-        }
-        CloseHandle(g_overlayMonitorHandle);
-        g_overlayMonitorHandle = NULL;
+    HANDLE monitor = (HANDLE)ui_worker_request_stop(&g_overlayMonitor);
+    if (monitor) {
+        overlay_reap_monitor(monitor);
     }
     overlay_ui_signal_quit();
 }
 
 /* Runs AFTER the overlay UI thread has been joined: fallback window/font
-   cleanup (no-op when the overlay thread destroyed its HWND itself) and the
+   cleanup (no-op when the overlay thread destroyed its HWND itself), the
+   window-class unregistration (the class lives in the host process and its
+   WndProc points into this DLL — it must not survive the unload) and the
    overlayTextLock teardown — deleting a critical section is only safe once
    no thread can enter it anymore (the overlay paint path used it). */
 void overlay_finalize(void) {
     plugin_destroy_voice_overlay_safely();
+    voice_overlay_unregister_class();
     if (InterlockedCompareExchange(&overlayTextLockInitialized, 0, 0)) {
         DeleteCriticalSection(&overlayTextLock);
         InterlockedExchange(&overlayTextLockInitialized, 0);

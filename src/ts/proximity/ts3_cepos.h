@@ -8,10 +8,18 @@
  * "ConanExiles_CompletePositional". Packet layout must match the old plugin
  * exactly (pack(1), 56 bytes) so mixed old/new clients keep working.
  *
+ * Send path: cepos_flush does the cheap change check first (keepalive due /
+ * forced / position beyond CEPOS_POS_EPS / voice distance) and only builds a
+ * packet when a send really goes out. The own nickname (a TS API call) is
+ * cached and re-read at most once per second, so a rename reaches the peers
+ * with up to ~1 s delay. Receive path: the peer-controlled playerName is
+ * stripped of control bytes (ts3_cepos_wire.h) before it is stored or logged.
+ *
  * Thread contract:
  *  - cepos_signal_send_pending: any thread (pos watcher). Sets a flag and
  *    requests a wakeup; never touches the TS API.
- *  - cepos_flush / cepos_on_plugin_command: TS callback thread ONLY.
+ *  - cepos_flush / cepos_on_plugin_command: TS callback thread ONLY. The send
+ *    state and the own-nickname cache are owned by that thread (no lock).
  *  - cepos_reset: TS callback thread (disconnect).
  */
 

@@ -10,8 +10,9 @@
  *       --read only-->  audio thread (onEditPlaybackVoiceDataEvent)
  *
  * Rules (lessons from the old plugin's crashes):
- *  - The audio thread NEVER calls the TS API and NEVER takes locks; it only
- *    reads seqlock snapshots and signals unmute via an atomic flag.
+ *  - The audio thread NEVER calls the TS API and NEVER takes locks (not even
+ *    spin locks); it only reads seqlock snapshots and signals unmute by
+ *    setting an atomic per-client flag (the callback thread scans the flags).
  *  - TS unmutes run ONLY as a batch on the callback thread (one API round
  *    trip), first unmute immediate, re-unmute rate-limited, pending requests
  *    are never discarded.
@@ -97,6 +98,28 @@ int ts3_audio_has_pending_unmutes(void);
    of the .c (see tests/render_state_test.c). */
 static inline int render_state_needs_reinit(long lastGen, long curGen) {
     return lastGen != curGen;
+}
+
+/* Talk-pause detection (review fix 084 #3). TS stops calling the playback
+   callbacks while a client is silent, so a client's ramp / lowpass / reverb /
+   HRTF memory is STALE when the next utterance starts. The audio thread keeps
+   the tick (GetTickCount64, lock-free) of each client's last block; a block
+   arriving more than gapMs later (or the very first block, lastMs == 0) is the
+   start of a new utterance. Pure, so it is host-unit-testable. */
+#define TS3_RENDER_GAP_MS 200
+static inline int render_gap_exceeded(unsigned long long lastMs, unsigned long long nowMs,
+    unsigned long long gapMs) {
+    return lastMs == 0 || nowMs < lastMs || (nowMs - lastMs) > gapMs;
+}
+
+/* Where the gain/pan ramp of this block starts. A fresh start (new utterance,
+   generation bump / ID reuse) begins AT the target — ramping from a stale value
+   (the old code used 1.0 after a bump) let a far-away speaker's first 10-20 ms
+   through at near full volume. Otherwise the ramp continues from the value the
+   previous block ended at (click-free, also across a PASSTHROUGH -> PROXIMITY
+   mode switch in the middle of an utterance, where the previous value is 1.0). */
+static inline float render_ramp_start(int freshStart, float current, float target) {
+    return freshStart ? target : current;
 }
 
 /* Drop one client (left server / evicted / moved away). Callback thread.

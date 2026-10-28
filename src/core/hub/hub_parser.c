@@ -2,6 +2,7 @@
 #include "core/proximity/occlusion.h" /* OCCLUSION_INTENSITY_* (069) */
 
 #include "core/util/compat_crt.h"
+#include "core/util/num_parse.h" /* num_strtod: "13,5" = 13.5 for single numbers */
 
 #include <math.h>
 #include <stdlib.h>
@@ -85,7 +86,7 @@ static int hub_parse_occ_mod_param(const char* line, HubSettings* out) {
     for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT; i++) {
         const char* v = hub_value_for_exact(line, occlusion_mod_param_name(i));
         if (v) {
-            out->occModParams[i] = occlusion_mod_param_clamp(i, strtod(v, NULL));
+            out->occModParams[i] = occlusion_mod_param_clamp(i, num_strtod(v));
             return 1;
         }
     }
@@ -96,9 +97,12 @@ static int hub_parse_bool(const char* value) {
     return _strnicmp(value, "true", 4) == 0 || value[0] == '1';
 }
 
-/* Distance/volume value: finite and clamped to a sane range. */
+/* Distance/volume value: finite and clamped to a sane range.  A single decimal
+   comma ("13,5") counts as a decimal point; every key that goes through here
+   holds ONE number (the only comma separated list, SteamID=, has its own
+   parser). */
 static float hub_parse_clamped(const char* value, float minV, float maxV) {
-    float f = (float)strtod(value, NULL);
+    float f = (float)num_strtod(value);
     if (!isfinite(f)) {
         return minV;
     }

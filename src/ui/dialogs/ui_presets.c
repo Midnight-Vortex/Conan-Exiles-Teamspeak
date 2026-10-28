@@ -184,15 +184,9 @@ LRESULT CALLBACK PresetRenameDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             HDC hdc = lpDIS->hDC;
             RECT rect = lpDIS->rcItem;
 
-            // Load bitmap resource | Charger la ressource bitmap
-            HMODULE hModule = NULL;
-            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                (LPCWSTR)PresetRenameDialogProc, &hModule);
-
-            if (!hModule) hModule = GetModuleHandleW(NULL);
-
-            HBITMAP hBitmap = (HBITMAP)LoadImageW(hModule, MAKEINTRESOURCEW(IDB_OK_Box_01),
-                IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            // Bitmap from the image cache (decoded once, owned by the cache)
+            // Bitmap issu du cache d'images (decode une seule fois)
+            HBITMAP hBitmap = ui_image_cache_get(IDB_OK_Box_01);
 
             if (hBitmap) {
                 HDC hdcMem = CreateCompatibleDC(hdc);
@@ -213,7 +207,6 @@ LRESULT CALLBACK PresetRenameDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
                 SelectObject(hdcMem, hOldBitmap);
                 DeleteDC(hdcMem);
-                DeleteObject(hBitmap);
 
                 // Draw text centered on image | Dessiner le texte centré sur l'image
                 wchar_t text[32] = L"";
@@ -634,20 +627,15 @@ LRESULT CALLBACK PresetLabelProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         wchar_t text[256];
         GetWindowTextW(hwnd, text, 256);
 
-        // Charger l'icône checkmark
-        HMODULE hModule = NULL;
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            (LPCWSTR)PresetLabelProc, &hModule);
-
-        HICON hCheckIcon = (HICON)LoadImageW(hModule, MAKEINTRESOURCEW(IDI_CHECKMARK),
-            IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+        // Icône checkmark depuis le cache (chargée une seule fois, jamais détruite ici)
+        // Checkmark icon from the image cache (loaded once; the cache destroys it)
+        HICON hCheckIcon = ui_checkmark_icon_get();
 
         if (hCheckIcon) {
             // Dessiner l'icône à gauche
             int iconX = 2;
             int iconY = (rect.bottom - 16) / 2;
             DrawIconEx(hdc, iconX, iconY, hCheckIcon, 16, 16, 0, NULL, DI_NORMAL);
-            DestroyIcon(hCheckIcon);
         }
 
         // Dessiner le texte décalé de 20px à droite

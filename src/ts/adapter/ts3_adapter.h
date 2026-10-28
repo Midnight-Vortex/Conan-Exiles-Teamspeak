@@ -48,6 +48,12 @@
  * TS API at all — they only set an Interlocked flag and SetEvent (pure Win32,
  * callable from ANY thread incl. the PCM audio thread). A single dedicated
  * wakeup thread OWNS the off-callback sendPluginCommand("CEDRAIN:1") call.
+ * That command is addressed to the OWN client only (PluginCommandTarget_CLIENT)
+ * so it is not relayed to every other client on the server; the wakeup thread
+ * verifies at runtime that the echo comes back and otherwise falls back to the
+ * old server-wide target (core/util/drain_target.h). The callback thread must
+ * report each own CEDRAIN via ts3_wakeup_note_own_echo() and may ignore CEDRAIN
+ * commands of other clients.
  *
  * Result: the TS API is touched by exactly TWO threads total — the TS callback
  * thread (everything) and the wakeup thread (exactly one function,
@@ -134,6 +140,11 @@ int ts3_cmd_queue_nonempty(void);
 
 /* ---- 3.3 wakeup ---------------------------------------------------------- */
 
+/* The CEDRAIN that THIS client sent just arrived back (onPluginCommandEvent,
+   invokerClientID == own id). Feeds the CLIENT-addressing self-check of the
+   wakeup thread. Atomic store only — any thread. */
+void ts3_wakeup_note_own_echo(void);
+
 /* Ask the callback thread to run ts3_cmd_queue_drain() soon. Any thread
    (incl. the PCM audio thread): sets a flag + SetEvent only, no TS API. The
    dedicated wakeup thread sends the actual CEDRAIN, rate-limited to one server
@@ -154,6 +165,10 @@ int ts3_get_channel_list(uint64* outChannels, int maxChannels);
 
 /* Channel name lookup, returns 1 on success. */
 int ts3_get_channel_name(uint64 channelID, char* outName, int outLen);
+
+/* Parent of a channel. Returns 1 on success (*outParent == 0 means the channel
+   is top level), 0 on failure. TS callback thread ONLY. */
+int ts3_get_channel_parent(uint64 channelID, uint64* outParent);
 
 /* 077: 1 = channel is password protected, 0 = not, -1 = unknown. */
 int ts3_channel_has_password(uint64 channelID);
@@ -202,8 +217,15 @@ int ts3_unmute_clients_for_pcm(const anyID* clients, int count);
 
 /* Move the local client to a channel (password "" when none). Returns 1 when
    the request was sent. TS callback thread ONLY — flood protection lives in
-   channel_manage (in-flight flag + cooldown). */
+   channel_manage (in-flight flag + cooldown). Each move carries a plugin
+   return code (remembered by the adapter) so the asynchronous server answer
+   can be recognised in onServerErrorEvent. */
 int ts3_request_client_move(anyID clientID, uint64 channelID, const char* password);
+
+/* onServerErrorEvent helper: 1 when `returnCode` belongs to one of our
+   ts3_request_client_move calls (the code is consumed — one answer per code),
+   0 for NULL/unknown codes. TS callback thread ONLY. */
+int ts3_consume_move_return_code(const char* returnCode);
 
 /* Ask the server for a channel's description (arrives via
    onChannelDescriptionUpdateEvent). Returns 1 when the request was sent.

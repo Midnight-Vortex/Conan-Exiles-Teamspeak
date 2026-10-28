@@ -1,4 +1,5 @@
 #include "core/mod_file/pos_file.h"
+#include "core/mod_file/pos_parse.h"
 #include "core/mod_file/path_detect.h"
 #include "core/config/config.h"
 #include "core/util/log.h"
@@ -36,7 +37,8 @@ static void (*g_updateCallback)(void) = NULL;
 static void (*g_tickCallback)(void) = NULL;
 static void (*g_injectNotifyCallback)(void) = NULL;
 /* Hold window: when an HTTP-injected position is active the watcher skips file
-   reads and does not invalidate coordinates. Written by any thread (x64 aligned
+   reads (only the file's timestamp is still looked at) and does not
+   invalidate coordinates. Written by any thread (x64 aligned
    volatile ULONGLONG write is atomic); read only by the watcher thread. */
 static volatile ULONGLONG g_httpHoldUntilMs = 0;
 static volatile long g_posSource = POS_SOURCE_NONE;
@@ -110,15 +112,6 @@ static int pos_read_raw(const wchar_t* filePath, char* buffer, size_t bufferSize
     return 0;
 }
 
-static int pos_parse_field(const char* buffer, const char* key, double* out) {
-    const char* p = strstr(buffer, key);
-    if (!p) {
-        return 0;
-    }
-    *out = strtod(p + strlen(key), NULL);
-    return 1;
-}
-
 int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
     if (!filePath || !out || !filePath[0]) {
         return 0;
@@ -129,40 +122,9 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
         return 0;
     }
 
-    double seq = 0.0;
-    PosSample sample;
-    memset(&sample, 0, sizeof(sample));
-
-    if (!pos_parse_field(buffer, "SEQ=", &seq)
-        || !pos_parse_field(buffer, "X=", &sample.x)
-        || !pos_parse_field(buffer, "Y=", &sample.y)
-        || !pos_parse_field(buffer, "Z=", &sample.z)
-        || !pos_parse_field(buffer, "YAW=", &sample.yaw)) {
-        return 0;
-    }
-    sample.seq = (int)seq;
-
-    /* YAWY is optional (older mod versions). */
-    if (!pos_parse_field(buffer, "YAWY=", &sample.yawY)) {
-        sample.yawY = 0.0;
-    }
-
-    *out = sample;
-    return 1;
-}
-
-/* Reject mod loading placeholder (0,0,0 cm) — breaks distance for all speakers. */
-static int pos_sample_is_plausible(const PosSample* sample) {
-    if (!sample) {
-        return 0;
-    }
-    if (!isfinite(sample->x) || !isfinite(sample->y) || !isfinite(sample->z)) {
-        return 0;
-    }
-    if (fabs(sample->x) < 1.0 && fabs(sample->y) < 1.0 && fabs(sample->z) < 1.0) {
-        return 0;
-    }
-    return 1;
+    /* Pure parse (pos_parse.h): every field needs a real number, all five
+       values finite and sane. */
+    return pos_parse_line(buffer, out);
 }
 
 /* ---- inject from external source --------------------------------------- */
@@ -214,13 +176,8 @@ static int pos_get_file_write_quad(const wchar_t* filePath, ULONGLONG* outQuad) 
     return 1;
 }
 
-/* Milliseconds since Pos.txt was last written, or MAXULONGLONG if missing. */
-static ULONGLONG pos_file_write_age_ms(const wchar_t* filePath) {
-    ULONGLONG writtenQuad = 0;
-    if (!pos_get_file_write_quad(filePath, &writtenQuad)) {
-        return MAXULONGLONG;
-    }
-
+/* Milliseconds since a Pos.txt write time (FILETIME quad), clock-skew safe. */
+static ULONGLONG pos_age_from_quad(ULONGLONG writtenQuad) {
     FILETIME ftNow;
     GetSystemTimeAsFileTime(&ftNow);
     ULARGE_INTEGER now;
@@ -248,6 +205,24 @@ static int pos_saved_path_is_valid(const wchar_t* path) {
 
 /* ---- watcher thread ----------------------------------------------------- */
 
+/* Compare-and-set of ONLY automaticSavedPath (config_modify mutator): applied
+   when the field still holds what the detection saw, so a path the settings
+   dialog set in the meantime is never overwritten. */
+typedef struct AutoPathPatch {
+    const wchar_t* expected; /* value the detection started from */
+    const wchar_t* value;    /* new value ("" = clear) */
+    int applied;
+} AutoPathPatch;
+
+static void pos_autodetect_patch(PluginConfig* cfg, void* ctx) {
+    AutoPathPatch* patch = (AutoPathPatch*)ctx;
+    if (wcscmp(cfg->automaticSavedPath, patch->expected) != 0) {
+        return;
+    }
+    wcsncpy_s(cfg->automaticSavedPath, CONFIG_MAX_PATH, patch->value, _TRUNCATE);
+    patch->applied = 1;
+}
+
 void pos_autodetect_saved_path(void) {
     PluginConfig cfg;
     config_copy(&cfg);
@@ -261,19 +236,27 @@ void pos_autodetect_saved_path(void) {
     }
 
     wchar_t detected[CONFIG_MAX_PATH] = L"";
+    AutoPathPatch patch;
+    patch.expected = cfg.automaticSavedPath;
+    patch.applied = 0;
+
     if (!path_detect_conan_saved(detected, CONFIG_MAX_PATH)) {
         if (cfg.automaticSavedPath[0]) {
             log_write("POS: autodetect failed — clearing invalid AutomaticSavedPath");
-            cfg.automaticSavedPath[0] = L'\0';
-            config_apply(&cfg);
-            config_save();
+            patch.value = L"";
+            config_modify(pos_autodetect_patch, &patch);
+            if (patch.applied) {
+                config_save();
+            }
         }
         return;
     }
-    wcsncpy_s(cfg.automaticSavedPath, CONFIG_MAX_PATH, detected, _TRUNCATE);
-    config_apply(&cfg);
-    config_save();
-    log_write("POS: autodetect saved path -> %ls", cfg.automaticSavedPath);
+    patch.value = detected;
+    config_modify(pos_autodetect_patch, &patch);
+    if (patch.applied) {
+        config_save();
+        log_write("POS: autodetect saved path -> %ls", detected);
+    }
 }
 
 /* Pos.txt path from config: automatic path when enabled and set, else manual.
@@ -329,33 +312,53 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             pos_autodetect_saved_path();
         }
 
+        /* Pos.txt is used only when it is enabled AND a path is known. Without a
+           path the tick behaves exactly like HTTP-only mode (else branch below):
+           an active HTTP inject hold or its grace keeps the coordinates. It used
+           to invalidate them on every 30 ms tick, so with the game mod posting
+           over HTTP but no Saved path found, "valid" flapped against the inject. */
+        int useFile = 0;
         if (posFileEnabled) {
             pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
-
-            if (!filePath[0]) {
-                if (now - lastMissingLog > POS_LOG_THROTTLE_MS) {
-                    lastMissingLog = now;
-                    log_debug("POS: no Pos.txt path configured");
-                }
-                InterlockedExchange(&g_coordinatesValid, 0);
-                pos_set_source(POS_SOURCE_NONE);
-                goto pos_watcher_tick;
+            if (filePath[0]) {
+                useFile = 1;
             }
+            else if (now - lastMissingLog > POS_LOG_THROTTLE_MS) {
+                lastMissingLog = now;
+                log_debug("POS: no Pos.txt path configured");
+            }
+        }
 
-            const ULONGLONG age = pos_file_write_age_ms(filePath);
+        if (useFile) {
+            /* ONE directory lookup per tick gives both the write time (change
+               detection) and the age (staleness). */
+            ULONGLONG writeQuad = 0;
+            int writeChanged = 0;
+            ULONGLONG age = MAXULONGLONG;
+            if (pos_get_file_write_quad(filePath, &writeQuad)) {
+                age = pos_age_from_quad(writeQuad);
+                writeChanged = (g_lastFileWriteQuad != 0 && writeQuad != g_lastFileWriteQuad);
+                g_lastFileWriteQuad = writeQuad;
+            }
             dbgFileAge = age;
             const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
 
-            ULONGLONG writeQuad = 0;
-            int writeChanged = 0;
-            if (pos_get_file_write_quad(filePath, &writeQuad)) {
-                writeChanged = (g_lastFileWriteQuad != 0 && writeQuad != g_lastFileWriteQuad);
-                g_lastFileWriteQuad = writeQuad;
+            /* HTTP hold: the injected position is authoritative and any file
+               sample would be discarded below - do not even open/read Pos.txt
+               (its write time above is still tracked). */
+            const ULONGLONG holdUntil = g_httpHoldUntilMs;
+            const int httpHoldActive = (now < holdUntil);
+            if (httpHoldActive && fileActive
+                && now - lastHoldSkipLog >= POS_DEBUG_STATUS_MS) {
+                lastHoldSkipLog = now;
+                log_debug("POS: Pos.txt skipped (HTTP hold left=%llums age=%llums)",
+                    (unsigned long long)(holdUntil - now),
+                    (unsigned long long)age);
             }
 
             PosSample sample;
             memset(&sample, 0, sizeof(sample));
-            int readOk = fileActive && pos_file_read_once(filePath, &sample);
+            int readOk = fileActive && !httpHoldActive && pos_file_read_once(filePath, &sample);
             if (readOk && !pos_sample_is_plausible(&sample)) {
                 if (now - lastValidLog > POS_LOG_THROTTLE_MS) {
                     lastValidLog = now;
@@ -450,7 +453,8 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             }
         }
         else {
-            /* HTTP-only: skip Pos.txt reads; keep coords via inject hold + grace. */
+            /* HTTP-only (EnablePosFile=false, or no Pos.txt path known): skip
+               Pos.txt reads; keep coords via inject hold + grace. */
             const int currentlyValid = InterlockedCompareExchange(&g_coordinatesValid, 0, 0) != 0;
             const int inGrace = currentlyValid
                 && g_lastValidTick != 0
@@ -475,7 +479,6 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             }
         }
 
-    pos_watcher_tick:
         if (log_is_enabled() && now - lastStatusMs >= POS_DEBUG_STATUS_MS) {
             lastStatusMs = now;
             const ULONGLONG holdLeft = (now < g_httpHoldUntilMs)
