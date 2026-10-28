@@ -7,6 +7,21 @@
 
 #define CONAN_APPID_LINE L"\"440900\""
 
+/* The pos watcher retries the detection every 15 s while nothing is found;
+   the "not found" lines are logged at most this often (first failure at once).
+   Plain statics: a race between the watcher and the callback thread can only
+   cost or add one log line. */
+#define PATH_LOG_THROTTLE_MS (10ULL * 60ULL * 1000ULL)
+
+static int path_log_due(ULONGLONG* last) {
+    const ULONGLONG now = GetTickCount64();
+    if (*last != 0 && now - *last < PATH_LOG_THROTTLE_MS) {
+        return 0;
+    }
+    *last = now;
+    return 1;
+}
+
 /* Steam install folder from the registry. Returns 1 on success. */
 static int detect_steam_install_path(wchar_t* out, size_t outLen) {
     HKEY hKey = NULL;
@@ -121,12 +136,18 @@ int path_detect_conan_saved(wchar_t* out, size_t outLen) {
     wchar_t vdfPath[MAX_PATH];
     swprintf(vdfPath, MAX_PATH, L"%s\\steamapps\\libraryfolders.vdf", steamPath);
     if (GetFileAttributesW(vdfPath) == INVALID_FILE_ATTRIBUTES) {
-        log_debug("PATH: libraryfolders.vdf missing at %ls", vdfPath);
+        static ULONGLONG s_lastVdfMissingLog = 0;
+        if (path_log_due(&s_lastVdfMissingLog)) {
+            log_debug("PATH: libraryfolders.vdf missing at %ls", vdfPath);
+        }
         return 0;
     }
 
     if (!detect_from_library_vdf(vdfPath, out, outLen)) {
-        log_write("PATH: Conan Exiles (440900) not found in any Steam library");
+        static ULONGLONG s_lastNotFoundLog = 0;
+        if (path_log_due(&s_lastNotFoundLog)) {
+            log_write("PATH: Conan Exiles (440900) not found in any Steam library");
+        }
         return 0;
     }
 

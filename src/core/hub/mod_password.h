@@ -9,7 +9,7 @@
  * The HTTP thread cuts that field off before anything parses or logs the
  * body and stores the value here. The password lives in memory only: it is
  * never logged and never written to disk. A value counts only while the mod
- * keeps posting (MOD_PASSWORD_TTL_MS).
+ * keeps posting (MOD_PASSWORD_TTL_MS); the first read after that wipes it.
  *
  * Thread contract: take/store = HTTP listener thread; get/clear = any thread
  * (internal lock).
@@ -31,7 +31,9 @@ int mod_password_take_from_body(char* body, int bodyLen, unsigned long long nowM
 void mod_password_store(const char* value, int len, unsigned long long nowMs);
 
 /* Copies the password into out when one was received within the TTL.
-   Returns 1 when out holds a non-empty password, 0 otherwise (out = ""). */
+   Returns 1 when out holds a non-empty password, 0 otherwise (out = "").
+   A read that finds the value expired (older than the TTL) also WIPES it, so
+   a stale secret does not linger in memory until the next disconnect. */
 int mod_password_get(char* out, int outLen, unsigned long long nowMs);
 
 /* Forgets the stored password (TS disconnect). */

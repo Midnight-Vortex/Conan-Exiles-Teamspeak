@@ -33,7 +33,8 @@ typedef struct PosSample {
 } PosSample;
 
 /* Read + parse Pos.txt once. Returns 1 on success. Shared-access open with
-   retries because Conan may hold the file while writing. */
+   retries because Conan may hold the file while writing.  Parsing and sanity
+   rules (real numbers only, finite/sane values): core/mod_file/pos_parse.h. */
 int pos_file_read_once(const wchar_t* filePath, PosSample* out);
 
 /* Start/stop the polling thread (PLUGIN_POLL_INTERVAL_MS). Start is idempotent. Stop blocks
@@ -53,7 +54,10 @@ void pos_watcher_set_tick_callback(void (*callback)(void));
 
 /* Auto-detect the Conan Saved folder (Steam registry + libraryfolders.vdf)
    when AutomaticPatchFind is on and the stored path is empty/gone; persists
-   the result to plugin.cfg. TS callback thread (init / settings apply). */
+   the result to plugin.cfg.  Any thread (TS callback at init / settings apply,
+   and the pos watcher every 15 s): it changes ONLY automaticSavedPath, through
+   config_modify (compare-and-set), so it cannot overwrite what another thread
+   changed in the settings struct. */
 void pos_autodetect_saved_path(void);
 
 /* Latest sample. Returns 1 when coordinates are valid (fresh). */

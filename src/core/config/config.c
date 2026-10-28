@@ -1,9 +1,11 @@
 #include "core/config/config.h"
+#include "core/config/config_text.h"
 #include "core/util/log.h"
 
 #include <windows.h>
 #include <shlobj.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <wctype.h>
 
 PluginConfig g_config;
@@ -12,14 +14,30 @@ PluginConfig g_config;
 static CRITICAL_SECTION g_cfgLock;
 static INIT_ONCE g_cfgLockOnce = INIT_ONCE_STATIC_INIT;
 
+/* Serializes config_save(): one writer at a time, newest snapshot wins.
+   Always taken BEFORE g_cfgLock (config_save -> config_copy), never the
+   other way round. */
+static CRITICAL_SECTION g_cfgSaveLock;
+static INIT_ONCE g_cfgSaveLockOnce = INIT_ONCE_STATIC_INIT;
+
 static BOOL CALLBACK cfg_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
     (void)once; (void)param; (void)ctx;
     InitializeCriticalSection(&g_cfgLock);
     return TRUE;
 }
 
+static BOOL CALLBACK cfg_save_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
+    InitializeCriticalSection(&g_cfgSaveLock);
+    return TRUE;
+}
+
 static void cfg_lock_ensure(void) {
     InitOnceExecuteOnce(&g_cfgLockOnce, cfg_lock_init_once, NULL, NULL);
+}
+
+static void cfg_save_lock_ensure(void) {
+    InitOnceExecuteOnce(&g_cfgSaveLockOnce, cfg_save_lock_init_once, NULL, NULL);
 }
 
 void config_apply(const PluginConfig* src) {
@@ -39,6 +57,17 @@ void config_copy(PluginConfig* out) {
     cfg_lock_ensure();
     EnterCriticalSection(&g_cfgLock);
     *out = g_config;
+    LeaveCriticalSection(&g_cfgLock);
+}
+
+void config_modify(ConfigMutator fn, void* ctx) {
+    if (!fn) {
+        return;
+    }
+    cfg_lock_ensure();
+    EnterCriticalSection(&g_cfgLock);
+    fn(&g_config, ctx);
+    config_clamp(&g_config);
     LeaveCriticalSection(&g_cfgLock);
 }
 
@@ -65,9 +94,9 @@ const wchar_t* config_get_folder_path(void) {
 static void config_set_defaults(PluginConfig* cfg) {
     memset(cfg, 0, sizeof(*cfg));
     cfg->automaticPatchFind = 1;
-    cfg->distanceWhisper = 3.0f;
-    cfg->distanceNormal = 13.0f;
-    cfg->distanceShout = 26.0f;
+    cfg->distanceWhisper = CFG_DEFAULT_DIST_WHISPER;
+    cfg->distanceNormal = CFG_DEFAULT_DIST_NORMAL;
+    cfg->distanceShout = CFG_DEFAULT_DIST_SHOUT;
     cfg->whisperKey = 97;      /* Num1 */
     cfg->normalKey = 98;       /* Num2 */
     cfg->shoutKey = 99;        /* Num3 */
@@ -93,129 +122,128 @@ static int config_file_path(wchar_t* out, size_t outLen) {
     return 1;
 }
 
-static int parse_bool(const wchar_t* val) {
-    return (_wcsicmp(val, L"true") == 0 || wcscmp(val, L"1") == 0) ? 1 : 0;
+/* Clamp numeric values into safe ranges after load (NaN/Inf -> default). */
+void config_clamp(PluginConfig* cfg) {
+    cfg_clamp_values(cfg);
 }
 
-/* Trim leading/trailing whitespace in place, returns start pointer. */
-static wchar_t* trim(wchar_t* s) {
-    while (*s == L' ' || *s == L'\t') {
-        s++;
-    }
-    wchar_t* end = s + wcslen(s);
-    while (end > s && (end[-1] == L'\r' || end[-1] == L'\n' || end[-1] == L' ' || end[-1] == L'\t')) {
-        *--end = L'\0';
-    }
-    return s;
-}
+/* ---- file IO ------------------------------------------------------------------ */
 
-static void config_apply_line(PluginConfig* cfg, wchar_t* line) {
-    wchar_t* p = trim(line);
-    if (*p == L'#' || *p == L';' || *p == L'\0') {
-        return;
-    }
+#define CFG_FILE_MAX_BYTES (256u * 1024u) /* plugin.cfg is ~1 KB; a runaway file is cut here */
 
-    wchar_t* eq = wcschr(p, L'=');
-    if (!eq) {
-        return;
-    }
-    *eq = L'\0';
-    wchar_t* key = trim(p);
-    wchar_t* val = trim(eq + 1);
+/* Read the whole file into a malloc'd buffer (not NUL-terminated).  Returns 1
+   on success.  *notFound = 1 when the file simply does not exist; any other
+   failure (sharing violation that outlasts the retries, ...) leaves it 0. */
+static int cfg_read_file(const wchar_t* path, unsigned char** outBytes, size_t* outLen, int* notFound) {
+    HANDLE h = INVALID_HANDLE_VALUE;
+    int attempt;
 
-    if (_wcsicmp(key, L"SavedPath") == 0) {
-        wcsncpy_s(cfg->savedPath, CONFIG_MAX_PATH, val, _TRUNCATE);
-    }
-    else if (_wcsicmp(key, L"AutomaticSavedPath") == 0) {
-        wcsncpy_s(cfg->automaticSavedPath, CONFIG_MAX_PATH, val, _TRUNCATE);
-    }
-    else if (_wcsicmp(key, L"AutomaticPatchFind") == 0) {
-        cfg->automaticPatchFind = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"DistanceWhisper") == 0) {
-        cfg->distanceWhisper = (float)_wtof(val);
-    }
-    else if (_wcsicmp(key, L"DistanceNormal") == 0) {
-        cfg->distanceNormal = (float)_wtof(val);
-    }
-    else if (_wcsicmp(key, L"DistanceShout") == 0) {
-        cfg->distanceShout = (float)_wtof(val);
-    }
-    else if (_wcsicmp(key, L"WhisperKey") == 0) {
-        cfg->whisperKey = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"NormalKey") == 0) {
-        cfg->normalKey = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"ShoutKey") == 0) {
-        cfg->shoutKey = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"VoiceToggleKey") == 0) {
-        cfg->voiceToggleKey = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"ConfigUIKey") == 0) {
-        cfg->configUIKey = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"EnableDistanceMuting") == 0) {
-        cfg->enableDistanceMuting = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"EnableAutomaticChannelChange") == 0) {
-        cfg->enableAutomaticChannelChange = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"EnableVoiceToggle") == 0) {
-        cfg->enableVoiceToggle = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"EnableVoiceOverlay") == 0) {
-        cfg->enableVoiceOverlay = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"HudTheme") == 0) {
-        cfg->hudTheme = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"HudPosition") == 0) {
-        cfg->hudPosition = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"HudSize") == 0) {
-        cfg->hudSize = _wtoi(val);
-    }
-    else if (_wcsicmp(key, L"DebugMode") == 0) {
-        cfg->debugMode = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"EnablePosFile") == 0) {
-        cfg->enablePosFile = parse_bool(val);
-    }
-    else if (_wcsicmp(key, L"DefaultsAppliedServer") == 0) {
-        /* Server UID is plain ASCII (base64 alphabet). */
-        size_t j = 0;
-        for (const wchar_t* src = val; *src && j + 1 < sizeof(cfg->defaultsAppliedServer); src++) {
-            if (*src < 128) {
-                cfg->defaultsAppliedServer[j++] = (char)*src;
+    *outBytes = NULL;
+    *outLen = 0;
+    *notFound = 0;
+
+    for (attempt = 0; attempt < 4; attempt++) {
+        h = CreateFileW(path, GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            break;
+        }
+        {
+            const DWORD err = GetLastError();
+            if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+                *notFound = 1;
+                return 0;
+            }
+            if (err != ERROR_SHARING_VIOLATION && err != ERROR_ACCESS_DENIED
+                && err != ERROR_LOCK_VIOLATION) {
+                return 0;
             }
         }
-        cfg->defaultsAppliedServer[j] = '\0';
+        Sleep(5 + 10 * (DWORD)attempt);
+    }
+    if (h == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    {
+        unsigned char* data = (unsigned char*)malloc(CFG_FILE_MAX_BYTES);
+        size_t used = 0;
+        int ok = (data != NULL);
+
+        while (ok && used < CFG_FILE_MAX_BYTES) {
+            DWORD got = 0;
+            if (!ReadFile(h, data + used, (DWORD)(CFG_FILE_MAX_BYTES - used), &got, NULL)) {
+                ok = 0;
+                break;
+            }
+            if (got == 0) {
+                break;
+            }
+            used += got;
+        }
+        CloseHandle(h);
+        if (!ok) {
+            free(data);
+            return 0;
+        }
+        *outBytes = data;
+        *outLen = used;
+        return 1;
     }
 }
 
-/* Clamp numeric values into safe ranges after load. */
-void config_clamp(PluginConfig* cfg) {
-    if (cfg->distanceWhisper < 0.5f) cfg->distanceWhisper = 0.5f;
-    if (cfg->distanceWhisper > 500.0f) cfg->distanceWhisper = 500.0f;
-    if (cfg->distanceNormal < 0.5f) cfg->distanceNormal = 0.5f;
-    if (cfg->distanceNormal > 500.0f) cfg->distanceNormal = 500.0f;
-    if (cfg->distanceShout < 0.5f) cfg->distanceShout = 0.5f;
-    if (cfg->distanceShout > 500.0f) cfg->distanceShout = 500.0f;
+/* Raw file bytes -> NUL-terminated wide text (malloc'd; NULL on failure).
+   A UTF-8 BOM is skipped; valid UTF-8 is decoded as UTF-8, anything else as
+   the ANSI code page (files written by older plugin versions). */
+static wchar_t* cfg_decode_text(const unsigned char* bytes, size_t len) {
+    wchar_t* out;
+    int n;
+    UINT cp;
+    DWORD flags;
 
-    if (cfg->whisperKey <= 0 || cfg->whisperKey >= 256) cfg->whisperKey = 97;
-    if (cfg->normalKey <= 0 || cfg->normalKey >= 256) cfg->normalKey = 98;
-    if (cfg->shoutKey <= 0 || cfg->shoutKey >= 256) cfg->shoutKey = 99;
-    if (cfg->voiceToggleKey <= 0 || cfg->voiceToggleKey >= 256) cfg->voiceToggleKey = 84;
-    if (cfg->configUIKey <= 0 || cfg->configUIKey >= 256) cfg->configUIKey = 121;
+    if (len >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+        bytes += 3;
+        len -= 3;
+    }
+    if (len == 0) {
+        out = (wchar_t*)malloc(sizeof(wchar_t));
+        if (out) {
+            out[0] = L'\0';
+        }
+        return out;
+    }
+    if (len > (size_t)INT_MAX) {
+        return NULL;
+    }
 
-    if (cfg->hudTheme < 0) cfg->hudTheme = 0;
-    if (cfg->hudTheme > 11) cfg->hudTheme = 11;
-    if (cfg->hudPosition < 0) cfg->hudPosition = 0;
-    if (cfg->hudPosition > 4) cfg->hudPosition = 4;
-    if (cfg->hudSize < 0) cfg->hudSize = 0;
-    if (cfg->hudSize > 2) cfg->hudSize = 2;
+    if (cfg_utf8_is_valid(bytes, len)) {
+        cp = CP_UTF8;
+        flags = MB_ERR_INVALID_CHARS;
+    }
+    else {
+        cp = CP_ACP;
+        flags = 0;
+    }
+    n = MultiByteToWideChar(cp, flags, (LPCSTR)bytes, (int)len, NULL, 0);
+    if (n <= 0 && cp == CP_UTF8) {
+        cp = CP_ACP; /* the OS disagrees about "valid" - fall back to ANSI */
+        flags = 0;
+        n = MultiByteToWideChar(cp, flags, (LPCSTR)bytes, (int)len, NULL, 0);
+    }
+    if (n <= 0) {
+        return NULL;
+    }
+    out = (wchar_t*)malloc(((size_t)n + 1) * sizeof(wchar_t));
+    if (!out) {
+        return NULL;
+    }
+    if (MultiByteToWideChar(cp, flags, (LPCSTR)bytes, (int)len, out, n) != n) {
+        free(out);
+        return NULL;
+    }
+    out[n] = L'\0';
+    return out;
 }
 
 int config_load(void) {
@@ -229,19 +257,32 @@ int config_load(void) {
         return 0;
     }
 
-    FILE* f = _wfopen(path, L"r");
-    if (!f) {
-        /* First run — persist defaults so the user has a file to edit. */
+    unsigned char* bytes = NULL;
+    size_t byteLen = 0;
+    int notFound = 0;
+    if (!cfg_read_file(path, &bytes, &byteLen, &notFound)) {
         config_apply(&cfg);
-        log_write("CONFIG: plugin.cfg missing, creating defaults");
-        return config_save();
+        if (notFound) {
+            /* First run — persist defaults so the user has a file to edit. */
+            log_write("CONFIG: plugin.cfg missing, creating defaults");
+            return config_save();
+        }
+        /* Exists but cannot be read right now: run with defaults in memory and
+           do NOT overwrite the user's file with them. */
+        log_write("CONFIG: plugin.cfg unreadable (err=%lu) - using defaults, file left untouched",
+            (unsigned long)GetLastError());
+        return 0;
     }
 
-    wchar_t line[1024];
-    while (fgetws(line, 1024, f)) {
-        config_apply_line(&cfg, line);
+    wchar_t* text = cfg_decode_text(bytes, byteLen);
+    free(bytes);
+    if (text) {
+        cfg_parse_text(&cfg, text);
+        free(text);
     }
-    fclose(f);
+    else {
+        log_write("CONFIG: plugin.cfg could not be decoded - using defaults");
+    }
 
     config_clamp(&cfg);
     config_apply(&cfg);
@@ -252,44 +293,178 @@ int config_load(void) {
     return 1;
 }
 
+/* Wide path -> bytes in the given code page.  Returns the length without NUL,
+   or -1 when it does not fit / is not representable (ANSI only). */
+static int cfg_encode_path(const wchar_t* w, UINT cp, char* out, int cap) {
+    BOOL usedDefault = FALSE;
+    int n;
+
+    if (w[0] == L'\0') {
+        out[0] = '\0';
+        return 0;
+    }
+    if (cp == CP_UTF8) {
+        n = WideCharToMultiByte(CP_UTF8, 0, w, -1, out, cap, NULL, NULL);
+    }
+    else {
+        n = WideCharToMultiByte(cp, WC_NO_BEST_FIT_CHARS, w, -1, out, cap, NULL, &usedDefault);
+        if (usedDefault) {
+            return -1;
+        }
+    }
+    return (n > 0) ? n - 1 : -1;
+}
+
+/* plugin.cfg content for cfg.  Returns the byte count (-1 on failure).  ASCII
+   paths give the same bytes the plugin always wrote.  Non-ASCII paths are
+   stored in the ANSI code page when that is lossless and unambiguous (every
+   older reader keeps working), otherwise as UTF-8 without BOM.  CRLF line
+   ends like the old text-mode writer. */
+static int cfg_serialize(const PluginConfig* cfg, char* out, size_t cap) {
+    char savedAnsi[CONFIG_MAX_PATH * 4 + 4];
+    char autoAnsi[CONFIG_MAX_PATH * 4 + 4];
+    char savedUtf8[CONFIG_MAX_PATH * 4 + 4];
+    char autoUtf8[CONFIG_MAX_PATH * 4 + 4];
+    const char* saved;
+    const char* autoP;
+    int ls, la, lsU, laU;
+    int n;
+
+    lsU = cfg_encode_path(cfg->savedPath, CP_UTF8, savedUtf8, (int)sizeof(savedUtf8));
+    laU = cfg_encode_path(cfg->automaticSavedPath, CP_UTF8, autoUtf8, (int)sizeof(autoUtf8));
+    if (lsU < 0 || laU < 0) {
+        return -1;
+    }
+    saved = savedUtf8;
+    autoP = autoUtf8;
+
+    if (cfg_has_non_ascii((const unsigned char*)savedUtf8, (size_t)lsU)
+        || cfg_has_non_ascii((const unsigned char*)autoUtf8, (size_t)laU)) {
+        ls = cfg_encode_path(cfg->savedPath, CP_ACP, savedAnsi, (int)sizeof(savedAnsi));
+        la = cfg_encode_path(cfg->automaticSavedPath, CP_ACP, autoAnsi, (int)sizeof(autoAnsi));
+        if (ls >= 0 && la >= 0
+            && cfg_ansi_bytes_are_unambiguous((const unsigned char*)savedAnsi, (size_t)ls)
+            && cfg_ansi_bytes_are_unambiguous((const unsigned char*)autoAnsi, (size_t)la)) {
+            saved = savedAnsi;
+            autoP = autoAnsi;
+        }
+    }
+
+    n = snprintf(out, cap,
+        "SavedPath=%s\r\n"
+        "AutomaticSavedPath=%s\r\n"
+        "AutomaticPatchFind=%s\r\n"
+        "DistanceWhisper=%.1f\r\n"
+        "DistanceNormal=%.1f\r\n"
+        "DistanceShout=%.1f\r\n"
+        "WhisperKey=%d\r\n"
+        "NormalKey=%d\r\n"
+        "ShoutKey=%d\r\n"
+        "VoiceToggleKey=%d\r\n"
+        "ConfigUIKey=%d\r\n"
+        "EnableDistanceMuting=%s\r\n"
+        "EnableAutomaticChannelChange=%s\r\n"
+        "EnableVoiceToggle=%s\r\n"
+        "EnableVoiceOverlay=%s\r\n"
+        "HudTheme=%d\r\n"
+        "HudPosition=%d\r\n"
+        "HudSize=%d\r\n"
+        "DebugMode=%s\r\n"
+        "EnablePosFile=%s\r\n"
+        "DefaultsAppliedServer=%s\r\n",
+        saved, autoP,
+        cfg->automaticPatchFind ? "true" : "false",
+        cfg->distanceWhisper, cfg->distanceNormal, cfg->distanceShout,
+        cfg->whisperKey, cfg->normalKey, cfg->shoutKey,
+        cfg->voiceToggleKey, cfg->configUIKey,
+        cfg->enableDistanceMuting ? "true" : "false",
+        cfg->enableAutomaticChannelChange ? "true" : "false",
+        cfg->enableVoiceToggle ? "true" : "false",
+        cfg->enableVoiceOverlay ? "true" : "false",
+        cfg->hudTheme, cfg->hudPosition, cfg->hudSize,
+        cfg->debugMode ? "true" : "false",
+        cfg->enablePosFile ? "true" : "false",
+        cfg->defaultsAppliedServer);
+    return (n > 0 && (size_t)n < cap) ? n : -1;
+}
+
+/* Write data to tmp, flush, then swap it over path.  The old plugin.cfg stays
+   untouched until the new file is complete on disk.  1 on success. */
+static int cfg_write_atomic(const wchar_t* path, const wchar_t* tmp, const char* data, DWORD len, DWORD* outErr) {
+    HANDLE h;
+    DWORD written = 0;
+    BOOL ok;
+    int attempt;
+
+    *outErr = 0;
+    h = CreateFileW(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        *outErr = GetLastError();
+        return 0;
+    }
+    ok = WriteFile(h, data, len, &written, NULL) && written == len;
+    if (!ok) {
+        *outErr = GetLastError();
+    }
+    if (ok && !FlushFileBuffers(h)) {
+        *outErr = GetLastError();
+        ok = FALSE;
+    }
+    if (!CloseHandle(h) && ok) {
+        *outErr = GetLastError();
+        ok = FALSE;
+    }
+    if (!ok) {
+        DeleteFileW(tmp);
+        return 0;
+    }
+
+    /* A reader (settings dialog, antivirus) may hold plugin.cfg open for a few
+       ms without FILE_SHARE_DELETE - retry the swap shortly. */
+    for (attempt = 0; attempt < 5; attempt++) {
+        if (MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            return 1;
+        }
+        *outErr = GetLastError();
+        if (*outErr != ERROR_ACCESS_DENIED && *outErr != ERROR_SHARING_VIOLATION) {
+            break;
+        }
+        Sleep(10u << attempt);
+    }
+    DeleteFileW(tmp);
+    return 0;
+}
+
 int config_save(void) {
     wchar_t path[CONFIG_MAX_PATH];
+    wchar_t tmp[CONFIG_MAX_PATH + 8];
+    char data[4096];
+    PluginConfig cfg;
+    DWORD err = 0;
+    int len;
+    int ok = 0;
+
     if (!config_file_path(path, CONFIG_MAX_PATH)) {
         return 0;
     }
+    swprintf(tmp, CONFIG_MAX_PATH + 8, L"%ls.tmp", path);
 
-    PluginConfig cfg;
+    /* Snapshot INSIDE the save lock: of two racing saves the later one always
+       carries the newer state and finishes last. */
+    cfg_save_lock_ensure();
+    EnterCriticalSection(&g_cfgSaveLock);
     config_copy(&cfg);
+    len = cfg_serialize(&cfg, data, sizeof(data));
+    if (len > 0) {
+        ok = cfg_write_atomic(path, tmp, data, (DWORD)len, &err);
+    }
+    LeaveCriticalSection(&g_cfgSaveLock);
 
-    FILE* f = _wfopen(path, L"w");
-    if (!f) {
-        log_write("CONFIG: failed to write plugin.cfg");
+    if (!ok) {
+        log_write("CONFIG: failed to write plugin.cfg (%s, err=%lu) - old file kept",
+            len > 0 ? "write" : "format", (unsigned long)err);
         return 0;
     }
-
-    fwprintf(f, L"SavedPath=%s\n", cfg.savedPath);
-    fwprintf(f, L"AutomaticSavedPath=%s\n", cfg.automaticSavedPath);
-    fwprintf(f, L"AutomaticPatchFind=%s\n", cfg.automaticPatchFind ? L"true" : L"false");
-    fwprintf(f, L"DistanceWhisper=%.1f\n", cfg.distanceWhisper);
-    fwprintf(f, L"DistanceNormal=%.1f\n", cfg.distanceNormal);
-    fwprintf(f, L"DistanceShout=%.1f\n", cfg.distanceShout);
-    fwprintf(f, L"WhisperKey=%d\n", cfg.whisperKey);
-    fwprintf(f, L"NormalKey=%d\n", cfg.normalKey);
-    fwprintf(f, L"ShoutKey=%d\n", cfg.shoutKey);
-    fwprintf(f, L"VoiceToggleKey=%d\n", cfg.voiceToggleKey);
-    fwprintf(f, L"ConfigUIKey=%d\n", cfg.configUIKey);
-    fwprintf(f, L"EnableDistanceMuting=%s\n", cfg.enableDistanceMuting ? L"true" : L"false");
-    fwprintf(f, L"EnableAutomaticChannelChange=%s\n", cfg.enableAutomaticChannelChange ? L"true" : L"false");
-    fwprintf(f, L"EnableVoiceToggle=%s\n", cfg.enableVoiceToggle ? L"true" : L"false");
-    fwprintf(f, L"EnableVoiceOverlay=%s\n", cfg.enableVoiceOverlay ? L"true" : L"false");
-    fwprintf(f, L"HudTheme=%d\n", cfg.hudTheme);
-    fwprintf(f, L"HudPosition=%d\n", cfg.hudPosition);
-    fwprintf(f, L"HudSize=%d\n", cfg.hudSize);
-    fwprintf(f, L"DebugMode=%s\n", cfg.debugMode ? L"true" : L"false");
-    fwprintf(f, L"EnablePosFile=%s\n", cfg.enablePosFile ? L"true" : L"false");
-    fwprintf(f, L"DefaultsAppliedServer=%hs\n", cfg.defaultsAppliedServer);
-    fclose(f);
-
     log_debug("CONFIG: saved plugin.cfg");
     return 1;
 }

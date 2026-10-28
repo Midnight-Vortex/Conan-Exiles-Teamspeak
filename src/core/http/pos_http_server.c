@@ -14,10 +14,24 @@
  *     Successful POST /v1/position → http_send first, then log_debug per sample
  *     (visible with debug=1); ~1 Hz rate line is log_debug when fail=0,
  *     log_write when the window had failures. POST 400 → log_write.
- *     Dropped connections (recv fail / incomplete headers) → throttled drop log
- *     (~1 Hz max). Per-connection recv timeout: 100 ms (fail-fast).
- *     accept() errors rebind the listen socket unless stop is signalled
- *     (file fallback can return to HTTP when POSTs resume).
+ *     Every error/reject log is rate limited (~1 line/s per kind, with a
+ *     "+N suppressed" counter): a local client can no longer flood plugin.log.
+ *     Dropped connections (recv fail / incomplete headers / deadline) →
+ *     throttled drop log.
+ *   - Per connection: every recv() waits at most HTTP_RECV_TMO_MS and the whole
+ *     request must be complete within HTTP_CONN_DEADLINE_MS after accept(), so a
+ *     slow-drip client cannot hold the single listener thread (and with it
+ *     pos_http_server_stop()) hostage.
+ *   - Browser guard (http_request.h): requests with a foreign Origin (anything
+ *     but our own http://127.0.0.1:52734 / http://localhost:52734), a
+ *     Sec-Fetch-Site of cross-site / same-site or a non-loopback Host get 403 on
+ *     every endpoint - web pages cannot drive the listener, the CEE mod can.
+ *     Every 403 logs the header name and value (throttled).
+ *   - The listener thread owns the listen socket: it (re)binds with an
+ *     exponential backoff (250 ms .. 5 s) after accept() errors or when the
+ *     first bind in start() failed.  Transient accept() errors (one client
+ *     vanished) do not tear the socket down.  stop() stays prompt: all waits
+ *     are on the stop event.
  *
  * winsock2.h MUST precede windows.h — kept first here.
  */
@@ -32,9 +46,11 @@
 #include <string.h>
 #include <math.h>
 
+#include "core/http/http_request.h"
 #include "core/http/pos_http_server.h"
 #include "core/hub/mod_password.h"
 #include "core/mod_file/pos_file.h"
+#include "core/mod_file/pos_parse.h"
 #include "core/proximity/occlusion.h"
 #include "core/proximity/talk_state.h"
 #include "core/util/log.h"
@@ -44,6 +60,10 @@
 #define HTTP_BUF_SIZE    4096   /* header + body combined recv buffer */
 #define HTTP_BODY_MAX    1024   /* max body bytes we care about */
 #define HTTP_RECV_TMO_MS 100    /* per-connection recv timeout (fail-fast) */
+#define HTTP_CONN_DEADLINE_MS 500 /* whole request (headers + body) after accept */
+#define HTTP_LOG_THROTTLE_MS  1000  /* error / reject log lines: max 1 per second per kind */
+#define HTTP_BIND_LOG_MS      30000 /* repeated bind failures: one line per 30 s */
+#define HTTP_ACCEPT_TRANSIENT_MAX 50 /* consecutive "transient" accept errors before a rebind */
 
 /* ---- module state ------------------------------------------------------ */
 
@@ -67,25 +87,33 @@ static double    g_httpWindowLastX   = 0.0;
 static double    g_httpWindowLastY   = 0.0;
 static double    g_httpWindowLastZ   = 0.0;
 
-/* Drop log throttle — HTTP listener thread only (sequential accept+handle). */
-static ULONGLONG g_httpLastDropLog  = 0;
+/* Log throttles — HTTP listener thread only (sequential accept+handle).  The
+   bind throttle is also used by start() before the thread exists. */
+static HttpThrottle g_thrDrop;      /* dropped connections */
+static HttpThrottle g_thrForbidden; /* 403 browser guard */
+static HttpThrottle g_thrPost400;   /* POST answered with 400 */
+static HttpThrottle g_thrIn;        /* raw IN line for 404 / unknown requests */
+static HttpThrottle g_thrAccept;    /* accept() failures */
+static HttpThrottle g_thrBind;      /* bind()/listen() failures */
 
 /* ---- helpers ----------------------------------------------------------- */
 
-/* Throttled drop log (~1 Hz max) for recv failures and incomplete headers. */
+/* Throttled drop log (~1 Hz max) for recv failures, incomplete headers and
+   connections that missed their deadline. */
 static void http_drop_log(const char* reason, int err) {
-    const ULONGLONG now = GetTickCount64();
+    char tail[32];
+    int suppressed = 0;
 
-    if (g_httpLastDropLog != 0 && (now - g_httpLastDropLog) < 1000ULL) {
+    if (!http_throttle_pass(&g_thrDrop, GetTickCount64(), HTTP_LOG_THROTTLE_MS, &suppressed)) {
         return;
     }
-    g_httpLastDropLog = now;
+    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
 
     if (reason && strcmp(reason, "recv") == 0) {
-        log_write("HTTP: drop reason=recv err=%d", err);
+        log_write("HTTP: drop reason=recv err=%d%s", err, tail);
     }
     else {
-        log_write("HTTP: drop reason=%s", reason ? reason : "unknown");
+        log_write("HTTP: drop reason=%s%s", reason ? reason : "unknown", tail);
     }
 }
 
@@ -94,7 +122,8 @@ static void http_send(SOCKET s, int status, const char* body) {
     char resp[2048]; /* 061 probes (<= 640 B) + 067 talkers (<= ~700 B) + headers */
     const char* status_text =
         status == 200 ? "OK" :
-        status == 400 ? "Bad Request" : "Not Found";
+        status == 400 ? "Bad Request" :
+        status == 403 ? "Forbidden" : "Not Found";
     const int body_len = (int)strlen(body);
     const int n = snprintf(resp, (int)sizeof(resp),
         "HTTP/1.1 %d %s\r\n"
@@ -172,7 +201,7 @@ static int http_parse_body(const char* body, PosSample* out) {
         if (!json_float(body, "yawY", &out->yawY)) {
             out->yawY = 0.0;
         }
-        out->seq = (int)seq;
+        out->seq = pos_seq_from_double(seq);
     } else {
         /* Pos.txt line format — normalize DE-locale comma decimals first. */
         char normalized[HTTP_BODY_MAX];
@@ -199,7 +228,7 @@ static int http_parse_body(const char* body, PosSample* out) {
         if (!pos_float(normalized, "YAWY=", &out->yawY)) {
             out->yawY = 0.0;
         }
-        out->seq = (int)seq;
+        out->seq = pos_seq_from_double(seq);
     }
     return 1;
 }
@@ -241,7 +270,8 @@ static int http_format_raw(const char* body, int bodyLen, char* raw, int rawSize
     return n;
 }
 
-/* Log raw inbound request. 200 → log_debug; 400/404 → log_write. */
+/* Log raw inbound request. 200 → log_debug; everything else → log_write,
+   rate limited (404 / unknown paths can be hammered by any local client). */
 static void http_log_raw_in(const char* method, const char* path,
     const char* body, int bodyLen, int httpStatus) {
     char raw[420];
@@ -249,16 +279,39 @@ static void http_log_raw_in(const char* method, const char* path,
     if (!method || !path) {
         return;
     }
-    http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
 
     if (httpStatus == 200) {
+        http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
         log_debug("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"",
             method, path, httpStatus, bodyLen, raw);
     }
     else {
-        log_write("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"",
-            method, path, httpStatus, bodyLen, raw);
+        char tail[32];
+        int suppressed = 0;
+
+        if (!http_throttle_pass(&g_thrIn, GetTickCount64(), HTTP_LOG_THROTTLE_MS, &suppressed)) {
+            return;
+        }
+        http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+        http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
+        log_write("HTTP: IN %s %s status=%d cl=%d raw=\"%s\"%s",
+            method, path, httpStatus, bodyLen, raw, tail);
     }
+}
+
+/* 403 from the browser guard: throttled log naming the header and its value
+   (sanitised), so a blocked CEE node is immediately visible in plugin.log. */
+static void http_forbidden_log(int guard, const char* what) {
+    char value[96];
+    char tail[32];
+    int suppressed = 0;
+
+    if (!http_throttle_pass(&g_thrForbidden, GetTickCount64(), HTTP_LOG_THROTTLE_MS, &suppressed)) {
+        return;
+    }
+    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+    http_format_raw(what, -1, value, (int)sizeof(value));
+    log_write("HTTP: 403 rejected header %s=\"%s\"%s", http_guard_header(guard), value, tail);
 }
 
 /* Update POST rate stats; emit ~1 Hz summary via log_write. */
@@ -348,8 +401,34 @@ static void http_post_rate_tick(int injected, ULONGLONG dtMs, const PosSample* o
     }
 }
 
+/* POST that cannot be served (bad / oversized / incomplete body): answer 400,
+   count it as a failed POST, log it throttled.  NEVER logs the body - the mod
+   password (TSPW=) has not been cut out of it at this point. */
+static void http_post_fail(SOCKET client, const char* reason, long contentLength) {
+    const ULONGLONG now = GetTickCount64();
+    ULONGLONG dtMs = 0;
+    char tail[32];
+    int suppressed = 0;
+
+    http_send(client, 400, "{\"ok\":false,\"error\":\"invalid request\"}");
+
+    if (g_httpLastTick != 0) {
+        dtMs = now - g_httpLastTick;
+    }
+    http_post_rate_tick(0, dtMs, NULL);
+
+    if (http_throttle_pass(&g_thrPost400, now, HTTP_LOG_THROTTLE_MS, &suppressed)) {
+        http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+        log_write("HTTP: POST status=400 reason=%s cl=%ld%s", reason, contentLength, tail);
+    }
+}
+
 /* Handle one accepted client connection. */
 static void http_handle_client(SOCKET client) {
+    /* The whole request must be in within HTTP_CONN_DEADLINE_MS of accept():
+       the single listener thread must not be held by a slow-drip client. */
+    const ULONGLONG deadline = GetTickCount64() + (ULONGLONG)HTTP_CONN_DEADLINE_MS;
+
     /* Per-connection recv timeout — fail fast on dead/cancelled CEE sockets. */
     DWORD tmo = HTTP_RECV_TMO_MS;
     setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tmo, (int)sizeof(tmo));
@@ -366,6 +445,10 @@ static void http_handle_client(SOCKET client) {
 
     /* Receive until end-of-headers marker is found or buffer fills. */
     while (total < (int)(sizeof(buf) - 1)) {
+        if (GetTickCount64() >= deadline) {
+            http_drop_log("deadline", 0);
+            return;
+        }
         const int n = recv(client, buf + total, (int)(sizeof(buf) - 1 - total), 0);
         if (n <= 0) {
             http_drop_log("recv", (n < 0) ? (int)WSAGetLastError() : 0);
@@ -373,9 +456,8 @@ static void http_handle_client(SOCKET client) {
         }
         total += n;
         buf[total] = '\0';
-        const char* hdr_sep = strstr(buf, "\r\n\r\n");
-        if (hdr_sep) {
-            header_end = (int)(hdr_sep - buf) + 4;
+        header_end = http_find_header_end(buf, total);
+        if (header_end >= 0) {
             break;
         }
     }
@@ -391,6 +473,17 @@ static void http_handle_client(SOCKET client) {
         return;
     }
 
+    /* Browser guard, every endpoint: Origin / Sec-Fetch-Site / Host. */
+    {
+        char what[96];
+        const int guard = http_request_guard(buf, header_end, POS_HTTP_PORT, what, (int)sizeof(what));
+        if (guard != HTTP_GUARD_OK) {
+            http_send(client, 403, "{\"ok\":false,\"error\":\"forbidden\"}");
+            http_forbidden_log(guard, what);
+            return;
+        }
+    }
+
     /* GET /health */
     if (strcmp(method, "GET") == 0 && strcmp(path, "/health") == 0) {
         http_log_raw_in(method, path, "", 0, 200);
@@ -403,34 +496,43 @@ static void http_handle_client(SOCKET client) {
     if (strcmp(method, "POST") == 0
         && (strcmp(path, "/v1/position") == 0 || strcmp(path, "/position") == 0)) {
 
-        /* Determine body length from Content-Length header. */
-        int content_length = 0;
-        const char* cl = strstr(buf, "Content-Length:");
-        if (!cl) {
-            cl = strstr(buf, "content-length:");
+        /* Body length from the Content-Length HEADER (header block only). */
+        long content_length = 0;
+        const int clState = http_content_length(buf, header_end,
+            (long)(sizeof(buf) - 1 - (size_t)header_end), &content_length);
+        if (clState == HTTP_CL_INVALID) {
+            http_post_fail(client, "content-length", 0);
+            return;
         }
-        if (cl) {
-            content_length = atoi(cl + 15);
-            if (content_length < 0) {
-                content_length = 0;
-            }
+        if (clState == HTTP_CL_TOO_BIG) {
+            http_post_fail(client, "body-too-large", content_length);
+            return;
         }
+        const int haveCl = (clState == HTTP_CL_OK);
 
-        /* Read remaining body bytes if not yet in buffer. */
+        /* Read the remaining body bytes (exactly as many as announced). */
         int body_have = total - header_end;
-        while (body_have < content_length && total < (int)(sizeof(buf) - 1)) {
-            const int n = recv(client, buf + total, (int)(sizeof(buf) - 1 - total), 0);
+        while (haveCl && (long)body_have < content_length) {
+            if (GetTickCount64() >= deadline) {
+                break;
+            }
+            const int n = recv(client, buf + total, (int)(content_length - (long)body_have), 0);
             if (n <= 0) {
                 break;
             }
             total += n;
             body_have += n;
         }
-        buf[total] = '\0';
+        if (http_body_incomplete(haveCl, content_length, body_have)) {
+            /* Late / short body: never parse a half password or half position. */
+            http_post_fail(client, "body-incomplete", content_length);
+            return;
+        }
 
         {
             char* body = buf + header_end;
-            int bodyLen = (content_length > 0) ? content_length : (total - header_end);
+            int bodyLen = http_body_len(haveCl, content_length, total - header_end);
+            body[bodyLen] = '\0'; /* nothing behind the announced body is ever parsed */
             /* 077: the mod's ingame channel password (" TSPW=<pw>", always the
                LAST field) is cut off and wiped here, before anything parses or
                logs the body (the 400 paths log the raw body). */
@@ -482,19 +584,26 @@ static void http_handle_client(SOCKET client) {
                     (unsigned long long)dtMs,
                     status);
             }
-            else if (!parsed) {
-                char raw[420];
-                http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
-                log_write("HTTP: POST status=400 reason=parse cl=%d raw=\"%s\"",
-                    bodyLen, raw);
-            }
             else {
-                char raw[420];
-                http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
-                log_write("HTTP: POST status=400 reason=reject seq=%d pos=X=%.6f Y=%.6f Z=%.6f cl=%d raw=\"%s\"",
-                    sample.seq,
-                    sample.x, sample.y, sample.z,
-                    bodyLen, raw);
+                /* Rejected POST: one line per second, "+N suppressed" for the
+                   rest (a mod sitting at the main menu posts 0,0,0 ~33x/s). */
+                char tail[32];
+                int suppressed = 0;
+                if (http_throttle_pass(&g_thrPost400, now, HTTP_LOG_THROTTLE_MS, &suppressed)) {
+                    char raw[420];
+                    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+                    http_format_raw(body, bodyLen, raw, (int)sizeof(raw));
+                    if (!parsed) {
+                        log_write("HTTP: POST status=400 reason=parse cl=%d raw=\"%s\"%s",
+                            bodyLen, raw, tail);
+                    }
+                    else {
+                        log_write("HTTP: POST status=400 reason=reject seq=%d pos=X=%.6f Y=%.6f Z=%.6f cl=%d raw=\"%s\"%s",
+                            sample.seq,
+                            sample.x, sample.y, sample.z,
+                            bodyLen, raw, tail);
+                    }
+                }
             }
         }
         return;
@@ -504,49 +613,129 @@ static void http_handle_client(SOCKET client) {
     http_send(client, 404, "{\"ok\":false,\"error\":\"not found\"}");
 }
 
-/* Bind 127.0.0.1:POS_HTTP_PORT and listen. Caller owns WSAStartup. */
+/* Bind failures are logged throttled: a persistent failure is retried with
+   backoff and must not fill plugin.log. */
+static void http_bind_fail_log(const char* what, int err) {
+    char tail[32];
+    int suppressed = 0;
+
+    if (!http_throttle_pass(&g_thrBind, GetTickCount64(), HTTP_BIND_LOG_MS, &suppressed)) {
+        return;
+    }
+    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+    if (strcmp(what, "bind") == 0) {
+        log_write("HTTP: bind() failed (%d) — port %d already in use? retrying in the background%s",
+            err, POS_HTTP_PORT, tail);
+    }
+    else {
+        log_write("HTTP: %s() failed (%d) — retrying in the background%s", what, err, tail);
+    }
+}
+
+/* Bind 127.0.0.1:POS_HTTP_PORT and listen.  Caller owns WSAStartup.
+   Returns 1 and sets g_listenSocket on success. */
 static int http_open_listen_socket(void) {
+    struct sockaddr_in addr;
+    int viaReuse = 0;
+    int rc;
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) {
-        log_write("HTTP: socket() failed (%d)", WSAGetLastError());
+        http_bind_fail_log("socket", WSAGetLastError());
         return 0;
     }
 
-    const int opt = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, (int)sizeof(opt));
-
-    struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = htons(POS_HTTP_PORT);
 
-    if (bind(s, (struct sockaddr*)&addr, (int)sizeof(addr)) == SOCKET_ERROR) {
-        log_write("HTTP: bind() failed (%d) — port %d already in use?",
-            WSAGetLastError(), POS_HTTP_PORT);
+    /* Plain bind first: on Windows SO_REUSEADDR lets ANOTHER process bind the
+       same port too.  Only when the port is reported in use (e.g. our own
+       previous instance still lingering after a plugin restart) retry with
+       SO_REUSEADDR - that is what always worked here - and warn. */
+    rc = bind(s, (struct sockaddr*)&addr, (int)sizeof(addr));
+    if (rc == SOCKET_ERROR && WSAGetLastError() == WSAEADDRINUSE) {
+        closesocket(s);
+        s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s == INVALID_SOCKET) {
+            http_bind_fail_log("socket", WSAGetLastError());
+            return 0;
+        }
+        {
+            const int opt = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, (int)sizeof(opt));
+        }
+        rc = bind(s, (struct sockaddr*)&addr, (int)sizeof(addr));
+        viaReuse = (rc != SOCKET_ERROR);
+    }
+    if (rc == SOCKET_ERROR) {
+        http_bind_fail_log("bind", WSAGetLastError());
         closesocket(s);
         return 0;
     }
     if (listen(s, SOMAXCONN) == SOCKET_ERROR) {
-        log_write("HTTP: listen() failed (%d)", WSAGetLastError());
+        http_bind_fail_log("listen", WSAGetLastError());
         closesocket(s);
         return 0;
     }
 
     g_listenSocket = s;
+    if (viaReuse) {
+        log_write("HTTP: WARNING port %d was in use - bound with SO_REUSEADDR "
+            "(another program may share it)", POS_HTTP_PORT);
+    }
     return 1;
 }
 
 /* ---- listener thread --------------------------------------------------- */
 
+static void http_close_listen_socket(void) {
+    if (g_listenSocket != INVALID_SOCKET) {
+        closesocket(g_listenSocket);
+        g_listenSocket = INVALID_SOCKET;
+    }
+}
+
 static unsigned __stdcall http_server_thread(void* arg) {
+    int failStreak = 0;      /* consecutive bind / hard accept failures; reset by a served client */
+    int transientStreak = 0; /* consecutive transient accept errors */
+    int announced = 0;       /* "listening" already logged once */
     (void)arg;
-    log_write("HTTP: listening on " POS_HTTP_BASE_URL);
+
+    if (g_listenSocket != INVALID_SOCKET) {
+        announced = 1;
+        log_write("HTTP: listening on " POS_HTTP_BASE_URL);
+    }
 
     for (;;) {
         if (WaitForSingleObject(g_stopEvent, 0) != WAIT_TIMEOUT) {
             break;
         }
+
+        /* (Re)open the listen socket: first bind failed in start(), or the
+           socket was torn down after a hard accept() error. */
+        if (g_listenSocket == INVALID_SOCKET) {
+            if (!http_open_listen_socket()) {
+                failStreak++;
+                if (WaitForSingleObject(g_stopEvent, http_backoff_ms(failStreak)) != WAIT_TIMEOUT) {
+                    break;
+                }
+                continue;
+            }
+            /* Stop may have run while we (re)bound — drop the new socket. */
+            if (WaitForSingleObject(g_stopEvent, 0) != WAIT_TIMEOUT) {
+                http_close_listen_socket();
+                break;
+            }
+            if (announced) {
+                log_write("HTTP: listening again on " POS_HTTP_BASE_URL);
+            }
+            else {
+                log_write("HTTP: listening on " POS_HTTP_BASE_URL);
+            }
+            announced = 1;
+        }
+
         struct sockaddr_in client_addr;
         int addr_len = (int)sizeof(client_addr);
         SOCKET client = accept(g_listenSocket,
@@ -557,27 +746,28 @@ static unsigned __stdcall http_server_thread(void* arg) {
                 break;
             }
             const int err = WSAGetLastError();
-            log_write("HTTP: accept failed (%d) — recovering listener", err);
-            if (g_listenSocket != INVALID_SOCKET) {
-                closesocket(g_listenSocket);
-                g_listenSocket = INVALID_SOCKET;
+            if (http_wsa_error_is_transient(err)
+                && ++transientStreak < HTTP_ACCEPT_TRANSIENT_MAX) {
+                continue; /* one client vanished - the listen socket is fine */
             }
-            if (WaitForSingleObject(g_stopEvent, 250) != WAIT_TIMEOUT) {
+            transientStreak = 0;
+            failStreak++;
+            {
+                char tail[32];
+                int suppressed = 0;
+                if (http_throttle_pass(&g_thrAccept, GetTickCount64(), HTTP_LOG_THROTTLE_MS, &suppressed)) {
+                    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+                    log_write("HTTP: accept failed (%d) — recovering listener%s", err, tail);
+                }
+            }
+            http_close_listen_socket();
+            if (WaitForSingleObject(g_stopEvent, http_backoff_ms(failStreak)) != WAIT_TIMEOUT) {
                 break;
             }
-            if (http_open_listen_socket()) {
-                /* Stop may have run while we rebound — drop the new socket. */
-                if (WaitForSingleObject(g_stopEvent, 0) != WAIT_TIMEOUT) {
-                    if (g_listenSocket != INVALID_SOCKET) {
-                        closesocket(g_listenSocket);
-                        g_listenSocket = INVALID_SOCKET;
-                    }
-                    break;
-                }
-                log_write("HTTP: listening again on " POS_HTTP_BASE_URL);
-            }
-            continue;
+            continue; /* the top of the loop rebinds */
         }
+        transientStreak = 0;
+        failStreak = 0;
         http_handle_client(client);
         closesocket(client);
     }
@@ -600,20 +790,19 @@ void pos_http_server_start(void) {
         return;
     }
 
-    if (!http_open_listen_socket()) {
+    g_stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_stopEvent) {
+        log_write("HTTP: CreateEvent failed");
         WSACleanup();
         InterlockedExchange(&g_httpRunning, 0);
         return;
     }
 
-    g_stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (!g_stopEvent) {
-        log_write("HTTP: CreateEvent failed");
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-        WSACleanup();
-        InterlockedExchange(&g_httpRunning, 0);
-        return;
+    /* A failed first bind is not fatal: the listener thread keeps retrying
+       (port busy during a plugin restart, firewall hiccup, ...) so HTTP comes
+       back without restarting TeamSpeak. */
+    if (!http_open_listen_socket()) {
+        log_write("HTTP: could not listen on " POS_HTTP_BASE_URL " yet — the listener thread keeps retrying");
     }
 
     g_httpThread = (HANDLE)_beginthreadex(NULL, 0, http_server_thread,
@@ -622,8 +811,7 @@ void pos_http_server_start(void) {
         log_write("HTTP: _beginthreadex failed");
         CloseHandle(g_stopEvent);
         g_stopEvent = NULL;
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
+        http_close_listen_socket();
         WSACleanup();
         InterlockedExchange(&g_httpRunning, 0);
         return;
@@ -639,11 +827,10 @@ void pos_http_server_stop(void) {
         SetEvent(g_stopEvent);
     }
     /* Close the listen socket to unblock accept() on the listener thread. */
-    if (g_listenSocket != INVALID_SOCKET) {
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-    }
+    http_close_listen_socket();
     if (g_httpThread) {
+        /* Bounded: a client in progress is cut off by HTTP_CONN_DEADLINE_MS and
+           every wait of the thread is on the stop event. */
         if (WaitForSingleObject(g_httpThread, 5000) != WAIT_OBJECT_0) {
             log_write("HTTP: server thread slow to exit — waiting");
             WaitForSingleObject(g_httpThread, INFINITE);
@@ -652,10 +839,7 @@ void pos_http_server_stop(void) {
         g_httpThread = NULL;
     }
     /* Thread may have rebound after our first closesocket. */
-    if (g_listenSocket != INVALID_SOCKET) {
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-    }
+    http_close_listen_socket();
     if (g_stopEvent) {
         CloseHandle(g_stopEvent);
         g_stopEvent = NULL;

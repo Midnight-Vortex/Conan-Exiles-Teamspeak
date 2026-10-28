@@ -367,6 +367,56 @@ static void test_hrtf_switch(void) {
     CHECK(s.occlusionIntensity == 100.0f && s.enableOcclusion == 0, "new keys leave the other settings alone");
 }
 
+static void test_decimal_comma(void) {
+    printf("[10] decimal comma in single-number values (German admins)\n");
+    HubSettings s;
+
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\nMaximumNormal=13,5\nMinimumShout=20,25\nAudioMaxVolume=1,3\n"
+        "AudioMinDistance=0,5\nOcclusionIntensity=150,5\n", &s) == 1, "comma values parse");
+    CHECK(s.maxNormal == 13.5f, "MaximumNormal=13,5 -> 13.5 (was 13)");
+    CHECK(s.minShout == 20.25f, "MinimumShout=20,25 -> 20.25");
+    CHECK(fabsf(s.audioMaxVolume - 1.3f) < 1e-6f, "AudioMaxVolume=1,3 -> gain 1.3");
+    CHECK(s.audioMinDistance == 0.5f, "AudioMinDistance=0,5 -> 0.5");
+    CHECK(s.occlusionIntensity == 150.5f, "OcclusionIntensity=150,5 -> 150.5");
+
+    /* Dot values unchanged; ambiguous / odd shapes keep the old strtod result. */
+    CHECK(hub_parse_settings("[GLOBAL]\nMaximumNormal=13.5\nMaximumShout=1,000.5\n"
+        "MaximumWisper=7,2,1\nMinimumNormal=,5\nMinimumWisper=9,\n", &s) == 1, "odd shapes parse");
+    CHECK(s.maxNormal == 13.5f, "13.5 unchanged");
+    CHECK(s.maxShout == 1.0f, "1,000.5 (comma AND dot) untouched -> old result 1");
+    CHECK(s.maxWhisper == 7.0f, "7,2,1 (two commas) untouched -> old result 7");
+    CHECK(s.minNormal == 0.0f, ",5 (no digit before) untouched -> 0");
+    CHECK(s.minWhisper == 9.0f, "9, (trailing comma) -> 9");
+
+    /* Typos keep today's fallback (0 -> clamp). */
+    CHECK(hub_parse_settings("[GLOBAL]\nMaximumNormal=abc\nAudioMinDistance=x,y\n", &s) == 1, "typos parse");
+    CHECK(s.maxNormal == 0.0f && s.audioMinDistance == 0.1f, "unparsable text keeps the old fallback");
+
+    /* Zone coordinates and race values are single numbers too. */
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\n[ZONES]\nZone=z\nX1=152460,296875\nZ1=-187758,5\nNormal=12,5\n"
+        "[RACE]\nRace=Faun\nMaximumNormal=15,5\nlistenAddDistance=2,5\n", &s) == 1, "zone/race parse");
+    CHECK(s.zoneCount == 1 && fabsf(s.zones[0].x1 - 152460.296875f) < 0.01f && s.zones[0].z1 == -187758.5f,
+        "zone coordinates with comma");
+    CHECK(s.zones[0].normalDist == 12.5f, "zone Normal=12,5");
+    CHECK(s.raceCount == 1 && s.races[0].maxNormal == 15.5f && s.races[0].listenAddDistance == 2.5f,
+        "race values with comma");
+
+    /* The comma separated SteamID list must stay a list. */
+    CHECK(hub_parse_settings(
+        "[GLOBAL]\n[RACE]\nRace=Wolf\nSteamID=(a)76561198063092371,(b)76561198063092372, 76561198063092373\n", &s) == 1,
+        "steamid list parses");
+    CHECK(s.raceCount == 1 && s.races[0].steamIDCount == 3
+        && s.races[0].steamIDs[0] == 76561198063092371ULL
+        && s.races[0].steamIDs[1] == 76561198063092372ULL
+        && s.races[0].steamIDs[2] == 76561198063092373ULL, "SteamID list unaffected by the comma rule");
+
+    /* Occlusion mod parameter (integer after clamp): "45,5" -> 45.5 -> 46 */
+    hub_parse_settings("[GLOBAL]\nOccDetourNearPct=45,5\n", &s);
+    CHECK(s.occModParams[5] == 46, "OccDetourNearPct=45,5 -> 46 (rounded)");
+}
+
 int main(void) {
     test_real_description();
     test_zone_audio_rules();
@@ -378,6 +428,7 @@ int main(void) {
     test_partial_and_unknown_sections();
     test_nonfinite_values();
     test_hrtf_switch();
+    test_decimal_comma();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

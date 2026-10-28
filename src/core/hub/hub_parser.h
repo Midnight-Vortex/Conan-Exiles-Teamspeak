@@ -36,7 +36,9 @@
  *   Wisper=.. Normal=.. Shout=..  (zone distance overrides)
  *
  * HTML line breaks (<br>, <br/>) are treated as newlines. Values are
- * validated (finite, clamped) before they land in the struct.
+ * validated (finite, clamped) before they land in the struct.  Single-number
+ * values accept ONE decimal comma ("MaximumNormal=13,5" = 13.5, German
+ * admins); the comma separated SteamID list is unaffected.
  *
  * Pure parse function — no state, no locks, no API. Any thread.
  */

@@ -117,7 +117,14 @@ int mod_password_get(char* out, int outLen, unsigned long long nowMs) {
     int ok = 0;
     pw_lock();
     const int len = (int)strlen(g_pw);
-    if (len > 0 && len < outLen
+    if (len > 0 && nowMs >= g_pwSeenMs && nowMs - g_pwSeenMs > MOD_PASSWORD_TTL_MS) {
+        /* The mod stopped posting: the value is stale.  Do not keep the secret
+           in memory until the next disconnect - wipe it on the first read that
+           notices (a clock BEHIND the stamp is not "expired", just not fresh). */
+        pw_wipe(g_pw, (int)sizeof(g_pw));
+        g_pwSeenMs = 0;
+    }
+    else if (len > 0 && len < outLen
         && nowMs >= g_pwSeenMs && nowMs - g_pwSeenMs <= MOD_PASSWORD_TTL_MS) {
         memcpy(out, g_pw, (size_t)len + 1);
         ok = 1;

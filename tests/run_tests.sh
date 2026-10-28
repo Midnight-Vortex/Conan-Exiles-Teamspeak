@@ -139,6 +139,18 @@ run_suite talk_state_test \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
+# 085 — HTTP request helpers (header parsing, browser guard, Content-Length, throttle, backoff).
+run_suite http_request_test \
+    tests/http_request_test.c
+
+# 085 — Pos.txt / legacy HTTP line parser + sample sanity (header-only pos_parse.h).
+run_suite pos_parse_test \
+    tests/pos_parse_test.c
+
+# 085 — plugin.cfg text parse / clamp (NaN/Inf) / UTF-8 decision (header-only config_text.h).
+run_suite config_text_test \
+    tests/config_text_test.c
+
 # 083 — CEPOS received-name sanitising (pure wire helper).
 run_suite cepos_wire_test \
     tests/cepos_wire_test.c

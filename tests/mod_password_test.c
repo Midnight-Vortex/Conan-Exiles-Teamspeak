@@ -108,10 +108,39 @@ static void test_store_rules(void) {
     CHECK(!mod_password_get(pw, sizeof(pw), 22000), "clear forgets it");
 }
 
+static void test_wipe_on_expiry(void) {
+    printf("[3] expired value is wiped on the first read\n");
+    char pw[MOD_PASSWORD_MAX];
+    mod_password_clear();
+
+    mod_password_store("secret", 6, 30000);
+    CHECK(mod_password_get(pw, sizeof(pw), 30000 + MOD_PASSWORD_TTL_MS), "fresh at the TTL edge");
+    CHECK(!mod_password_get(pw, sizeof(pw), 30001 + MOD_PASSWORD_TTL_MS) && pw[0] == '\0', "expired read refuses");
+    /* Not just hidden: asking again with an EARLIER clock must not bring it back. */
+    CHECK(!mod_password_get(pw, sizeof(pw), 30100), "wiped, not merely hidden (earlier clock finds nothing)");
+    CHECK(!mod_password_get(pw, sizeof(pw), 30000), "still nothing at the original stamp");
+
+    /* A fresh store after the wipe works as usual. */
+    mod_password_store("again", 5, 50000);
+    CHECK(mod_password_get(pw, sizeof(pw), 50000) && strcmp(pw, "again") == 0, "store after wipe");
+
+    /* Too-small out buffer on an expired value also wipes. */
+    char tiny[2];
+    CHECK(!mod_password_get(tiny, sizeof(tiny), 50001 + MOD_PASSWORD_TTL_MS), "expired + tiny buffer refused");
+    CHECK(!mod_password_get(pw, sizeof(pw), 50100), "tiny-buffer expiry read wiped it too");
+
+    /* A clock BEHIND the stamp is "not fresh" but not "expired": value survives. */
+    mod_password_store("keep", 4, 70000);
+    CHECK(!mod_password_get(pw, sizeof(pw), 69999), "clock behind the stamp: refused");
+    CHECK(mod_password_get(pw, sizeof(pw), 70000) && strcmp(pw, "keep") == 0, "...but not wiped");
+    mod_password_clear();
+}
+
 int main(void) {
     printf("mod_password_test\n");
     test_take();
     test_store_rules();
+    test_wipe_on_expiry();
     printf(g_failures ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", g_failures);
     return g_failures ? 1 : 0;
 }
