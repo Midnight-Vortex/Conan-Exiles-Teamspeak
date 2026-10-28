@@ -102,7 +102,8 @@ function New-Ts3PluginPackage {
     $version = $Matches[1]
 
     $binDir = Split-Path $SourceDll -Parent
-    $pkgName = "conan_exiles-$version-win64.ts3_plugin"
+    # Fixed file name without version (the version lives in package.ini).
+    $pkgName = "conan_exiles-win64.ts3_plugin"
     $pkgPath = Join-Path $binDir $pkgName
     $zipPath = Join-Path $env:TEMP ("ce-ts3-" + [guid]::NewGuid().ToString("N") + ".zip")
 
@@ -136,7 +137,7 @@ function New-Ts3PluginPackage {
         Move-Item -Force $zipPath $pkgPath
     }
     catch {
-        $pkgPath = Join-Path $binDir ("conan_exiles-$version-win64-new.ts3_plugin")
+        $pkgPath = Join-Path $binDir "conan_exiles-win64-new.ts3_plugin"
         Log ("Target package locked; writing " + $pkgPath)
         Move-Item -Force $zipPath $pkgPath
     }

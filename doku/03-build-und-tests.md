@@ -16,7 +16,7 @@ sind das **Sicherheitsnetz**, damit Aenderungen nicht blind passieren.
 powershell -File build\build_msvc.ps1
 # oder direkt: .\build.ps1
 # Deploy: kopiert die DLL nach %AppData%\TS3Client\plugins\conan_exiles.dll
-# Paket:  schreibt bin\conan_exiles-<Version>-win64.ts3_plugin
+# Paket:  schreibt bin\conan_exiles-win64.ts3_plugin (ohne Version im Dateinamen)
 ```
 
 Baut `project/Conan-Exiles-TeamSpeak.vcxproj` (Release|x64) mit Visual
