@@ -500,6 +500,54 @@ kein Saved-Pfad gefunden → im Debug-Log bleibt `valid=1`, kein Wechsel Hub ↔
 **Lerneffekt:** Zwei Quellen für denselben Zustand brauchen **eine** Regel, wer gewinnt —
 sonst schreiben sie sich gegenseitig um.
 
+## 18. Endlich-Prüfung ohne `isfinite()` (MSVC-Build)
+
+**Was:** `pos_finite_d()` in `src/core/mod_file/pos_parse.h`, benutzt von
+`pos_sample_is_sane()`.
+
+**Vorher (in diesem Paket):** Die neue Plausibilitätsprüfung rief `isfinite()` auf
+`double`-Felder auf. Der `isfinite`-Makro von MinGW wandelt dabei intern über `float` um —
+eine Umwandlungs-Warnung. Der Release-Build mit MSVC läuft mit `/W4 /WX` (jede Warnung ist
+ein Fehler); das Risiko, dass eine solche Warnung dort den Build bricht, wollten wir nicht
+eingehen.
+
+**Jetzt:** `v >= -DBL_MAX && v <= DBL_MAX` — NaN scheitert an beiden Vergleichen, ±Unendlich
+an einem. Gleiches Ergebnis, keine Typumwandlung, auf jedem Compiler warnungsfrei.
+
+**Test:** `pos_parse_test` grün (u. a. `yaw=nan rejected`); der ganze Quellbaum mit
+`-Wconversion -Wfloat-conversion -Wshadow` (nähert MSVC C4244/C4456 an) ohne Warnung.
+
+**Lerneffekt:** Wenn der Release-Compiler Warnungen als Fehler behandelt, muss der
+Test-Compiler mindestens dieselben Warnklassen prüfen — sonst fällt der Fehler erst
+beim Release auf.
+
+## 19. Listen-Socket wird genau einmal geschlossen
+
+**Was:** `http_close_listen_socket()` / `http_open_listen_socket()` in
+`src/core/http/pos_http_server.c`.
+
+**Vorher:** Zwei Threads schließen den Listen-Socket: `pos_http_server_stop()` (damit ein
+wartendes `accept()` aufwacht) und der Listener-Thread selbst (Neuaufbau nach einem
+`accept`-Fehler). Beide prüften „ist er noch offen?“ und schlossen dann — ohne Schutz. Treffen
+sich beide genau gleichzeitig, wird dasselbe Handle zweimal geschlossen (das zweite Mal
+träfe im schlimmsten Fall ein inzwischen neu vergebenes Handle). Das Fenster ist winzig,
+bestand aber schon vor 085.
+
+**Jetzt:** Der Socket wird mit einem atomaren Austausch „genommen“
+(`InterlockedExchangePointer` → `INVALID_SOCKET`); nur wer ihn bekommen hat, schließt ihn.
+
+```text
+Stop-Thread ──┐                      ┌─► bekommt S   → closesocket(S)
+              ├─ tausche(g, INVALID) ┤
+Listener ─────┘                      └─► bekommt INVALID → nichts zu tun
+```
+
+**Test:** Socket-Simulation mit echten TCP-Clients (Linux-Shim, 39 Prüfungen, u. a. „stop()
+während Backoff“, „Port beim Start belegt“) grün; MinGW ohne Warnung.
+
+**Lerneffekt:** „Prüfen, dann handeln“ auf geteiltem Zustand ist nur in einem Thread sicher;
+sobald zwei Threads dieselbe Ressource freigeben können, muss das Nehmen atomar sein.
+
 ## Gesamt-Test und Risiken
 
 - Cross-Compile (MinGW, `-Wall -Wextra`): `pos_http_server.c`, `config.c`, `pos_file.c`,

@@ -21,6 +21,7 @@
 
 #include "core/mod_file/pos_file.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,13 +62,20 @@ static inline int pos_seq_from_double(double seq) {
     return (int)seq;
 }
 
+/* Finite double without isfinite(): MinGW's type-generic isfinite converts
+   through float (a conversion warning that MSVC /W4 /WX would turn into a
+   build error). NaN fails both comparisons, +-Inf fails one. */
+static inline int pos_finite_d(double v) {
+    return v >= -DBL_MAX && v <= DBL_MAX;
+}
+
 /* All five fields finite and within the sane range. */
 static inline int pos_sample_is_sane(const PosSample* s) {
     if (!s) {
         return 0;
     }
-    if (!isfinite(s->x) || !isfinite(s->y) || !isfinite(s->z)
-        || !isfinite(s->yaw) || !isfinite(s->yawY)) {
+    if (!pos_finite_d(s->x) || !pos_finite_d(s->y) || !pos_finite_d(s->z)
+        || !pos_finite_d(s->yaw) || !pos_finite_d(s->yawY)) {
         return 0;
     }
     if (fabs(s->x) > POS_COORD_MAX_CM || fabs(s->y) > POS_COORD_MAX_CM

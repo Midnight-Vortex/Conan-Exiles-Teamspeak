@@ -67,7 +67,10 @@
 
 /* ---- module state ------------------------------------------------------ */
 
-static SOCKET        g_listenSocket = INVALID_SOCKET;
+/* Written by the listener thread (bind) and closed by BOTH the listener thread
+   (accept recovery) and pos_http_server_stop (to unblock accept): every write
+   goes through an atomic exchange so the socket is closed exactly once. */
+static volatile SOCKET g_listenSocket = INVALID_SOCKET;
 static HANDLE        g_httpThread   = NULL;
 static HANDLE        g_stopEvent    = NULL;
 static volatile long g_httpRunning  = 0;
@@ -679,7 +682,7 @@ static int http_open_listen_socket(void) {
         return 0;
     }
 
-    g_listenSocket = s;
+    InterlockedExchangePointer((PVOID volatile*)&g_listenSocket, (PVOID)s);
     if (viaReuse) {
         log_write("HTTP: WARNING port %d was in use - bound with SO_REUSEADDR "
             "(another program may share it)", POS_HTTP_PORT);
@@ -690,9 +693,12 @@ static int http_open_listen_socket(void) {
 /* ---- listener thread --------------------------------------------------- */
 
 static void http_close_listen_socket(void) {
-    if (g_listenSocket != INVALID_SOCKET) {
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
+    /* Take the socket atomically: the stopper and the listener thread may both
+       get here at the same time; only the one that took it closes it. */
+    const SOCKET s = (SOCKET)InterlockedExchangePointer(
+        (PVOID volatile*)&g_listenSocket, (PVOID)INVALID_SOCKET);
+    if (s != INVALID_SOCKET) {
+        closesocket(s);
     }
 }
 
