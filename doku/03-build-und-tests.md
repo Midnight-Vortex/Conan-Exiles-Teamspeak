@@ -99,6 +99,14 @@ ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 
 Stand nach den Review-Fixes: **34 Suiten**, alle gruen; MinGW-DLL-Build ohne Warnungen.
 
+**Warum `-ffp-contract=off` in `tests/run_tests.sh`?** Auf einem Prozessor mit FMA
+(„fused multiply-add“) fasst gcc `a*b + c` standardmaessig zu **einer** Instruktion zusammen,
+die nur einmal rundet. Das CI-Image tut das, der lokale Build nicht — `audio_fx_test`
+(neuer Hall/Lowpass muss **bitgleich** zum alten Code klingen) schlug deshalb nur im CI fehl:
+alter und neuer Code wurden an unterschiedlichen Stellen zusammengefasst und rundeten
+verschieden. Der echte Release-Build (MSVC, `/fp:precise`) fasst **nicht** zusammen; mit
+dem Flag rechnen die Tests genauso wie das ausgelieferte Plugin.
+
 **Stand Checks:** 241 gesamt (V8.1-Erweiterung in `doku/aenderungen/008`).
 
 **Wie das ohne Windows geht:**

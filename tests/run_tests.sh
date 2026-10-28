@@ -16,7 +16,12 @@ cd "$ROOT"
 OUT="tests/out"
 mkdir -p "$OUT"
 
-CFLAGS=(-O2 -Wall -Wextra -I. -Isrc)
+# -ffp-contract=off: never fuse a*b+c into one FMA instruction. The release DLL
+# is built by MSVC with /fp:precise, which does not contract either; GCC does it
+# by default as soon as the target has FMA (e.g. a newer CI image), and then the
+# bit-identity checks in audio_fx_test (new DSP code vs. the old code) would
+# compare two differently rounded results instead of the two algorithms.
+CFLAGS=(-O2 -ffp-contract=off -Wall -Wextra -I. -Isrc)
 
 FAILED=0
 RESULTS=()
