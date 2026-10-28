@@ -139,6 +139,14 @@ run_suite talk_state_test \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
+# 088 — multi-producer deferred-chat ring (real spin lock + ring, pthreads).
+run_suite ui_chat_ring_test \
+    tests/ui_chat_ring_test.c
+
+# 088 — start/stop worker-handle hand-off (overlay monitor thread), pthreads.
+run_suite ui_worker_slot_test \
+    tests/ui_worker_slot_test.c
+
 # V8.6c — layering guard (no ts/ or ui/ include under src/core/).
 echo "=== layering_guard ==="
 if bash tests/check_layering.sh; then
