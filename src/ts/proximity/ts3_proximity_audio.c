@@ -18,18 +18,35 @@
  *    (single-writer = itself, no atomics needed). At buffer start it compares the
  *    two; if the callback bumped the generation, the audio thread reinitializes
  *    the ramp/LPF for that client itself — replicating the exact state the
- *    callback used to write (gain 1.0, pan 0.7071/0.7071, LPF uninitialized).
+ *    callback used to write (gain 1.0, pan 0.7071/0.7071, LPF uninitialized) and
+ *    marks the client's next rendered block as a fresh start (084: it begins AT
+ *    its target instead of ramping from the stale 1.0).
  *
  *  Result: exactly one writer per array => no torn floats, no cross-thread race
  *  on client-ID reuse. See doku/aenderungen/004-pcm-besitz-generation-counter.md.
+ *
+ *  Review fixes (doku/aenderungen/084-review-fixes-audio.md), contract changes:
+ *  - The audio thread owns MORE state now, all written by it alone: the last
+ *    block tick g_lastBlockMs (talk-pause detection), the fresh-start flag
+ *    g_renderFresh, the last good target g_targetCache (used when the seqlock
+ *    read is BUSY), the HRTF equivalents, and ALL buffers of the cave reverb
+ *    slots (the callback thread no longer memsets a slot; it only bumps the
+ *    slot's acquireEpoch BEFORE it sets the owner, and the audio thread zeroes
+ *    the slot when it sees a new epoch).
+ *  - The audio thread never spins: the unmute hand-over is just the per-client
+ *    atomic flag g_pendingUnmute[id] + counter. The callback thread scans the
+ *    flags in ts3_audio_flush_unmutes (the old MP ring + push spin lock is gone).
+ *  - Expired player-table entries are withdrawn by the recompute-all pass (the
+ *    snapshot becomes invalid -> the PCM path mutes), see audio_snap_find_orphans.
  *
  *  HRTF (post-process stage, doku/aenderungen/062-hrtf-kopfhoerer.md):
  *  - Writers publish the listener-relative direction per client into its own
  *    seqlock g_dirSnap (same writers + g_writerLock as g_snap).
  *  - The audio thread (onEditPostProcessVoiceDataEvent ->
  *    ts3_audio_process_postprocess) is the ONLY user of g_hrtf/g_hrtfGeneration/
- *    g_hrtfActive. It resets a client's HRTF state itself when the generation
- *    changed or the client was not rendered in the previous block.
+ *    g_hrtfActive/g_hrtfLastMs/g_dirCache. It resets a client's HRTF state itself
+ *    when the generation changed, the client was not rendered in the previous
+ *    block or a talk pause (> TS3_RENDER_GAP_MS) lies between two blocks.
  *  - Step-0 diagnostics: the audio thread stores channel layouts in atomics
  *    (g_diag*); only the callback thread logs them (ts3_audio_diag_flush).
  */
@@ -37,9 +54,12 @@
 #include "ts/proximity/ts3_3d.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
+#include "core/proximity/audio_fx.h"
+#include "core/proximity/audio_snap.h"
 #include "core/proximity/hrtf.h"
 #include "core/proximity/player_table.h"
 #include "core/proximity/proximity_math.h"
+#include "core/proximity/voice_cap.h"
 #include "core/proximity/zone_resolve.h"
 #include "core/proximity/occlusion.h"
 #include "core/mod_file/pos_file.h"
@@ -60,7 +80,6 @@
 #define TS3_UNMUTE_REARM_MS    500
 /* Must match ts3_unmute_clients_for_pcm cap (63 clients + API zero sentinel). */
 #define TS3_UNMUTE_BATCH_MAX   64
-#define TS3_UNMUTE_RING_SIZE   512   /* sparse flush queue */
 /* §8 enter/exit hysteresis: a speaker becomes an audible candidate at its
    nominal hear range (enter) and is only culled again once this many meters
    beyond it (exit). Holds the previous decision inside the band so a speaker
@@ -75,19 +94,8 @@
 
 /* ---- 6.1 seqlock snapshots ------------------------------------------------ */
 
-typedef struct AudioSnap {
-    volatile LONG seq;   /* odd = write in progress */
-    float gain;
-    float panL;
-    float panR;
-    float cutoffHz;      /* 10.3 lowpass cutoff; >= bypass = off */
-    float drr;           /* 1.0 = no diffuse; lower = more diffuse mix */
-    int soundproof;      /* 10.2 hard mute (different soundproof zone) */
-    int reverbSlot;      /* 10.4 cave reverb slot, -1 = off */
-    float reverbWet;     /* 072 B4: 1 = cave, < 1 = indoor room reverb */
-    int valid;
-} AudioSnap;
-
+/* AudioSnap / AudioDirSnap + the tri-state seqlock readers live in the
+   header-only core/proximity/audio_snap.h (host-tested). */
 static AudioSnap g_snap[TS3_MAX_CLIENT_ID];
 
 /* Writer-side lock (callback thread + pos watcher). Audio thread never takes it. */
@@ -99,6 +107,21 @@ static float g_renderGain[TS3_MAX_CLIENT_ID];
 static float g_renderPanL[TS3_MAX_CLIENT_ID];
 static float g_renderPanR[TS3_MAX_CLIENT_ID];
 
+/* Review fix 084 #3/#6 — more audio-thread-private render knowledge:
+   - g_lastBlockMs: tick of the client's last block (0 = never). A gap longer
+     than TS3_RENDER_GAP_MS (TS stops calling while a client is silent) means a
+     new utterance: the stale ramp/LPF/reverb memory must not be replayed.
+   - g_renderFresh: 1 = the next rendered block starts AT its target gain/pan
+     (set by a generation bump or a gap, cleared once a block was rendered or
+     the render state was deliberately reset to silence).
+   - g_targetCache(+Valid): last good snapshot values, used while the seqlock
+     reader is BUSY (writer mid-publish) so a preempted writer never mutes the
+     speaker or resets the render state. */
+static ULONGLONG g_lastBlockMs[TS3_MAX_CLIENT_ID];
+static char g_renderFresh[TS3_MAX_CLIENT_ID];
+static AudioTarget g_targetCache[TS3_MAX_CLIENT_ID];
+static char g_targetCacheValid[TS3_MAX_CLIENT_ID];
+
 /* V8.3 ownership signal. The callback thread bumps g_snapGeneration[id]
    (InterlockedIncrement) instead of writing the render arrays; the audio thread
    compares it against its own g_renderGeneration[id] and reinitializes its
@@ -108,19 +131,15 @@ static LONG g_renderGeneration[TS3_MAX_CLIENT_ID];         /* audio thread only 
 
 /* HRTF direction per client (radians, listener-relative). Own seqlock so the
    main snapshot layout stays unchanged. Written under g_writerLock. */
-typedef struct AudioDirSnap {
-    volatile LONG seq;   /* odd = write in progress */
-    float azimuth;
-    float elevation;
-    int valid;
-} AudioDirSnap;
-
 static AudioDirSnap g_dirSnap[TS3_MAX_CLIENT_ID];
 
 /* HRTF render state — post-process audio thread only. */
 static HrtfState g_hrtf[TS3_MAX_CLIENT_ID];
 static LONG g_hrtfGeneration[TS3_MAX_CLIENT_ID];
 static char g_hrtfActive[TS3_MAX_CLIENT_ID];
+static ULONGLONG g_hrtfLastMs[TS3_MAX_CLIENT_ID];   /* 084 #3: talk-pause detection */
+static AudioDir g_dirCache[TS3_MAX_CLIENT_ID];      /* 084 #6: last good direction */
+static char g_dirCacheValid[TS3_MAX_CLIENT_ID];
 
 /* Step-0 diagnostics: last seen channel layouts. Audio thread stores (atomic,
    only on change), callback thread logs in ts3_audio_diag_flush. */
@@ -129,12 +148,11 @@ static volatile LONG g_diagPostChannels = 0;
 static volatile LONG g_diagPostSpeakers = 0;
 static volatile LONG g_diagPostFill = 0;
 
-/* Unmute bookkeeping. Flags set from any thread, consumed on callback thread. */
+/* Unmute bookkeeping. Flags set from any thread (the audio thread included:
+   one atomic CAS + one atomic increment, no lock, no spin), consumed on the
+   callback thread, which scans the flags when the counter is non-zero. */
 static volatile long g_pendingUnmute[TS3_MAX_CLIENT_ID];
 static volatile long g_pendingUnmuteCount = 0;
-static anyID g_unmuteRing[TS3_UNMUTE_RING_SIZE];
-static volatile long g_unmuteRingWrite = 0;
-static volatile long g_unmuteRingRead = 0;
 static char g_clientUnlocked[TS3_MAX_CLIENT_ID];       /* callback thread only */
 static ULONGLONG g_lastUnmuteMs[TS3_MAX_CLIENT_ID];    /* callback thread only */
 
@@ -154,26 +172,6 @@ static volatile LONG64 g_lastRecomputeAllMs = 0;
 static volatile long g_recomputeDirty[TS3_MAX_CLIENT_ID];
 static volatile long g_recomputeDirtyCount = 0;
 static volatile long g_recomputeAllPending = 0;
-
-/* Phase 4.5 — diagnostics (throttled log in flush paths). */
-static volatile long g_unmuteRingOverflow = 0;
-static volatile long g_unmuteRingPushLock = 0;
-
-static void unmute_ring_push(anyID clientID) {
-    /* Serialize producers: publish write index only after the slot store is
-       complete so ts3_audio_flush_unmutes never observes a new index early. */
-    while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
-        YieldProcessor();
-    }
-    const long w = InterlockedCompareExchange(&g_unmuteRingWrite, 0, 0);
-    const long r = InterlockedCompareExchange(&g_unmuteRingRead, 0, 0);
-    if (w - r >= TS3_UNMUTE_RING_SIZE) {
-        InterlockedIncrement(&g_unmuteRingOverflow);
-    }
-    g_unmuteRing[w % TS3_UNMUTE_RING_SIZE] = clientID;
-    InterlockedExchange(&g_unmuteRingWrite, w + 1);
-    InterlockedExchange(&g_unmuteRingPushLock, 0);
-}
 
 static void audio_signal_unmute_flag_only(anyID clientID);
 
@@ -243,53 +241,24 @@ static void writer_lock_ensure(void) {
     InitOnceExecuteOnce(&g_writerLockOnce, writer_lock_init_once, NULL, NULL);
 }
 
+/* Writer side (callback thread, under g_writerLock). */
 static void snap_publish(anyID clientID, float gain, float panL, float panR,
     float cutoffHz, float drr, int soundproof, int reverbSlot, float reverbWet, int valid) {
-    AudioSnap* s = &g_snap[clientID];
-    InterlockedIncrement(&s->seq);          /* odd: write in progress */
-    s->gain = gain;
-    s->panL = panL;
-    s->panR = panR;
-    s->cutoffHz = cutoffHz;
-    s->drr = drr;
-    s->soundproof = soundproof;
-    s->reverbSlot = reverbSlot;
-    s->reverbWet = reverbWet;
-    s->valid = valid;
-    InterlockedIncrement(&s->seq);          /* even: stable */
+    AudioTarget t;
+    t.gain = gain;
+    t.panL = panL;
+    t.panR = panR;
+    t.cutoffHz = cutoffHz;
+    t.drr = drr;
+    t.soundproof = soundproof;
+    t.reverbSlot = reverbSlot;
+    t.reverbWet = reverbWet;
+    audio_snap_publish(&g_snap[clientID], &t, valid);
 }
 
 /* HRTF direction publish (writer side, under g_writerLock like snap_publish). */
 static void dir_publish(anyID clientID, float azimuth, float elevation, int valid) {
-    AudioDirSnap* s = &g_dirSnap[clientID];
-    InterlockedIncrement(&s->seq);
-    s->azimuth = azimuth;
-    s->elevation = elevation;
-    s->valid = valid;
-    InterlockedIncrement(&s->seq);
-}
-
-/* Audio-thread reader; returns 0 when no stable/valid direction exists. */
-static int dir_read(anyID clientID, float* azimuth, float* elevation) {
-    const AudioDirSnap* s = &g_dirSnap[clientID];
-    for (int attempt = 0; attempt < 3; attempt++) {
-        const LONG seqBefore = s->seq;
-        if (seqBefore & 1) {
-            continue;
-        }
-        const float az = s->azimuth;
-        const float el = s->elevation;
-        const int valid = s->valid;
-        if (s->seq == seqBefore) {
-            if (!valid) {
-                return 0;
-            }
-            *azimuth = az;
-            *elevation = el;
-            return 1;
-        }
-    }
-    return 0;
+    audio_dir_publish(&g_dirSnap[clientID], azimuth, elevation, valid);
 }
 
 /* Publish "no proximity influence" for one client. */
@@ -297,90 +266,30 @@ static void snap_publish_neutral(anyID clientID, int valid) {
     snap_publish(clientID, 0.0f, 0.7071f, 0.7071f, TS3_LPF_BYPASS_HZ, 1.0f, 0, -1, 0.0f, valid);
 }
 
-/* Audio-thread reader; returns 0 when no stable/valid snapshot exists. */
-static int snap_read(anyID clientID, float* gain, float* panL, float* panR,
-    float* cutoffHz, float* drr, int* soundproof, int* reverbSlot, float* reverbWet) {
-    const AudioSnap* s = &g_snap[clientID];
-    for (int attempt = 0; attempt < 3; attempt++) {
-        const LONG seqBefore = s->seq;
-        if (seqBefore & 1) {
-            continue;
-        }
-        const float g = s->gain;
-        const float l = s->panL;
-        const float r = s->panR;
-        const float c = s->cutoffHz;
-        const float d = s->drr;
-        const int sp = s->soundproof;
-        const int rv = s->reverbSlot;
-        const float rw = s->reverbWet;
-        const int valid = s->valid;
-        if (s->seq == seqBefore) {
-            if (!valid) {
-                return 0;
-            }
-            *gain = g;
-            *panL = l;
-            *panR = r;
-            *cutoffHz = c;
-            *drr = d;
-            *soundproof = sp;
-            *reverbSlot = rv;
-            if (reverbWet) {
-                *reverbWet = rw;
-            }
-            return 1;
-        }
-    }
-    return 0;
-}
-
 /* ---- 10.3/10.4 audio-thread FX state ---------------------------------------- */
 
-/* Per-client single-pole lowpass state (small, static for all clients). */
-typedef struct LpfState {
-    float prevL, prevR;
-    float alpha;
-    float lastCutoff;
-    int initialized;
-} LpfState;
+/* Per-client single-pole lowpass state (small, static for all clients). The
+   filter itself lives in core/proximity/audio_fx.h (host-tested). */
+static AudioLpf g_lpf[TS3_MAX_CLIENT_ID];
 
-static LpfState g_lpf[TS3_MAX_CLIENT_ID];
-
-/* Schroeder cave reverb (comb + allpass), same tuning as the old plugin.
-   Fixed static pool — no malloc anywhere near the audio path. Slots are
-   assigned/released on the writer side; the audio thread only indexes. */
+/* Schroeder cave reverb (comb + allpass), same tuning as the old plugin; the
+   DSP (CaveDsp, delay lengths, per-channel positions) lives in
+   core/proximity/audio_fx.h. Fixed static pool — no malloc anywhere near the
+   audio path. Slots are assigned/released on the writer side; the audio thread
+   indexes them and is the ONLY thread that writes a slot's DSP buffers. */
 #define CAVE_SLOTS        32
-#define CAVE_COMBS        4
-#define CAVE_ALLPASS      2
-#define CAVE_PREDELAY     1680  /* ~35 ms */
-#define CAVE_COMB_MAX     5466
-#define CAVE_AP_MAX       607
-#define CAVE_WET_GAIN     0.26f
-#define CAVE_DRY_GAIN     0.92f
 #define INDOOR_REVERB_SCALE 0.5f /* 072 B4: room 1.0 at OcclusionReverb=100 -> half the cave wet */
-#define CAVE_COMB_MIX     0.18f
-#define CAVE_COMB_DAMP    0.60f
-#define CAVE_AP_GAIN      0.55f
-#define CAVE_STEREO_WIDTH 0.68f
-
-static const float CAVE_COMB_FB[CAVE_COMBS] = { 0.79f, 0.80f, 0.81f, 0.82f };
-static const int CAVE_COMB_LEN[CAVE_COMBS] = { 2546, 3507, 4257, 5466 };
-static const int CAVE_AP_LEN[CAVE_ALLPASS] = { 607, 481 };
 
 typedef struct CaveState {
-    float combL[CAVE_COMBS][CAVE_COMB_MAX];
-    float combR[CAVE_COMBS][CAVE_COMB_MAX];
-    int combPos[CAVE_COMBS];
-    float combLpL[CAVE_COMBS];
-    float combLpR[CAVE_COMBS];
-    float apL[CAVE_ALLPASS][CAVE_AP_MAX];
-    float apR[CAVE_ALLPASS][CAVE_AP_MAX];
-    int apPos[CAVE_ALLPASS];
-    float predelayL[CAVE_PREDELAY];
-    float predelayR[CAVE_PREDELAY];
-    int predelayPos;
-    volatile LONG owner; /* clientID, 0 = free (writer side) */
+    CaveDsp dsp;                 /* audio thread only (zeroed by it, see below) */
+    volatile LONG owner;         /* clientID, 0 = free (writer side) */
+    /* Review fix 084 #7: the callback thread used to memset the ~160 KB buffers
+       in cave_slot_acquire while the audio thread could still be mid-buffer in
+       the slot it had just lost. Now acquire only bumps acquireEpoch (BEFORE it
+       sets the owner); the audio thread compares it with its private seenEpoch
+       and zeroes the buffers itself when it sees a new epoch. */
+    volatile LONG acquireEpoch;  /* callback thread writes */
+    LONG seenEpoch;              /* audio thread only */
 } CaveState;
 
 static CaveState g_cave[CAVE_SLOTS];
@@ -398,7 +307,9 @@ static void cave_slots_ensure_init(void) {
     }
 }
 
-/* Writer side, g_writerLock held. Returns slot or -1 (pool exhausted). */
+/* Writer side, g_writerLock held. Returns slot or -1 (pool exhausted). Does NOT
+   touch the slot's DSP buffers (audio-thread-owned) — it announces a fresh
+   owner through acquireEpoch instead. */
 static int cave_slot_acquire(anyID clientID) {
     cave_slots_ensure_init();
     if (g_reverbSlotByClient[clientID] >= 0) {
@@ -409,17 +320,9 @@ static int cave_slot_acquire(anyID clientID) {
             continue;
         }
         CaveState* c = &g_cave[i];
-        memset(c->combL, 0, sizeof(c->combL));
-        memset(c->combR, 0, sizeof(c->combR));
-        memset(c->combPos, 0, sizeof(c->combPos));
-        memset(c->combLpL, 0, sizeof(c->combLpL));
-        memset(c->combLpR, 0, sizeof(c->combLpR));
-        memset(c->apL, 0, sizeof(c->apL));
-        memset(c->apR, 0, sizeof(c->apR));
-        memset(c->apPos, 0, sizeof(c->apPos));
-        memset(c->predelayL, 0, sizeof(c->predelayL));
-        memset(c->predelayR, 0, sizeof(c->predelayR));
-        c->predelayPos = 0;
+        /* Epoch first, owner second: an audio thread that sees the new owner
+           also sees the new epoch and starts from a zeroed reverb. */
+        InterlockedIncrement(&c->acquireEpoch);
         if (InterlockedCompareExchange(&g_cave[i].owner, (LONG)clientID, 0) != 0) {
             continue;
         }
@@ -499,18 +402,55 @@ static int audio_local_zone(const HubSettings* hub, const PosSample* local,
     return zone_resolve(hub, (float)(local->x / 100.0), (float)(local->y / 100.0), (float)(local->z / 100.0));
 }
 
+/* Review fix 084 #8 — everything one recompute PASS needs, fetched ONCE: the
+   local position, a copy of the hub profile and the profile scalars. Before,
+   audio_compute_client called server_profile_get_max_volume /
+   _realistic_audio / _filter_intensity (each copied the ~8 KB HubSettings) and
+   player_table_get once PER CLIENT although the pass already held both. */
+typedef struct AudioPass {
+    PosSample local;
+    int localValid;
+    HubSettings hub;
+    int hubActive;
+    int localZone;
+    float listenAdd;
+    float maxVolume;
+    int realisticOn;
+    float filterIntensity;  /* 0..1 */
+    float voiceCap;         /* 084 #9: max legit announced voice distance, 0 = none */
+} AudioPass;
+
+/* Callback thread. */
+static void audio_pass_begin(AudioPass* pass) {
+    pass->localValid = pos_get_current(&pass->local);
+    pass->hubActive = server_profile_get(&pass->hub);
+    pass->localZone = audio_local_zone(&pass->hub, &pass->local, pass->localValid,
+        pass->hubActive);
+    pass->listenAdd = server_profile_get_listen_add_distance();
+    pass->maxVolume = server_profile_get_max_volume();
+    pass->realisticOn = server_profile_get_realistic_audio();
+    pass->filterIntensity = server_profile_get_filter_intensity() / 100.0f;
+    pass->voiceCap = pass->hubActive ? voice_distance_cap(&pass->hub) : 0.0f;
+}
+
+/* How far a speaker can be heard: his announced voice distance (clamped to what
+   an unmodified client could announce under the hub limits, 084 #9) plus the
+   listener bonus. Shared by the cull test and the gain curve so both agree. */
+static float audio_remote_hear_range(const AudioPass* pass, const PlayerEntry* remote) {
+    return voice_distance_clamp(remote->voiceDistance, pass->voiceCap) + pass->listenAdd;
+}
+
 /* Callback thread only (updates the per-client hysteresis latch). enter =
    nominal hear range, exit = enter + TS3_AUDIO_EXIT_MARGIN_M. */
-static int audio_in_hear_range(anyID clientID, const PosSample* local, int localValid,
-    const PlayerEntry* remote, float listenAdd) {
-    if (!localValid || !remote) {
+static int audio_in_hear_range(anyID clientID, const AudioPass* pass, const PlayerEntry* remote) {
+    if (!pass->localValid || !remote) {
         return 1;
     }
-    const float lx = (float)(local->x / 100.0);
-    const float ly = (float)(local->y / 100.0);
-    const float lz = (float)(local->z / 100.0);
+    const float lx = (float)(pass->local.x / 100.0);
+    const float ly = (float)(pass->local.y / 100.0);
+    const float lz = (float)(pass->local.z / 100.0);
     const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
-    const float enterDist = remote->voiceDistance + listenAdd;
+    const float enterDist = audio_remote_hear_range(pass, remote);
     const float exitDist = enterDist + TS3_AUDIO_EXIT_MARGIN_M;
 
     const int prev = ts3_client_id_valid(clientID) ? g_hearInRange[clientID] : 0;
@@ -546,10 +486,16 @@ static float audio_lerp_realistic(float bypass, float target, float intensity) {
     return bypass + (target - bypass) * intensity;
 }
 
-/* Phase 4.3 — math outside lock; cave slots + publish under g_writerLock. */
-static void audio_compute_client(anyID clientID, const PosSample* local,
-    int localValid, const HubSettings* hub, int localZone,
+/* Phase 4.3 — math outside lock; cave slots + publish under g_writerLock.
+   `remote` is the player-table entry the caller already holds (084 #8). */
+static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remote,
     AudioPublishParams* out) {
+    const anyID clientID = remote->clientID;
+    const PosSample* local = &pass->local;
+    const int localValid = pass->localValid;
+    const HubSettings* hub = pass->hubActive ? &pass->hub : NULL;
+    const int localZone = pass->localZone;
+
     memset(out, 0, sizeof(*out));
     out->cutoffHz = TS3_LPF_BYPASS_HZ;
     out->drr = 1.0f;
@@ -558,8 +504,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     out->panL = 0.7071f;
     out->panR = 0.7071f;
 
-    PlayerEntry remote;
-    if (!localValid || !player_table_get(clientID, &remote)) {
+    if (!localValid) {
         out->neutral = 1;
         out->valid = 0;
         return;
@@ -568,7 +513,7 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     const float lx = (float)(local->x / 100.0);
     const float ly = (float)(local->y / 100.0);
     const float lz = (float)(local->z / 100.0);
-    const float distance = prox_distance(lx, ly, lz, remote.x, remote.y, remote.z);
+    const float distance = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
 
     int soundproof = 0;
     int reverbZone = 0;
@@ -577,18 +522,17 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     int remoteZone = -1;
 
     if (hub && hub->zoneCount > 0) {
-        remoteZone = zone_resolve(hub, remote.x, remote.y, remote.z);
+        remoteZone = zone_resolve(hub, remote->x, remote->y, remote->z);
         soundproof = zone_soundproof_muted(hub, localZone, remoteZone);
         reverbZone = !soundproof && zone_reverb_active(hub, localZone, remoteZone);
     }
 
-    float maxVolume = server_profile_get_max_volume();
+    float maxVolume = pass->maxVolume;
     if (hub && localZone >= 0 && localZone < hub->zoneCount
         && hub->zones[localZone].audioMaxVolume > 0.0f) {
         maxVolume = hub->zones[localZone].audioMaxVolume;
     }
-    const float hearRange = remote.voiceDistance
-        + server_profile_get_listen_add_distance();
+    const float hearRange = audio_remote_hear_range(pass, remote);
     float gain = soundproof ? 0.0f
         : prox_volume_from_distance(distance, hearRange, maxVolume);
 
@@ -596,16 +540,16 @@ static void audio_compute_client(anyID clientID, const PosSample* local,
     const float dirX = -cosf(yawRad);
     const float dirY = sinf((float)(-local->yawY * TS3_CEPOS_PI / 180.0));
     const float dirZ = -sinf(yawRad);
-    const float toRemoteX = remote.x - lx;
-    const float toRemoteY = remote.y - ly;
-    const float toRemoteZ = remote.z - lz;
+    const float toRemoteX = remote->x - lx;
+    const float toRemoteY = remote->y - ly;
+    const float toRemoteZ = remote->z - lz;
 
     /* HRTF direction from the raw Unreal yaw/pitch (not the TS-3D dir above). */
     out->dirValid = hrtf_listener_angles((float)local->yaw, (float)local->yawY,
         toRemoteX, toRemoteY, toRemoteZ, &out->azimuth, &out->elevation);
 
-    const int realisticOn = server_profile_get_realistic_audio();
-    const float filterIntensity = server_profile_get_filter_intensity() / 100.0f;
+    const int realisticOn = pass->realisticOn;
+    const float filterIntensity = pass->filterIntensity;
     const int realisticActive = realisticOn && filterIntensity > 0.001f && !soundproof;
 
     if (realisticActive) {
@@ -726,38 +670,51 @@ static void audio_publish_client(anyID clientID, const AudioPublishParams* param
         params->cutoffHz, params->drr, params->soundproof, reverbSlot, params->reverbWet, params->valid);
 }
 
+/* Neutral + INVALID params: the PCM path mutes the speaker (no position data). */
+static void audio_params_invalid(AudioPublishParams* params) {
+    memset(params, 0, sizeof(*params));
+    params->neutral = 1;
+    params->valid = 0;
+}
+
+/* Compute (or withdraw) and publish ONE client whose table entry the caller
+   already holds. Same §8 enter/exit gate as audio_recompute_all_impl — CEPOS
+   dirty drains must not republish (and unmute) speakers the full pass would
+   keep culled. Callback thread. */
+static void audio_recompute_entry(const AudioPass* pass, const PlayerEntry* remote) {
+    const anyID clientID = (anyID)remote->clientID;
+    AudioPublishParams params;
+    if (!audio_in_hear_range(clientID, pass, remote)) {
+        audio_params_invalid(&params);
+    }
+    else {
+        audio_compute_client(pass, remote, &params);
+    }
+
+    EnterCriticalSection(&g_writerLock);
+    audio_publish_client(clientID, &params);
+    LeaveCriticalSection(&g_writerLock);
+}
+
 static void audio_recompute_client_impl(anyID clientID) {
     if (!ts3_client_id_valid(clientID)) {
         return;
     }
     writer_lock_ensure();
 
-    PosSample local;
-    const int localValid = pos_get_current(&local);
+    AudioPass pass;
+    audio_pass_begin(&pass);
 
-    HubSettings hub;
-    const int hubActive = server_profile_get(&hub);
-    const int localZone = audio_local_zone(&hub, &local, localValid, hubActive);
-
-    /* Same §8 enter/exit gate as audio_recompute_all_impl — CEPOS dirty drains
-       must not republish (and unmute) speakers the full pass would keep culled. */
     PlayerEntry remote;
-    const float listenAdd = server_profile_get_listen_add_distance();
-    AudioPublishParams params;
-    if (!player_table_get(clientID, &remote)
-        || !audio_in_hear_range(clientID, &local, localValid, &remote, listenAdd)) {
-        memset(&params, 0, sizeof(params));
-        params.neutral = 1;
-        params.valid = 0;
+    if (!player_table_get(clientID, &remote)) {
+        AudioPublishParams params;
+        audio_params_invalid(&params);
+        EnterCriticalSection(&g_writerLock);
+        audio_publish_client(clientID, &params);
+        LeaveCriticalSection(&g_writerLock);
+        return;
     }
-    else {
-        audio_compute_client(clientID, &local, localValid,
-            hubActive ? &hub : NULL, localZone, &params);
-    }
-
-    EnterCriticalSection(&g_writerLock);
-    audio_publish_client(clientID, &params);
-    LeaveCriticalSection(&g_writerLock);
+    audio_recompute_entry(&pass, &remote);
 }
 
 static void audio_recompute_all_impl(void) {
@@ -769,35 +726,31 @@ static void audio_recompute_all_impl(void) {
        by a clear at the end (lost-update race found in the V8.3 review). */
     InterlockedExchange(&g_recomputeAllPending, 0);
 
-    PosSample local;
-    const int localValid = pos_get_current(&local);
-
-    HubSettings hub;
-    const int hubActive = server_profile_get(&hub);
-    const int localZone = audio_local_zone(&hub, &local, localValid, hubActive);
+    AudioPass pass;
+    audio_pass_begin(&pass);
 
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
-    const float listenAdd = server_profile_get_listen_add_distance();
 
     AudioPublishParams batch[PLAYER_TABLE_MAX_PLAYERS];
     anyID batchIds[PLAYER_TABLE_MAX_PLAYERS];
     int batchCount = 0;
+    /* 084 #2: which client IDs are part of the fresh player snapshot. */
+    unsigned char fresh[TS3_MAX_CLIENT_ID];
+    memset(fresh, 0, sizeof(fresh));
 
     for (int i = 0; i < count; i++) {
         const anyID cid = (anyID)players[i].clientID;
         if (!ts3_client_id_valid(players[i].clientID)) {
             continue;
         }
+        fresh[cid] = 1;
         AudioPublishParams* params = &batch[batchCount];
-        if (!audio_in_hear_range(cid, &local, localValid, &players[i], listenAdd)) {
-            memset(params, 0, sizeof(*params));
-            params->neutral = 1;
-            params->valid = 0;
+        if (!audio_in_hear_range(cid, &pass, &players[i])) {
+            audio_params_invalid(params);
         }
         else {
-            audio_compute_client(cid, &local, localValid,
-                hubActive ? &hub : NULL, localZone, params);
+            audio_compute_client(&pass, &players[i], params);
         }
         batchIds[batchCount] = cid;
         batchCount++;
@@ -805,11 +758,33 @@ static void audio_recompute_all_impl(void) {
     }
     audio_reconcile_dirty_count();
 
+    /* 084 #2: entries that expired in the player table (PLAYER_TABLE_STALE_MS
+       without CEPOS: peer crashed / quit but stays in the ingame channel) are
+       silently dropped by player_table_snapshot — without this sweep their
+       snapshot stayed valid with the last gain/pan forever, although the PCM
+       path promises "expired -> mute". Withdraw them: the same invalid neutral
+       snapshot a client without any CEPOS has (PCM path: buffer zeroed). */
+    unsigned short expired[PLAYER_TABLE_MAX_PLAYERS];
+    int expiredCount = 0;
+
     EnterCriticalSection(&g_writerLock);
     for (int i = 0; i < batchCount; i++) {
         audio_publish_client(batchIds[i], &batch[i]);
     }
+    expiredCount = audio_snap_find_orphans(g_snap, fresh, TS3_MAX_CLIENT_ID,
+        expired, PLAYER_TABLE_MAX_PLAYERS);
+    for (int i = 0; i < expiredCount; i++) {
+        AudioPublishParams params;
+        audio_params_invalid(&params);
+        audio_publish_client((anyID)expired[i], &params);
+        g_hearInRange[expired[i]] = 0; /* §8 latch: back out of range */
+    }
     LeaveCriticalSection(&g_writerLock);
+
+    for (int i = 0; i < expiredCount; i++) {
+        log_debug("AUDIO: client %u has no fresh position anymore -> muted",
+            (unsigned)expired[i]);
+    }
 
     if (InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0) {
         ts3_request_wakeup();
@@ -900,8 +875,11 @@ void ts3_audio_flush_recomputes(void) {
         }
     }
 
+    writer_lock_ensure();
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
+    AudioPass pass;       /* 084 #8: hub/position fetched once per drain, not per client */
+    int passReady = 0;
     int processed = 0;
     for (int i = 0; i < count; i++) {
         const anyID cid = (anyID)players[i].clientID;
@@ -913,7 +891,11 @@ void ts3_audio_flush_recomputes(void) {
         }
         if (InterlockedCompareExchange(&g_recomputeDirty[cid], 0, 1) == 1) {
             InterlockedDecrement(&g_recomputeDirtyCount);
-            audio_recompute_client_impl(cid);
+            if (!passReady) {
+                audio_pass_begin(&pass);
+                passReady = 1;
+            }
+            audio_recompute_entry(&pass, &players[i]); /* entry from the snapshot, no 2nd lookup */
             processed++;
         }
     }
@@ -926,119 +908,32 @@ void ts3_audio_flush_recomputes(void) {
     }
 }
 
-/* ---- 10.3 lowpass (audio thread, no locks, no allocations) ------------------- */
+/* ---- 10.3 lowpass + 10.4 cave reverb (audio thread, no locks, no allocations) -- */
 
-static short audio_clamp_sample(float v) {
-    if (v > 32767.0f) return 32767;
-    if (v < -32768.0f) return -32768;
-    return (short)v;
-}
-
-static void audio_apply_lowpass(short* samples, int sampleCount, int channels,
-    float cutoffHz, LpfState* fx) {
-    if (cutoffHz != fx->lastCutoff) {
-        const float dt = 1.0f / TS3_SAMPLE_RATE;
-        const float rc = 1.0f / (cutoffHz * 6.28318530718f);
-        fx->alpha = dt / (rc + dt);
-        fx->lastCutoff = cutoffHz;
-    }
-    const float alpha = fx->alpha;
-
-    if (channels >= 2) {
-        for (int s = 0; s < sampleCount; s++) {
-            const int li = s * channels;
-            const int ri = li + 1;
-            const float inL = (float)samples[li];
-            const float inR = (float)samples[ri];
-            if (!fx->initialized) {
-                fx->prevL = inL;
-                fx->prevR = inR;
-            }
-            fx->prevL += alpha * (inL - fx->prevL);
-            fx->prevR += alpha * (inR - fx->prevR);
-            const float leftSecond = fx->prevL;
-            const float rightSecond = fx->prevR;
-            fx->prevL += alpha * 0.7f * (leftSecond - fx->prevL);
-            fx->prevR += alpha * 0.7f * (rightSecond - fx->prevR);
-            samples[li] = audio_clamp_sample(fx->prevL);
-            samples[ri] = audio_clamp_sample(fx->prevR);
-        }
-    }
-    else {
-        for (int s = 0; s < sampleCount; s++) {
-            const float in = (float)samples[s];
-            if (!fx->initialized) {
-                fx->prevL = in;
-            }
-            fx->prevL += alpha * (in - fx->prevL);
-            const float secondPass = fx->prevL;
-            fx->prevL += alpha * 0.7f * (secondPass - fx->prevL);
-            samples[s] = audio_clamp_sample(fx->prevL);
-        }
-    }
-    fx->initialized = 1;
-}
-
-/* ---- 10.4 cave reverb (audio thread, fixed memory) ---------------------------- */
-
-/* Freeverb-style comb with damped feedback. */
-static float cave_comb(float* buf, int len, int* pos, float input,
-    float feedback, float* lpState) {
-    const float output = buf[*pos];
-    *lpState = output * (1.0f - CAVE_COMB_DAMP) + (*lpState) * CAVE_COMB_DAMP;
-    buf[*pos] = input + (*lpState) * feedback;
-    if (++(*pos) >= len) {
-        *pos = 0;
-    }
-    return output;
-}
-
-/* Allpass smears early reflections into a diffuse tail. */
-static float cave_allpass(float* buf, int len, int* pos, float input) {
-    const float delayed = buf[*pos];
-    const float output = -input + delayed;
-    buf[*pos] = input + delayed * CAVE_AP_GAIN;
-    if (++(*pos) >= len) {
-        *pos = 0;
-    }
-    return output;
-}
-
-static void cave_process_sample(CaveState* rev, float inL, float inR,
-    float* wetL, float* wetR) {
-    const float revInL = rev->predelayL[rev->predelayPos];
-    const float revInR = rev->predelayR[rev->predelayPos];
-    rev->predelayL[rev->predelayPos] = inL;
-    rev->predelayR[rev->predelayPos] = inR;
-    if (++rev->predelayPos >= CAVE_PREDELAY) {
-        rev->predelayPos = 0;
-    }
-
-    float outL = 0.0f, outR = 0.0f;
-    for (int c = 0; c < CAVE_COMBS; c++) {
-        outL += cave_comb(rev->combL[c], CAVE_COMB_LEN[c], &rev->combPos[c],
-            revInL, CAVE_COMB_FB[c], &rev->combLpL[c]);
-        outR += cave_comb(rev->combR[c], CAVE_COMB_LEN[c], &rev->combPos[c],
-            revInR, CAVE_COMB_FB[c], &rev->combLpR[c]);
-    }
-    outL *= CAVE_COMB_MIX;
-    outR *= CAVE_COMB_MIX;
-
-    for (int a = 0; a < CAVE_ALLPASS; a++) {
-        outL = cave_allpass(rev->apL[a], CAVE_AP_LEN[a], &rev->apPos[a], outL);
-        outR = cave_allpass(rev->apR[a], CAVE_AP_LEN[a], &rev->apPos[a], outR);
-    }
-
-    const float mono = (outL + outR) * 0.5f;
-    *wetL = mono + (outL - mono) * CAVE_STEREO_WIDTH;
-    *wetR = mono + (outR - mono) * CAVE_STEREO_WIDTH;
-}
+/* The lowpass filter and the reverb DSP live in core/proximity/audio_fx.h
+   (audio_lpf_apply, cave_dsp_process_sample): host-tested, bit-identical sound. */
 
 static void audio_apply_cave(short* samples, int sampleCount, int channels,
-    CaveState* rev, LONG expectedOwner, float wetScale) {
-    /* Owner checked once — mid-buffer abort left dry/wet mix and caused clicks. */
+    CaveState* rev, LONG expectedOwner, float wetScale, int freshStart) {
+    /* Owner checked up front — mid-buffer abort left dry/wet mix and caused
+       clicks. The epoch is read BETWEEN two owner checks: if the owner is still
+       us afterwards, the epoch belongs to our acquire (or a newer acquire of
+       ours), so a slot that was just re-handed to another client is never
+       reset under (or inherited by) the wrong speaker. */
     if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
         return;
+    }
+    const LONG epoch = InterlockedCompareExchange(&rev->acquireEpoch, 0, 0);
+    if (InterlockedCompareExchange(&rev->owner, 0, 0) != expectedOwner) {
+        return;
+    }
+    /* 084 #7: the audio thread alone writes the buffers — zero them when the
+       slot has a new owner (epoch changed) and 084 #3: when this block starts a
+       new utterance (talk pause / generation bump), so the previous utterance's
+       reverb tail is not replayed. */
+    if (freshStart || epoch != rev->seenEpoch) {
+        cave_dsp_reset(&rev->dsp);
+        rev->seenEpoch = epoch;
     }
     /* 072 B4: cave = 1.0 (unchanged mix); indoor rooms scale the wet part down. */
     if (!(wetScale > 0.0f)) {
@@ -1056,17 +951,17 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
             const float inL = (float)samples[li];
             const float inR = (float)samples[ri];
             float wetL, wetR;
-            cave_process_sample(rev, inL, inR, &wetL, &wetR);
-            samples[li] = audio_clamp_sample(inL * dryGain + wetL * wetGain);
-            samples[ri] = audio_clamp_sample(inR * dryGain + wetR * wetGain);
+            cave_dsp_process_sample(&rev->dsp, inL, inR, &wetL, &wetR);
+            samples[li] = audio_fx_clamp_sample(inL * dryGain + wetL * wetGain);
+            samples[ri] = audio_fx_clamp_sample(inR * dryGain + wetR * wetGain);
         }
     }
     else {
         for (int s = 0; s < sampleCount; s++) {
             const float in = (float)samples[s];
             float wetL, wetR;
-            cave_process_sample(rev, in, in, &wetL, &wetR);
-            samples[s] = audio_clamp_sample(
+            cave_dsp_process_sample(&rev->dsp, in, in, &wetL, &wetR);
+            samples[s] = audio_fx_clamp_sample(
                 in * dryGain + (wetL + wetR) * 0.5f * wetGain);
         }
     }
@@ -1074,21 +969,44 @@ static void audio_apply_cave(short* samples, int sampleCount, int channels,
 
 /* ---- 6.2 PCM hot path (audio thread) --------------------------------------- */
 
+static void audio_zero_block(short* samples, int sampleCount, int channels) {
+    memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+}
+
 void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount, int channels) {
-    if (!samples || sampleCount <= 0 || channels <= 0
-        || !ts3_client_id_valid(clientID)) {
+    if (!samples || sampleCount <= 0 || channels <= 0) {
+        return;
+    }
+    if (!ts3_client_id_valid(clientID)) {
+        /* 084 #10: an ID outside the per-client arrays (>= TS3_MAX_CLIENT_ID,
+           or 0) has no snapshot and no render state. In PROXIMITY mode it stays
+           untouched (as before). In hub MUTE mode every voice must be silent,
+           so it must NOT fail open here. */
+        if (InterlockedCompareExchange(&g_audioMode, 0, 0) == TS3_AUDIO_MUTE) {
+            audio_zero_block(samples, sampleCount, channels);
+        }
         return;
     }
     if (g_diagPlaybackChannels != channels) {
         InterlockedExchange(&g_diagPlaybackChannels, channels); /* step-0 diag */
     }
 
+    /* 084 #3: talk-pause detection. TS stops calling us while a client is silent,
+       so after a gap the ramp / lowpass / reverb memory is stale. The tick is
+       audio-thread private (GetTickCount64 is lock-free). */
+    const ULONGLONG nowMs = GetTickCount64();
+    const int gap = render_gap_exceeded(g_lastBlockMs[clientID], nowMs, TS3_RENDER_GAP_MS);
+    g_lastBlockMs[clientID] = nowMs;
+
     /* V8.3 PCM-owns-its-state: if the callback thread signaled invalidation
        (client left / evicted / moved away / reset) since our last buffer, we
        reinitialize the ramp + LPF ourselves — the exact state the callback used
        to write (gain 1.0, neutral pan, LPF uninitialized). Reading the volatile
        LONG generation is a single aligned read (InterlockedCompareExchange with
-       a no-op compare); the last-seen copy is audio-thread-private. */
+       a no-op compare); the last-seen copy is audio-thread-private.
+       084 #3: the 1.0 start is only the PASSTHROUGH/continuity value now. A
+       rendered PROXIMITY block after a bump starts AT its target (freshStart),
+       otherwise a far speaker's first 10-20 ms leaked at near full volume. */
     const LONG curGen = InterlockedCompareExchange(&g_snapGeneration[clientID], 0, 0);
     if (render_state_needs_reinit(g_renderGeneration[clientID], curGen)) {
         g_renderGain[clientID] = 1.0f;
@@ -1096,62 +1014,105 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         g_renderPanR[clientID] = 0.7071f;
         g_lpf[clientID].initialized = 0;
         g_renderGeneration[clientID] = curGen;
+        g_targetCacheValid[clientID] = 0;   /* may belong to the previous occupant */
+        g_renderFresh[clientID] = 1;
+    }
+    if (gap) {
+        g_lpf[clientID].initialized = 0;    /* seed from the first sample of the utterance */
+        g_targetCacheValid[clientID] = 0;
+        g_renderFresh[clientID] = 1;
     }
 
     const long mode = InterlockedCompareExchange(&g_audioMode, 0, 0);
     if (mode == TS3_AUDIO_PASSTHROUGH) {
+        /* The block really plays at gain 1.0, so a later PASSTHROUGH -> PROXIMITY
+           switch in the middle of an utterance ramps from 1.0 (continuity). */
         g_renderGain[clientID] = 1.0f;
+        g_renderFresh[clientID] = 0;
         return;
     }
     if (mode == TS3_AUDIO_MUTE) {
         /* Hub: hard mute — zero the buffer so nothing is audible. */
-        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        audio_zero_block(samples, sampleCount, channels);
         g_renderGain[clientID] = 0.0f;
+        g_renderFresh[clientID] = 0;
         return;
     }
 
     /* 079: speakers muted in TS while ForceSpeakersOn -> nobody hears him. */
     if (InterlockedCompareExchange(&g_clientDeaf[clientID], 0, 0)) {
-        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        audio_zero_block(samples, sampleCount, channels);
         g_renderGain[clientID] = 0.0f;
         g_lpf[clientID].initialized = 0;
+        g_renderFresh[clientID] = 0;
         return;
     }
 
-    float target, panL, panR, cutoffHz, drr, reverbWet = 1.0f;
-    int soundproof, reverbSlot;
-    if (!snap_read(clientID, &target, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot, &reverbWet)) {
+    AudioTarget tgt;
+    const AudioSnapRead rd = audio_snap_read(&g_snap[clientID], &tgt);
+    if (rd == AUDIO_SNAP_BUSY) {
+        /* 084 #6: the writer is mid-publish (preempted). That is NOT "no data":
+           keep rendering with the last good target and leave the render state
+           alone. Without a usable cache (first block / after a reset) there is
+           nothing trustworthy — silence this one block, state untouched. */
+        if (!g_targetCacheValid[clientID]) {
+            audio_zero_block(samples, sampleCount, channels);
+            return;
+        }
+        tgt = g_targetCache[clientID];
+    }
+    else if (rd == AUDIO_SNAP_INVALID) {
         /* Ingame proximity mode but no position data for this speaker (no
            CEPOS yet / expired) — mute instead of leaking full-volume voice
            that should be distance-attenuated. The next CEPOS packet
            publishes a snapshot and unmutes. */
-        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        g_targetCacheValid[clientID] = 0;
+        audio_zero_block(samples, sampleCount, channels);
         g_renderGain[clientID] = 0.0f;
         g_lpf[clientID].initialized = 0;
+        g_renderFresh[clientID] = 0;
         return;
     }
+    else {
+        g_targetCache[clientID] = tgt;
+        g_targetCacheValid[clientID] = 1;
+    }
+
+    const float target = tgt.gain;
+    const float panL = tgt.panL;
+    const float panR = tgt.panR;
+    const float cutoffHz = tgt.cutoffHz;
+    const float drr = tgt.drr;
+    const int soundproof = tgt.soundproof;
+    const int reverbSlot = tgt.reverbSlot;
+    const float reverbWet = tgt.reverbWet;
+    const int freshStart = g_renderFresh[clientID];
 
     /* 10.2 soundproof: hard silence, no ramp, no ghost tail. */
     if (soundproof) {
-        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+        audio_zero_block(samples, sampleCount, channels);
         g_renderGain[clientID] = 0.0f;
         g_lpf[clientID].initialized = 0;
+        g_renderFresh[clientID] = 0;
         return;
     }
 
-    /* Fully silent: skip FX; ramp handles the tail (no hard cut at audible threshold). */
-    if (target <= TS3_SILENT_GAIN && g_renderGain[clientID] <= TS3_SILENT_GAIN) {
-        memset(samples, 0, (size_t)sampleCount * (size_t)channels * sizeof(short));
+    /* Fully silent: skip FX; ramp handles the tail (no hard cut at audible threshold).
+       A fresh start has no tail to ramp from — it is silent from the first sample. */
+    if (target <= TS3_SILENT_GAIN && (freshStart || g_renderGain[clientID] <= TS3_SILENT_GAIN)) {
+        audio_zero_block(samples, sampleCount, channels);
         g_renderGain[clientID] = 0.0f;
         g_renderPanL[clientID] = 0.7071f;
         g_renderPanR[clientID] = 0.7071f;
         g_lpf[clientID].initialized = 0;
+        g_renderFresh[clientID] = 0;
         return;
     }
 
     /* 10.3 distance lowpass (reverb zones or realistic open-world path). */
     if (cutoffHz < TS3_LPF_BYPASS_HZ) {
-        audio_apply_lowpass(samples, sampleCount, channels, cutoffHz, &g_lpf[clientID]);
+        audio_lpf_apply(samples, sampleCount, channels, cutoffHz, TS3_SAMPLE_RATE,
+            &g_lpf[clientID]);
     }
     else {
         g_lpf[clientID].initialized = 0;
@@ -1167,7 +1128,8 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         CaveState* rev = &g_cave[reverbSlot];
         const LONG owner = InterlockedCompareExchange(&rev->owner, 0, 0);
         if (owner == (LONG)clientID) {
-            audio_apply_cave(samples, sampleCount, channels, rev, owner, reverbWet);
+            audio_apply_cave(samples, sampleCount, channels, rev, owner, reverbWet,
+                freshStart);
         }
     }
 
@@ -1175,11 +1137,12 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         audio_signal_unmute_flag_only(clientID);
     }
 
-    /* 6.5 click-free ramp: spread gain + pan across this buffer. */
-    float current = g_renderGain[clientID];
+    /* 6.5 click-free ramp: spread gain + pan across this buffer. A fresh start
+       (new utterance / generation bump) begins at the target instead. */
+    float current = render_ramp_start(freshStart, g_renderGain[clientID], target);
     const float step = (target - current) / (float)sampleCount;
-    float panLCur = g_renderPanL[clientID];
-    float panRCur = g_renderPanR[clientID];
+    float panLCur = render_ramp_start(freshStart, g_renderPanL[clientID], panL);
+    float panRCur = render_ramp_start(freshStart, g_renderPanR[clientID], panR);
     const float panStepL = (panL - panLCur) / (float)sampleCount;
     const float panStepR = (panR - panRCur) / (float)sampleCount;
 
@@ -1218,6 +1181,7 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
     g_renderGain[clientID] = target;
     g_renderPanL[clientID] = panL;
     g_renderPanR[clientID] = panR;
+    g_renderFresh[clientID] = 0;
 }
 
 /* ---- 6.2b HRTF post-process (audio thread) ---------------------------------- */
@@ -1265,20 +1229,51 @@ void ts3_audio_process_postprocess(anyID clientID, short* samples, int sampleCou
     const int ri = audio_find_speaker(channelSpeakerArray, channels,
         SPEAKER_FRONT_RIGHT | SPEAKER_HEADPHONES_RIGHT);
     const unsigned int pairMask = (li >= 0 && ri >= 0) ? ((1u << li) | (1u << ri)) : 0u;
-    float azimuth, elevation;
-    if (li < 0 || ri < 0 || li == ri || (*channelFillMask & pairMask) == 0
-        || !dir_read(clientID, &azimuth, &elevation)) {
+    if (li < 0 || ri < 0 || li == ri || (*channelFillMask & pairMask) == 0) {
         g_hrtfActive[clientID] = 0;
         return;
     }
 
-    /* Own the state like g_lpf: reset after invalidation or a pause in rendering. */
+    /* 084 #3: a pause in rendering (TS stops calling while the client is silent)
+       leaves the HRTF history stale — detect it by the block tick, like g_lpf. */
+    const ULONGLONG nowMs = GetTickCount64();
+    const int gap = render_gap_exceeded(g_hrtfLastMs[clientID], nowMs, TS3_RENDER_GAP_MS);
     const LONG curGen = InterlockedCompareExchange(&g_snapGeneration[clientID], 0, 0);
-    if (!g_hrtfActive[clientID] || g_hrtfGeneration[clientID] != curGen) {
+    if (gap || g_hrtfGeneration[clientID] != curGen) {
+        g_dirCacheValid[clientID] = 0;      /* may belong to an earlier utterance / occupant */
+    }
+
+    AudioDir dir;
+    const AudioSnapRead rd = audio_dir_read(&g_dirSnap[clientID], &dir);
+    if (rd == AUDIO_SNAP_INVALID) {
+        g_dirCacheValid[clientID] = 0;
+        g_hrtfActive[clientID] = 0;
+        return;
+    }
+    if (rd == AUDIO_SNAP_BUSY) {
+        /* 084 #6: the writer is mid-publish. Keep the last good direction and
+           leave the HRTF state alone; without one, skip HRTF for this block
+           (TS 3D pan plays) instead of tearing the state down. */
+        if (!g_dirCacheValid[clientID]) {
+            return;
+        }
+        dir = g_dirCache[clientID];
+    }
+    else {
+        g_dirCache[clientID] = dir;
+        g_dirCacheValid[clientID] = 1;
+    }
+    const float azimuth = dir.azimuth;
+    const float elevation = dir.elevation;
+
+    /* Own the state like g_lpf: reset after invalidation, a pause in rendering
+       or a talk pause. */
+    if (!g_hrtfActive[clientID] || g_hrtfGeneration[clientID] != curGen || gap) {
         hrtf_reset(&g_hrtf[clientID]);
         g_hrtfGeneration[clientID] = curGen;
     }
     g_hrtfActive[clientID] = 1;
+    g_hrtfLastMs[clientID] = nowMs;
 
     /* TS already applied its own 3D pan here; the helper folds it back to mono,
        renders both ears and keeps the block loudness (distance gain). */
@@ -1308,11 +1303,16 @@ void ts3_audio_diag_flush(void) {
 
 /* ---- 6.3 unmute signal ------------------------------------------------------ */
 
-/* Flag only — no wakeup. Safe on the audio thread (no TS API, no locks). */
+/* Flag only — no wakeup. Safe on the audio thread (no TS API, no locks, no
+   spinning): one atomic CAS on the client's flag and one atomic increment.
+   084 #1: there is no hand-over ring any more. It needed a producer spin lock
+   because the audio thread AND the callback thread pushed into it; the audio
+   thread could spin on a lock the (preemptable) callback thread held. Now the
+   callback thread finds the flagged clients itself by scanning the flags in
+   ts3_audio_flush_unmutes. */
 static void audio_signal_unmute_flag_only(anyID clientID) {
     if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 1, 0) == 0) {
         InterlockedIncrement(&g_pendingUnmuteCount);
-        unmute_ring_push(clientID);
     }
 }
 
@@ -1322,9 +1322,8 @@ void ts3_audio_signal_unmute(anyID clientID) {
     }
     if (InterlockedCompareExchange(&g_pendingUnmute[clientID], 1, 0) == 0) {
         InterlockedIncrement(&g_pendingUnmuteCount);
-        unmute_ring_push(clientID);
         /* Wakeup sends a plugin command — never do that from the audio thread.
-           Audio-thread callers use the flag-only path below. */
+           Audio-thread callers use the flag-only path above. */
         ts3_request_wakeup();
     }
 }
@@ -1349,65 +1348,24 @@ void ts3_audio_flush_unmutes(void) {
                 log_write("AUDIO: unmute backlog %ld pending", pending);
             }
         }
-        const long overflow = InterlockedCompareExchange(&g_unmuteRingOverflow, 0, 0);
-        if (overflow > 0) {
-            static ULONGLONG s_lastOverflowLog = 0;
-            const ULONGLONG nowMs = GetTickCount64();
-            if (nowMs - s_lastOverflowLog >= 10000) {
-                s_lastOverflowLog = nowMs;
-                log_write("AUDIO: unmute ring overflow count %ld", overflow);
-            }
-        }
     }
 
     const ULONGLONG now = GetTickCount64();
     anyID batch[TS3_UNMUTE_BATCH_MAX];
     int batchCount = 0;
 
-    const long writeIdx = InterlockedCompareExchange(&g_unmuteRingWrite, 0, 0);
-    long readIdx = InterlockedCompareExchange(&g_unmuteRingRead, 0, 0);
-
-    while (readIdx < writeIdx && batchCount < TS3_UNMUTE_BATCH_MAX - 1) {
-        const anyID id = g_unmuteRing[readIdx % TS3_UNMUTE_RING_SIZE];
-        readIdx++;
-        if (!ts3_client_id_valid(id)) {
-            continue;
-        }
-        if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 0) == 0) {
-            continue;
+    /* Find the flagged clients by scanning the per-client flags (4095 aligned
+       volatile reads — microseconds, only while the counter is non-zero). A
+       client still inside the re-arm window is skipped without taking a batch
+       slot, so a full batch can never starve the others. */
+    for (int id = 1; id < TS3_MAX_CLIENT_ID && batchCount < TS3_UNMUTE_BATCH_MAX - 1; id++) {
+        if (g_pendingUnmute[id] == 0) {
+            continue; /* a flag set right now is simply found by the next flush */
         }
         if (g_clientUnlocked[id] && now - g_lastUnmuteMs[id] < TS3_UNMUTE_REARM_MS) {
             continue;
         }
-        batch[batchCount++] = id;
-    }
-    InterlockedExchange(&g_unmuteRingRead, readIdx);
-
-    /* Ring may have wrapped while flags remain — scan ring slots once. */
-    if (batchCount == 0
-        && InterlockedCompareExchange(&g_pendingUnmuteCount, 0, 0) > 0) {
-        for (int i = 0; i < TS3_UNMUTE_RING_SIZE && batchCount < TS3_UNMUTE_BATCH_MAX - 1; i++) {
-            const anyID id = g_unmuteRing[i];
-            if (!ts3_client_id_valid(id)) {
-                continue;
-            }
-            if (InterlockedCompareExchange(&g_pendingUnmute[id], 0, 0) == 0) {
-                continue;
-            }
-            if (g_clientUnlocked[id] && now - g_lastUnmuteMs[id] < TS3_UNMUTE_REARM_MS) {
-                continue;
-            }
-            int dup = 0;
-            for (int j = 0; j < batchCount; j++) {
-                if (batch[j] == id) {
-                    dup = 1;
-                    break;
-                }
-            }
-            if (!dup) {
-                batch[batchCount++] = id;
-            }
-        }
+        batch[batchCount++] = (anyID)id;
     }
 
     if (batchCount == 0) {
@@ -1480,12 +1438,12 @@ int ts3_proximity_audio_soundproof_muted(unsigned int clientID) {
     if (!ts3_client_id_valid(clientID)) {
         return 0;
     }
-    float gain, panL, panR, cutoffHz, drr;
-    int soundproof, reverbSlot;
-    if (!snap_read((anyID)clientID, &gain, &panL, &panR, &cutoffHz, &drr, &soundproof, &reverbSlot, NULL)) {
+    AudioTarget t;
+    /* INVALID and BUSY both mean "no stable soundproof verdict" -> 0 (as before). */
+    if (audio_snap_read(&g_snap[clientID], &t) != AUDIO_SNAP_OK) {
         return 0;
     }
-    return soundproof ? 1 : 0;
+    return t.soundproof ? 1 : 0;
 }
 
 static int audio_client_has_reset_state(anyID clientID) {
@@ -1529,14 +1487,6 @@ void ts3_audio_reset(void) {
     }
     InterlockedExchange(&g_pendingUnmuteCount, 0);
     memset(g_hearInRange, 0, sizeof(g_hearInRange)); /* §8 latch: all out of range */
-    while (InterlockedCompareExchange(&g_unmuteRingPushLock, 1, 0) != 0) {
-        YieldProcessor();
-    }
-    InterlockedExchange(&g_unmuteRingWrite, 0);
-    InterlockedExchange(&g_unmuteRingRead, 0);
-    InterlockedExchange(&g_unmuteRingOverflow, 0);
-    memset(g_unmuteRing, 0, sizeof(g_unmuteRing));
-    InterlockedExchange(&g_unmuteRingPushLock, 0);
     InterlockedExchange(&g_recomputeDirtyCount, 0);
     InterlockedExchange(&g_recomputeAllPending, 0);
     InterlockedExchange(&g_lastLocalSeq, -1);

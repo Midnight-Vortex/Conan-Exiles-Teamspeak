@@ -42,6 +42,24 @@ Reine Funktionen auf einem vom Aufrufer gehaltenen `HrtfState`. Keine Globals
 gehoert genau einem Thread — im Plugin dem TS-Audio-Thread
 (`ts3_audio_process_postprocess`).
 
+## Im Plugin: Reset nach Pause, Richtung bei BUSY (084)
+
+`ts3_audio_process_postprocess` (Audio-Thread) setzt den `HrtfState` eines Sprechers
+mit `hrtf_reset` zurueck, wenn
+
+- er zuvor nicht gerendert wurde (`g_hrtfActive == 0`),
+- seine Generation gebumpt wurde (ID weg/wiederverwendet), oder
+- zwischen zwei Bloecken **mehr als 200 ms** lagen (`render_gap_exceeded`,
+  `g_hrtfLastMs`). TeamSpeak ruft die Funktion waehrend einer Sprechpause nicht auf,
+  die Filter-/Echo-Verlaeufe waeren sonst beim naechsten Satz veraltet (alter Satz
+  wuerde "nachklingen").
+
+Die Richtung kommt aus einem Seqlock (`audio_dir_read`, dreiwertig). Ist der Schreiber
+gerade mitten im Veroeffentlichen (`BUSY`), nimmt der Audio-Thread die zuletzt gute
+Richtung (`g_dirCache`) und laesst den HRTF-Zustand in Ruhe; ohne Cache wird HRTF
+fuer diesen einen Block uebersprungen. Nur eine **ungueltige** Richtung schaltet HRTF
+ab. `hrtf.c` selbst ist unveraendert.
+
 ## Grenzen
 
 - Generischer Kopf (keine persoenliche HRTF). Wirkt am besten mit Kopfhoerern.

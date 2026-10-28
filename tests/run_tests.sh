@@ -139,6 +139,32 @@ run_suite talk_state_test \
     src/core/proximity/player_table.c \
     src/core/proximity/proximity_math.c
 
+# 084 — audio helpers (cave bit-identity, lowpass, seqlock tri-state, voice cap, render helpers)
+run_suite audio_fx_test \
+    -Isdk/include \
+    tests/audio_fx_test.c
+
+# 084 — voice cap property test against the real voice_modes.c
+run_suite voice_cap_test \
+    -Itests/support/win32_shim \
+    tests/voice_cap_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/voice/voice_modes.c \
+    src/core/proximity/zone_resolve.c
+
+# 084 — REAL ts3_proximity_audio.c on the host (PCM hot path, recompute, unmute, expiry)
+run_suite audio_pcm_test \
+    -Isdk/include \
+    -Itests/support/audio_shim -Itests/support/win32_shim \
+    tests/audio_pcm_test.c \
+    tests/support/win32_shim/win32_shim.c \
+    src/core/proximity/hrtf.c \
+    src/core/proximity/player_table.c \
+    src/core/proximity/proximity_math.c \
+    src/core/proximity/zone_resolve.c \
+    src/core/proximity/occlusion.c \
+    src/core/proximity/occlusion_params.c
+
 # 082 — CEVER version table (tombstones) + move return codes. Header-only, needs -Isdk/include for anyID.
 run_suite adapter_lifecycle_test \
     -Isdk/include \

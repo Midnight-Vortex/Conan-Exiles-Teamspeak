@@ -40,6 +40,11 @@ int player_table_put(unsigned short clientID, const char* name,
     const unsigned long long now = GetTickCount64();
     int slot = -1;
     int freeSlot = -1;
+    /* Eviction log data, collected under the lock and written AFTER it (the
+       log is file I/O — review fix 084 #11: never inside g_tableLock). */
+    int logEviction = 0;
+    long evictionNumber = 0;
+    unsigned short droppedClient = 0;
 
     EnterCriticalSection(&g_tableLock);
     for (int i = 0; i < PLAYER_TABLE_MAX_PLAYERS; i++) {
@@ -77,19 +82,26 @@ int player_table_put(unsigned short clientID, const char* name,
 
     if (slot >= 0) {
         PlayerEntry* e = &g_players[slot];
+        /* The slot belongs to a NEW occupant when it was free, held another
+           client, or held this client's entry after it had expired. */
+        const int slotReused = !e->valid || e->clientID != clientID
+            || !entry_is_fresh(e, now);
         if (evictedClientID && e->valid && e->clientID != clientID) {
             *evictedClientID = e->clientID;
             const long evictions = InterlockedIncrement(&g_evictionCount);
             if (evictions == 1 || (evictions % 16) == 0) {
-                log_debug("PLAYER-TABLE: LRU eviction #%ld (dropped client %u for %u)",
-                    evictions, (unsigned)e->clientID, (unsigned)clientID);
+                logEviction = 1;
+                evictionNumber = evictions;
+                droppedClient = e->clientID;
             }
         }
         e->clientID = clientID;
         if (name && name[0]) {
             strncpy_s(e->name, PLAYER_NAME_LEN, name, _TRUNCATE);
         }
-        else if (!e->valid) {
+        else if (slotReused) {
+            /* 084 #11: an empty new name must not keep the previous occupant's
+               name; only an in-place update of a fresh entry keeps its name. */
             e->name[0] = '\0';
         }
         e->x = x;
@@ -101,6 +113,10 @@ int player_table_put(unsigned short clientID, const char* name,
     }
     LeaveCriticalSection(&g_tableLock);
 
+    if (logEviction) {
+        log_debug("PLAYER-TABLE: LRU eviction #%ld (dropped client %u for %u)",
+            evictionNumber, (unsigned)droppedClient, (unsigned)clientID);
+    }
     return slot >= 0;
 }
 
