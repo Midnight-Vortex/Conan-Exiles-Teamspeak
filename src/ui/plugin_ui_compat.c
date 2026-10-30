@@ -95,6 +95,7 @@ HWND hConfigDialog = NULL;
 HWND hWhisperKeyEdit, hNormalKeyEdit, hShoutKeyEdit, hConfigKeyEdit;
 HWND hWhisperButton, hNormalButton, hShoutButton, hConfigButton;
 HWND hEnableDistanceMutingCheck, hEnableAutomaticChannelChangeCheck;
+HWND hRangeUnitCheck = NULL;
 HWND hDistanceWhisperEdit, hDistanceNormalEdit, hDistanceShoutEdit;
 HWND hSavedPathEdit, hSavedPathButton, hSavedPathBg;
 HBITMAP hPathBoxBitmap = NULL;
@@ -235,6 +236,7 @@ double hubMaximumShout = 50.0;
 BOOL hubForceDistanceBasedMuting = TRUE;
 BOOL hubForceAutomaticChannelSwitching = TRUE;
 BOOL hubNicknameRandomizer = TRUE;
+BOOL hubForceRangesInFoundations = FALSE;
 
 BOOL isConnectedToServer = FALSE;
 BOOL hubDescriptionAvailable = FALSE;
@@ -457,6 +459,9 @@ static void ui_sync_live_state_on_callback_thread(void) {
         currentPlayerRaceIndex = -1;
         currentListenAddDistance = 0.0f;
     }
+    /* 091: the Root force for the display unit. Lock-free getter, 0 without a
+       profile - so leaving the server hands the choice back to the player. */
+    hubForceRangesInFoundations = server_profile_force_ranges_in_foundations() ? TRUE : FALSE;
     currentVoiceMode = (uint8_t)voice_mode_get_current();
 }
 

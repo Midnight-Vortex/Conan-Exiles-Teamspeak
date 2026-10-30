@@ -6,7 +6,9 @@ Das F10-Einstellungsfenster des Plugins. Seit V8.7 (siehe
 (`doku/aenderungen/031-v8-12-g-config-f10.md`) arbeitet der Dialog auf einer
 **Arbeitskopie** von `g_config`. Die Review-Fixes aus
 `doku/aenderungen/087-review-fixes-f10-dialog.md` (Stand dieses Dokuments) haben
-Lecks, Speichern pro Tastendruck, Eingabepruefung und mehr behoben.
+Lecks, Speichern pro Tastendruck, Eingabepruefung und mehr behoben. Seit
+`doku/aenderungen/091-reichweite-in-fundamenten.md` kann der Dialog die Reichweiten
+wahlweise in **Conan-Fundamenten** (1 = 2,56 m) statt Metern anzeigen.
 
 **Thread-Vertrag:** Alle Dateien hier laufen auf dem **Einstellungs-UI-Thread**
 (eigene `GetMessage`-Schleife in `showConfigInterface`, gestartet von
@@ -21,7 +23,7 @@ Den Dialog-Guard (`config_dialog_try_open` / `config_dialog_close`) gibt **nur**
 
 | Datei | Zustaendigkeit |
 |-------|----------------|
-| `ui_config_internal.h` | Gemeinsame Deklarationen der Split-Dateien: geteilte GDI-Globals (`g_hHudComboBrush`, `g_configDialogDestroying`), die datei-uebergreifenden Helfer, die 7 ausgelagerten `ConfigDialogProc`-Nachrichten-Handler, die **eindeutigen IDs der Checkbox-Labels** (`IDC_LABEL_*`, 2010-2013) und die Bild-Cache-Funktionen. |
+| `ui_config_internal.h` | Gemeinsame Deklarationen der Split-Dateien: geteilte GDI-Globals (`g_hHudComboBrush`, `g_configDialogDestroying`), die datei-uebergreifenden Helfer, die 7 ausgelagerten `ConfigDialogProc`-Nachrichten-Handler, die **eindeutigen IDs der Checkbox-Labels** (`IDC_LABEL_*`, 2010-2014; 2014 = "Show ranges in foundations", dessen Text das Label selbst zeichnet), die Checkbox-ID `IDC_CHECK_RANGEUNIT` (205) und die Bild-Cache-Funktionen. |
 | `ui_config_dialog.c` | **Dialog-Huelle:** `ConfigDialogProc` als schlanke Nachrichten-Weiche, `ShowCategoryControls` (Tab-Wechsel Patch/Advanced/Presets), `ApplyFontToControl`, `showConfigInterface` (Huelle: `ui_cfg_dialog_begin` -> `showConfigInterfaceRun` -> `ui_image_cache_release` -> `ui_cfg_dialog_end`), `showConfigInterfaceRun` (Auto-Find, COM, Fensterklasse, Fenster, Nachrichtenschleife, `UnregisterClassW`), `showPathSelectionDialogThread` (ungenutzt), `forceWindowToForegroundNoMouse`, GDI-Aufraeumen (Schriften, Pinsel) bei `WM_DESTROY`. |
 | `ui_config_controls.c` | **`WM_CREATE`-Rumpf:** legt alle Controls des Dialogs an, setzt die Tasten-Aufnahme zurueck, laedt die Kategorie-Hintergruende und loest den angezeigten Pfad auf; dazu die HUD-Theme/Position/Groesse-Combo-Helfer (`ui_populate_*`, `ui_sync_*`, `ui_read_*`). |
 | `ui_config_command.c` | **`WM_COMMAND`-Handler** `ui_config_on_command`: Kategorie-Tabs, Tasten-Aufnahme starten, Checkboxen, HUD-Combos (Live-Vorschau), Save (Patch-Tab und Advanced-Tab), Preset Load/Rename, Distanzfelder (`EN_CHANGE`). Dazu `ui_collect_distances_for_save` (Distanzfelder lesen **und pruefen**). |
@@ -30,9 +32,10 @@ Den Dialog-Guard (`config_dialog_try_open` / `config_dialog_close`) gibt **nur**
 | `ui_path_steam.c` | **Pfad + Steam:** `browseSavedPath`/`browseFolderModern` (Ordner-Browser, lehnt zu lange Pfade mit Meldung ab), `findConanExilesAutomatic`, `parseSteamLibraryFolders`, `readSteamIDFromRegistry`, `savedExistsInFolder`. |
 | `ui_main.c` | **Rest-Klebstoff:** `loadDefaultSettingsFromConfig`/`saveDefaultSettingsToConfig`, `processKeyCapture` (Tasten-Aufnahme, Timer 1). **Nicht** hier: `ui_config_on_command` — der liegt seit V8.10 in `ui_config_command.c`. |
 | `ui_dynamic.c`, `ui_messages.c` | Dynamische Interface-Updates (Distanzfeld-Eingabe, Server-Grenzen, Zonen-Anzeige) bzw. Status-/Range-Meldungen (`showStatusMessage`). |
-| `../config/ui_config_state.c/.h` | **Arbeitskopie** (`ui_cfg()`), `ui_cfg_dialog_begin/end`, `ui_cfg_commit` (uebernimmt **nur die Dialog-Felder** per `config_modify`), HUD-Live-Vorschau `ui_cfg_hud_preview`, Pfad-Helfer, Legacy-Spiegel. |
+| `../config/ui_config_state.c/.h` | **Arbeitskopie** (`ui_cfg()`), `ui_cfg_dialog_begin/end`, `ui_cfg_commit` (uebernimmt **nur die Dialog-Felder** per `config_modify`), HUD-Live-Vorschau `ui_cfg_hud_preview`, Pfad-Helfer, Legacy-Spiegel; **Anzeige-Einheit der Reichweiten** (091): `ui_ranges_in_foundations`, `ui_ranges_forced_by_server`, `ui_range_unit_refresh`, `ui_range_text`. |
 | `../config/ui_voice_presets.c` | Voice-Presets-Datei (`voice_presets.cfg`: atomar schreiben, validiert lesen), `writeFullConfiguration`, `saveVoiceSettings`, `saveVoicePreset`/`loadVoicePreset`/`renameVoicePreset`. |
-| `../config/ui_config_logic.h` | **Reine Logik** (nur Header, host-testbar, `tests/ui_config_logic_test.c`): `ui_wcs_copy`, `ui_game_folder_fits`, `ui_dist_parse`, `ui_preset_parse_*`, `ui_cfg_merge_*`. |
+| `../config/ui_config_logic.h` | **Reine Logik** (nur Header, host-testbar, `tests/ui_config_logic_test.c`): `ui_wcs_copy`, `ui_game_folder_fits`, `ui_dist_parse`, `ui_dist_parse_display` (091: Save-Lesen in der Anzeige-Einheit, Drift-Schutz), `ui_preset_parse_*`, `ui_cfg_merge_*`. |
+| `../../core/config/range_units.h` | **Reine Umrechnung Meter <-> Fundamente** (091, nur Header, `tests/range_units_test.c`): die eine Konstante `RANGE_FOUNDATION_EDGE_M` (2,56 m), Hub-Grenzen nach innen runden, "hat der Spieler die Zahl geaendert?", Einheiten-Namen. |
 
 ## Nachrichtenfluss (`ConfigDialogProc`)
 
@@ -70,7 +73,7 @@ settings_dialog_thread (key_watcher.c)
 
 | Aktion | Wirkung |
 |---|---|
-| Tippen in ein Distanzfeld, Checkbox, Taste aufnehmen | nur **Arbeitskopie** (+ Anzeige) |
+| Tippen in ein Distanzfeld, Checkbox (auch "Show ranges in foundations"), Taste aufnehmen | nur **Arbeitskopie** (+ Anzeige) |
 | HUD-Combo waehlen | Arbeitskopie **und** `g_config.hud*` (Vorschau, **keine** Datei); Cancel stellt zurueck |
 | **Save Configuration** (Patch- oder Advanced-Tab) | Distanzfelder **pruefen** (leer/ungueltig/ausserhalb Server-Grenzen = Fehlermeldung, nichts wird geschrieben) -> `ui_cfg_commit`: `config_modify` (nur Dialog-Felder) + `config_save` + CEPOS/Audio neu |
 | **Load** eines Presets | Distanzen/Tasten in die Arbeitskopie, danach wie Save ("loaded and saved") |
@@ -79,8 +82,8 @@ settings_dialog_thread (key_watcher.c)
 Die **Dialog-Felder** (nur diese uebernimmt der Commit): `savedPath`,
 `automaticPatchFind`, `distanceWhisper/Normal/Shout`, `whisperKey`, `normalKey`,
 `shoutKey`, `voiceToggleKey`, `configUIKey`, `enableDistanceMuting`,
-`enableAutomaticChannelChange`, `enableVoiceToggle`, `hudTheme`, `hudPosition`,
-`hudSize`. **Nie** vom Dialog geschrieben: `automaticSavedPath` (Pos-Watcher),
+`enableAutomaticChannelChange`, `enableVoiceToggle`, `rangeInFoundations` (091),
+`hudTheme`, `hudPosition`, `hudSize`. **Nie** vom Dialog geschrieben: `automaticSavedPath` (Pos-Watcher),
 `defaultsAppliedServer` (Server-Profil), `enableVoiceOverlay`, `debugMode`,
 `enablePosFile`.
 
@@ -91,9 +94,24 @@ Die **Dialog-Felder** (nur diese uebernimmt der Commit): `savedPath`,
   (`ui_image_cache_release`). Wer ein neues Bild im Zeichencode braucht, holt es
   mit `ui_image_cache_get(ID)` — **nie** selbst `LoadImageW` pro Zeichnen und
   **nie** `DeleteObject` auf das Ergebnis.
-- **Steuerelement-IDs:** 2001-2005 = Tasten-Boxen (Owner-Draw), 2010-2013 =
-  Checkbox-Labels (`IDC_LABEL_*`). IDs im Dialog muessen eindeutig bleiben
-  (`GetDlgItem`).
+- **Steuerelement-IDs:** 2001-2005 = Tasten-Boxen (Owner-Draw), 2010-2014 =
+  Checkbox-Labels (`IDC_LABEL_*`), 200/201/203/204/205 = Checkboxen. IDs im Dialog
+  muessen eindeutig bleiben (`GetDlgItem`).
+- **Checkbox "Show ranges in foundations" (091):** Tab "Plugin Settings", Haken
+  `(330,145,20,20)` ID 205, Label `(355,147,210,20)` ID 2014. Der Text der drei
+  anderen Labels steht im Hintergrundbild (Label-Text leer); dieses Label zeichnet
+  seinen Text **selbst** (weiss, transparent, `ui_config_on_ctlcolorstatic`). Die
+  Ueberschrift im Bild heisst "Voice Range Settings" (das "(meters)" wurde aus
+  `assets/Background_Plugin_Settings.bmp` entfernt). Zustand: `ui_cfg()->rangeInFoundations`
+  (Save speichert, Cancel verwirft); ist `ForceRangesInFoundations=True` aktiv, ist der
+  Haken angehakt + gesperrt, der eigene Wert bleibt unberuehrt.
+- **Reichweiten: gespeichert in Metern, angezeigt in der Anzeige-Einheit (091).**
+  Jede Stelle, die eine Reichweite zeigt oder aus einem Feld liest, geht ueber
+  `ui_range_text` / `range_from_meters` / `ui_dist_parse_display`. Nie einen Feldtext
+  direkt in die Arbeitskopie schreiben (Meter!) und nie den Text eines unveraenderten
+  Feldes zurueckrechnen (Drift: 40 m -> 15,6 F -> 39,936 m). Die Einheit der Felder
+  aendert sich **nur** ueber `ui_range_unit_refresh()` (Haken oder Server-Zwang);
+  danach werden alle Felder neu angezeigt (`ui_range_unit_changed`).
 - **Pfadlaengen:** Kein `wcscpy_s`/`wcscat_s` auf `MAX_PATH`-Puffer mit
   Nutzer-/Dateiinhalt (bricht den ganzen TS-Prozess ab). `ui_wcs_copy` /
   `ui_game_folder_fits` benutzen.

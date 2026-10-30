@@ -1,5 +1,6 @@
 #include "core/voice/voice_modes.h"
 #include "core/config/config.h"
+#include "core/config/range_units.h"
 #include "core/mod_file/pos_file.h"
 #include "core/proximity/zone_resolve.h"
 #include "core/util/log.h"
@@ -103,15 +104,33 @@ static int voice_key_pressed_configured(int configuredVk) {
     }
 }
 
+/* 091: unit of the chat line = the player's own choice (aligned int read of
+   g_config, fine from any thread) OR the Root force ForceRangesInFoundations,
+   which arrives through the same profile hook the distance clamp uses. */
+static int voice_mode_chat_in_foundations(void) {
+    VoiceModeProfile prof;
+    const int hubActive = voice_hook_get_profile(&prof);
+    return range_effective_unit(g_config.rangeInFoundations,
+        hubActive && prof.hub.forceRangesInFoundations);
+}
+
 static void voice_mode_notify_mode(VoiceMode mode) {
     static const char* const modeNames[] = { "Whisper", "Normal", "Shout" };
-    char message[128];
-    snprintf(message, sizeof(message),
-        "[Conan Exiles] Voice mode: %s - Distance: %.1f m",
-        modeNames[mode >= 0 && mode <= 2 ? mode : 1],
-        voice_mode_get_distance(mode));
-    log_write("VOICE: mode=%s distance=%.1f",
-        modeNames[mode >= 0 && mode <= 2 ? mode : 1], voice_mode_get_distance(mode));
+    char message[160];
+    const float meters = voice_mode_get_distance(mode);
+    const char* const modeName = modeNames[mode >= 0 && mode <= 2 ? mode : 1];
+    if (voice_mode_chat_in_foundations()) {
+        /* "... Distance: 5.9 foundations (15.0 m)" - the meters stay visible. */
+        snprintf(message, sizeof(message),
+            "[Conan Exiles] Voice mode: %s - Distance: %.1f %s (%.1f m)",
+            modeName, range_from_meters(meters, 1), range_unit_name_a(1), meters);
+    }
+    else {
+        snprintf(message, sizeof(message),
+            "[Conan Exiles] Voice mode: %s - Distance: %.1f m",
+            modeName, meters);
+    }
+    log_write("VOICE: mode=%s distance=%.1f", modeName, meters);
     voice_hook_notify_chat(message);
 }
 

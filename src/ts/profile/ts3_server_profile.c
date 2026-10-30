@@ -1,6 +1,7 @@
 #include "ts/profile/ts3_server_profile.h"
 #include "ts/adapter/ts3_adapter.h"
 #include "core/config/config.h"
+#include "core/config/range_units.h"
 #include "core/hub/mod_password.h"
 #include "core/proximity/occlusion.h"
 #include "core/voice/voice_modes.h"
@@ -58,6 +59,7 @@ static volatile long g_maxVolumeBits = PROFILE_BITS_FLOAT_1_0;
 static volatile long g_filterIntensityBits = PROFILE_BITS_FLOAT_100_0;
 static volatile long g_forceAutoChannel = 0;
 static volatile long g_forceSpeakersOn = 0;
+static volatile long g_forceRangesInFoundations = 0; /* 091 */
 static volatile long g_forceDistanceMuting = 0;
 static volatile long g_nicknameRandomizer = 1; /* legacy default without profile */
 static volatile long g_realisticAudio = 0;
@@ -103,6 +105,7 @@ static void profile_publish_scalars(const HubSettings* settings) {
         settings ? profile_float_bits(settings->filterIntensity) : PROFILE_BITS_FLOAT_100_0);
     InterlockedExchange(&g_forceAutoChannel, settings ? settings->forceAutoChannelSwitch : 0);
     InterlockedExchange(&g_forceSpeakersOn, settings ? settings->forceSpeakersOn : 0);
+    InterlockedExchange(&g_forceRangesInFoundations, settings ? settings->forceRangesInFoundations : 0);
     InterlockedExchange(&g_forceDistanceMuting, settings ? settings->forceDistanceMuting : 0);
     InterlockedExchange(&g_nicknameRandomizer, settings ? settings->nicknameRandomizer : 1);
     InterlockedExchange(&g_realisticAudio, settings ? settings->realisticAudio : 0);
@@ -220,6 +223,23 @@ static void profile_apply_defaults_once(const HubSettings* settings) {
 
 /* ---- join confirmation (chat, once per connection) -------------------------- */
 
+/* "SteamID .. recognized - race '..' (listen bonus +..)" chat line.  The bonus
+   is stored and used in meters; in foundation mode (091) the line also shows it
+   in foundations, same style as the voice-mode line: "+1.0 foundations (2.6 m)". */
+static void profile_listen_bonus_line(char* out, size_t cap, unsigned long long steamID,
+    const char* raceName, float bonusMeters, int inFoundations) {
+    if (inFoundations) {
+        snprintf(out, cap,
+            "[Conan Exiles] SteamID %llu recognized - race '%s' (listen bonus +%.1f %s (%.1f m))",
+            steamID, raceName, range_from_meters(bonusMeters, 1), range_unit_name_a(1), bonusMeters);
+    }
+    else {
+        snprintf(out, cap,
+            "[Conan Exiles] SteamID %llu recognized - race '%s' (listen bonus +%.1f m)",
+            steamID, raceName, bonusMeters);
+    }
+}
+
 static void profile_announce(const HubSettings* settings, int raceIndex) {
     if (g_announced || !ts3_thread_is_callback()) {
         return;
@@ -249,10 +269,10 @@ static void profile_announce(const HubSettings* settings, int raceIndex) {
     const unsigned long long steamID = server_profile_get_local_steam_id();
     if (steamID != 0ULL) {
         if (raceIndex >= 0) {
-            snprintf(line, sizeof(line),
-                "[Conan Exiles] SteamID %llu recognized - race '%s' (listen bonus +%.1f m)",
-                steamID, settings->races[raceIndex].name,
-                settings->races[raceIndex].listenAddDistance);
+            /* Own choice (g_config scalar read) OR the Root force (091). */
+            profile_listen_bonus_line(line, sizeof(line), steamID,
+                settings->races[raceIndex].name, settings->races[raceIndex].listenAddDistance,
+                range_effective_unit(g_config.rangeInFoundations, settings->forceRangesInFoundations));
         }
         else {
             snprintf(line, sizeof(line),
@@ -429,6 +449,10 @@ int server_profile_force_distance_muting(void) {
 
 int server_profile_force_speakers_on(void) {
     return InterlockedCompareExchange(&g_forceSpeakersOn, 0, 0) != 0;
+}
+
+int server_profile_force_ranges_in_foundations(void) {
+    return InterlockedCompareExchange(&g_forceRangesInFoundations, 0, 0) != 0;
 }
 
 int server_profile_get_nickname_randomizer(void) {

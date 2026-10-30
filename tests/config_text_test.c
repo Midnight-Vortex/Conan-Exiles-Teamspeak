@@ -66,6 +66,46 @@ static void test_numbers(void) {
     CHECK(c.whisperKey == 97 && c.normalKey == 98 && c.hudTheme == 11, "out-of-range ints -> default / clamp");
 }
 
+static void test_range_unit_key(void) {
+    printf("[1b] ShowRangesInFoundations (091): bool key, default off, 0/1 after clamp\n");
+    PluginConfig c;
+
+    load(&c, L"DistanceNormal=13.0\n");
+    CHECK(c.rangeInFoundations == 0, "absent key -> meters (default off)");
+    load(&c, L"ShowRangesInFoundations=true\n");
+    CHECK(c.rangeInFoundations == 1, "true -> foundations");
+    load(&c, L"ShowRangesInFoundations=false\n");
+    CHECK(c.rangeInFoundations == 0, "false -> meters");
+    load(&c, L"showrangesinfoundations = TRUE\r\n");
+    CHECK(c.rangeInFoundations == 1, "key and value are case-insensitive, spaces and CRLF are fine");
+    load(&c, L"ShowRangesInFoundations=1\n");
+    CHECK(c.rangeInFoundations == 1, "1 -> foundations");
+    load(&c, L"ShowRangesInFoundations=0\n");
+    CHECK(c.rangeInFoundations == 0, "0 -> meters");
+    load(&c, L"ShowRangesInFoundations=yes\n");
+    CHECK(c.rangeInFoundations == 0, "anything that is not true/1 -> meters (same rule as every bool)");
+
+    /* the key does not disturb its neighbours */
+    load(&c, L"DistanceShout=26.0\nShowRangesInFoundations=true\nWhisperKey=100\n");
+    CHECK(c.rangeInFoundations == 1 && c.distanceShout == 26.0f && c.whisperKey == 100,
+        "neighbouring keys still parsed");
+    /* stored distances are meters whatever the unit */
+    load(&c, L"ShowRangesInFoundations=true\nDistanceNormal=15.4\n");
+    CHECK(c.distanceNormal == 15.4f, "distances are meters even in foundation mode");
+
+    /* clamp normalises to 0/1 (a bool field must not carry 7 or -3 around) */
+    defaults(&c);
+    c.rangeInFoundations = 7;
+    cfg_clamp_values(&c);
+    CHECK(c.rangeInFoundations == 1, "clamp: 7 -> 1");
+    c.rangeInFoundations = -3;
+    cfg_clamp_values(&c);
+    CHECK(c.rangeInFoundations == 1, "clamp: -3 -> 1");
+    c.rangeInFoundations = 0;
+    cfg_clamp_values(&c);
+    CHECK(c.rangeInFoundations == 0, "clamp: 0 stays 0");
+}
+
 static void test_clamp_nonfinite(void) {
     printf("[2] clamp: NaN / Inf distances\n");
     PluginConfig c;
@@ -201,6 +241,7 @@ static void test_num_parse(void) {
 int main(void) {
     printf("config_text_test\n");
     test_numbers();
+    test_range_unit_key();
     test_clamp_nonfinite();
     test_lines_and_strings();
     test_utf8();

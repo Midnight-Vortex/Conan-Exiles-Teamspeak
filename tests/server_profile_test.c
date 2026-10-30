@@ -270,6 +270,16 @@ static const char* DESC_DEFAULTS =
     "DefaultDistanceNormal=14\n"
     "DefaultDistanceShout=44\n";
 
+/* 091: ranges written in foundations; the force flag stands after them. */
+static const char* DESC_FOUNDATIONS =
+    "[GLOBAL]\n"
+    "MinimumNormal=6\n"
+    "MaximumNormal=6\n"
+    "ForceRangesInFoundations=True\n"
+    "[RACE]\n"
+    "Race=Wolf\n"
+    "listenAddDistance=4\n";
+
 static void reset_world(void) {
     memset(g_channels, 0, sizeof(g_channels));
     g_channelCount = 0;
@@ -590,6 +600,45 @@ static void test_concurrent_readers(void) {
     CHECK(g_readerLoops > 0, "reader thread ran");
 }
 
+static void test_force_ranges(void) {
+    printf("[9] ForceRangesInFoundations (091): lock-free getter, meters in the profile, chat line\n");
+    reset_world();
+
+    CHECK(server_profile_force_ranges_in_foundations() == 0, "no profile: not forced");
+
+    add_channel(1, "Root", 0, DESC_PLAIN);
+    CHECK(load_profile(1) == 1 && server_profile_force_ranges_in_foundations() == 0,
+        "profile without the key: not forced");
+
+    reset_world();
+    add_channel(1, "Root", 0, DESC_FOUNDATIONS);
+    CHECK(load_profile(1) == 1, "profile with the key applied");
+    CHECK(server_profile_force_ranges_in_foundations() == 1, "getter: forced while the profile is active");
+
+    HubSettings copy;
+    CHECK(server_profile_get(&copy) == 1 && copy.forceRangesInFoundations == 1, "full copy carries the flag");
+    CHECK(feq(copy.minNormal, 15.36f) && feq(copy.maxNormal, 15.36f),
+        "the profile holds METERS: 6 F -> 15.36 m (audio and clamps never see foundations)");
+    CHECK(copy.raceCount == 1 && feq(copy.races[0].listenAddDistance, 10.24f),
+        "race listen bonus 4 F -> 10.24 m");
+
+    server_profile_reset();
+    CHECK(server_profile_force_ranges_in_foundations() == 0,
+        "reset (disconnect): not forced any more - the player's own choice applies again");
+    CHECK(g_config.rangeInFoundations == 0, "the force was never written into the player's own setting");
+
+    /* the listen-bonus chat line (profile_announce): meters unchanged, foundation mode adds F */
+    char line[256];
+    profile_listen_bonus_line(line, sizeof(line), 76561198063092371ULL, "Wolf", 2.0f, 0);
+    CHECK(strcmp(line, "[Conan Exiles] SteamID 76561198063092371 recognized - race 'Wolf' (listen bonus +2.0 m)") == 0,
+        "meter mode: line exactly as before");
+    profile_listen_bonus_line(line, sizeof(line), 76561198063092371ULL, "Wolf", 2.0f, 1);
+    CHECK(strcmp(line, "[Conan Exiles] SteamID 76561198063092371 recognized - race 'Wolf' (listen bonus +0.8 foundations (2.0 m))") == 0,
+        "foundation mode: +0.8 foundations (2.0 m)");
+    profile_listen_bonus_line(line, sizeof(line), 1ULL, "Faun", 10.24f, 1);
+    CHECK(strstr(line, "(listen bonus +4.0 foundations (10.2 m))") != NULL, "10.24 m -> +4.0 foundations (10.2 m)");
+}
+
 int main(void) {
     test_scalar_getters();
     test_password_wipe();
@@ -599,6 +648,7 @@ int main(void) {
     test_root_recreated();
     test_channel_cap();
     test_concurrent_readers();
+    test_force_ranges();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

@@ -5,7 +5,9 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #endif
+#include "core/config/range_units.h"
 #include "core/proximity/proximity_math.h"
+#include "ui/config/ui_config_state.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -389,6 +391,9 @@ LRESULT CALLBACK PresetSaveDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             }
         }
 
+        // 091: presets are stored in meters; the distances are shown in the display unit.
+        const int presetInFoundations = ui_ranges_in_foundations();
+
         for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
             wchar_t buttonText[128];
             if (voicePresets[i].isUsed) {
@@ -397,9 +402,9 @@ LRESULT CALLBACK PresetSaveDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 mbstowcs_s(&converted, wName, PRESET_NAME_MAX_LENGTH, voicePresets[i].name, _TRUNCATE);
                 swprintf(buttonText, 128, L"[%d] %s (%.1f / %.1f / %.1f)",
                     i + 1, wName,
-                    voicePresets[i].whisperDistance,
-                    voicePresets[i].normalDistance,
-                    voicePresets[i].shoutDistance);
+                    range_from_meters(voicePresets[i].whisperDistance, presetInFoundations),
+                    range_from_meters(voicePresets[i].normalDistance, presetInFoundations),
+                    range_from_meters(voicePresets[i].shoutDistance, presetInFoundations));
             }
             else {
                 swprintf(buttonText, 128, L"[%d] Empty Slot", i + 1);
@@ -582,6 +587,10 @@ void updatePresetLabels(void) {
     if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
     if (currentCategory != 3) return;
 
+    // 091: presets are stored in meters; the list shows the display unit ("m" / "fnd.").
+    const int inFoundations = ui_ranges_in_foundations();
+    const wchar_t* unit = range_unit_short_w(inFoundations);
+
     for (int i = 0; i < MAX_VOICE_PRESETS; i++) {
         if (hPresetLabels[i] && IsWindow(hPresetLabels[i])) {
             wchar_t labelText[256];
@@ -591,11 +600,11 @@ void updatePresetLabels(void) {
 
             if (voicePresets[i].isUsed) {
                 // ✅ FORMAT SANS CROCHETS
-                swprintf(labelText, 256, L"%d %s - W:%.1f N:%.1f S:%.1f m",
+                swprintf(labelText, 256, L"%d %s - W:%.1f N:%.1f S:%.1f %ls",
                     i + 1, wName,
-                    voicePresets[i].whisperDistance,
-                    voicePresets[i].normalDistance,
-                    voicePresets[i].shoutDistance);
+                    range_from_meters(voicePresets[i].whisperDistance, inFoundations),
+                    range_from_meters(voicePresets[i].normalDistance, inFoundations),
+                    range_from_meters(voicePresets[i].shoutDistance, inFoundations), unit);
             }
             else {
                 swprintf(labelText, 256, L"%d %s (Empty)", i + 1, wName);
@@ -711,11 +720,13 @@ void createPresetsCategory(void) {
 
         if (voicePresets[i].isUsed) {
             // ✅ FORMAT CORRIGÉ : Pas d'emoji microphone
-            swprintf(labelText, 256, L"[%d] %s - W:%.1f N:%.1f S:%.1f m",
+            // 091: stored in meters, shown in the display unit ("m" / "fnd.")
+            swprintf(labelText, 256, L"[%d] %s - W:%.1f N:%.1f S:%.1f %ls",
                 i + 1, wName,
-                voicePresets[i].whisperDistance,
-                voicePresets[i].normalDistance,
-                voicePresets[i].shoutDistance);
+                range_from_meters(voicePresets[i].whisperDistance, ui_ranges_in_foundations()),
+                range_from_meters(voicePresets[i].normalDistance, ui_ranges_in_foundations()),
+                range_from_meters(voicePresets[i].shoutDistance, ui_ranges_in_foundations()),
+                range_unit_short_w(ui_ranges_in_foundations()));
         }
         else {
             swprintf(labelText, 256, L"[%d] %s (Empty)", i + 1, wName);
@@ -723,7 +734,7 @@ void createPresetsCategory(void) {
 
         hPresetLabels[i] = CreateWindowW(L"STATIC", labelText,
             WS_CHILD | SS_LEFT | SS_OWNERDRAW,
-            40, yPos + 5, 300, 25, hConfigDialog, (HMENU)(INT_PTR)(850 + i), NULL, NULL);
+            40, yPos + 5, 325, 25, hConfigDialog, (HMENU)(INT_PTR)(850 + i), NULL, NULL); // 091: 300 -> 325 (up to the Load button at x=370): room for "fnd."
         ApplyFontToControl(hPresetLabels[i], hFont);
 
         // ✅ Activer le custom draw

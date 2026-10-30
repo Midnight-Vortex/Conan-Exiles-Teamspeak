@@ -96,8 +96,16 @@ ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 | `ui_config_logic_test` | `ui_config_logic.h` | Pfad-Kopien, Distanz-Parser, `voice_presets.cfg`-Pruefung, Dialog-eigene Felder (087) |
 | `ui_chat_ring_test` | `ui_chat_ring.h` + `ui_spin_lock.h` | Mehrere Erzeuger gleichzeitig (pthreads, TSan sauber) (088) |
 | `ui_worker_slot_test` | `ui_worker_slot.h` | Overlay-Monitor wird genau einmal gejoint, auch bei Start/Stop-Rennen (088) |
+| `range_units_test` | `range_units.h` | Reichweiten in Conan-Fundamenten (1 = 2,56 m): Umrechnung, Hub-Grenzen nach innen runden, "Zahl veraendert?"-Test, Einheiten-Namen (091) |
+
+**091 (Reichweite in Fundamenten)** erweitert ausserdem `config_text_test`
+(`ShowRangesInFoundations`), `ui_config_logic_test` (`ui_dist_parse_display`, kein Drift),
+`hub_parser_test` (`ForceRangesInFoundations` rechnet die Root-Werte in Meter um),
+`server_profile_test` (Getter, Hoerbonus-Zeile) und `voice_modes_test` (Chat-Zeile).
 
 Stand nach den Review-Fixes: **34 Suiten**, alle gruen; MinGW-DLL-Build ohne Warnungen.
+Stand nach 091: **35 Suiten** (+ `range_units_test`), +164 Pruefungen, weiter alle gruen,
+MinGW-Build ohne Warnungen.
 
 **Warum `-ffp-contract=off` in `tests/run_tests.sh`?** Auf einem Prozessor mit FMA
 („fused multiply-add“) fasst gcc `a*b + c` standardmaessig zu **einer** Instruktion zusammen,

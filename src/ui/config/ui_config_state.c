@@ -1,6 +1,7 @@
 #include "ui/config/ui_config_state.h"
 
 #include "ui/config/ui_config_logic.h"
+#include "core/config/range_units.h"
 #include "plugin_internal.h"
 #include "ui/plugin_ui_compat.h"
 #include "core/util/log.h"
@@ -22,6 +23,11 @@ static volatile long s_f10DialogActive = 0;
 static int s_hudSavedTheme = 0;
 static int s_hudSavedPosition = 0;
 static int s_hudSavedSize = 0;
+
+/* 091: unit the dialog's distance fields are rendered in (1 = foundations).
+   Changes only through ui_range_unit_refresh(); the texts of the fields and the
+   code that parses them back therefore always agree. UI thread only. */
+static int s_dialogUnit = 0;
 
 typedef struct UiHudValues {
     int theme;
@@ -74,6 +80,7 @@ static void ui_cfg_hud_mutator(PluginConfig* g, void* ctx) {
 
 void ui_cfg_dialog_begin(void) {
     config_copy(&s_f10Cfg);
+    s_dialogUnit = range_effective_unit(s_f10Cfg.rangeInFoundations, ui_ranges_forced_by_server());
     s_hudSavedTheme = s_f10Cfg.hudTheme;
     s_hudSavedPosition = s_f10Cfg.hudPosition;
     s_hudSavedSize = s_f10Cfg.hudSize;
@@ -115,6 +122,27 @@ void ui_cfg_hud_preview(unsigned parts) {
     if (parts & UI_HUD_PART_SIZE) {
         voice_overlay_refresh_size();
     }
+}
+
+int ui_ranges_forced_by_server(void) {
+    return (hubDescriptionAvailable && hubForceRangesInFoundations) ? 1 : 0;
+}
+
+int ui_ranges_in_foundations(void) {
+    return s_dialogUnit;
+}
+
+int ui_range_unit_refresh(void) {
+    const int unit = range_effective_unit(ui_cfg()->rangeInFoundations, ui_ranges_forced_by_server());
+    if (unit == s_dialogUnit) {
+        return 0;
+    }
+    s_dialogUnit = unit;
+    return 1;
+}
+
+void ui_range_text(wchar_t* out, size_t cap, float meters) {
+    swprintf(out, cap, L"%.1f", (double)range_from_meters(meters, ui_ranges_in_foundations()));
 }
 
 void ui_cfg_get_active_saved_path(wchar_t* out, size_t outLen) {

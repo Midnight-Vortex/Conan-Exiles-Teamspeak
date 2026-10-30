@@ -16,6 +16,7 @@
  */
 
 #include "core/config/config.h"
+#include "core/config/range_units.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -150,6 +151,54 @@ static inline UiDistStatus ui_dist_parse(const wchar_t* text, int limitsActive,
     }
     if (out) {
         *out = fv;
+    }
+    return UI_DIST_OK;
+}
+
+/* ---- 091: a distance edit read in the DISPLAY unit -------------------------
+   The edits show meters or foundations (core/config/range_units.h); the working
+   copy and everything behind it stay in meters. This is the Save-time read of
+   one edit:
+
+   - The text is parsed strictly (ui_dist_parse) and must be a number > 0.
+   - NO DRIFT: when the text still reads exactly like the stored value shown in
+     this unit (the player did not change the field), the stored meters are kept
+     bit for bit. Otherwise 40 m is shown as "15.6" foundations and pressing Save
+     would turn it into 15.6 * 2.56 = 39.936 m. Applied in both units.
+   - A changed text is checked against the server limits in the display unit
+     (min rounded up, max rounded down, see range_limit_*_display) and converted
+     to meters. An unchanged value is checked against the limits in meters.
+   *outMeters is written only on UI_DIST_OK. */
+static inline UiDistStatus ui_dist_parse_display(const wchar_t* text, int inFoundations,
+    float storedMeters, int limitsActive, float hubMinMeters, float hubMaxMeters,
+    float* outMeters) {
+    float typed = 0.0f;
+    const UiDistStatus st = ui_dist_parse(text, 0, 0.0f, 0.0f, &typed);
+    if (st != UI_DIST_OK) {
+        return st;
+    }
+
+    if (range_display_unchanged(storedMeters, inFoundations, typed)) {
+        if (limitsActive
+            && ((hubMinMeters > 0.0f && storedMeters < hubMinMeters)
+                || (hubMaxMeters > 0.0f && storedMeters > hubMaxMeters))) {
+            return UI_DIST_OUT_OF_RANGE;
+        }
+        if (outMeters) {
+            *outMeters = storedMeters;
+        }
+        return UI_DIST_OK;
+    }
+
+    float shown = 0.0f;
+    const UiDistStatus st2 = ui_dist_parse(text, limitsActive,
+        range_limit_min_display(hubMinMeters, inFoundations),
+        range_limit_max_display(hubMaxMeters, inFoundations), &shown);
+    if (st2 != UI_DIST_OK) {
+        return st2;
+    }
+    if (outMeters) {
+        *outMeters = range_to_meters(shown, inFoundations);
     }
     return UI_DIST_OK;
 }
@@ -290,8 +339,9 @@ static inline int ui_preset_parse_current(const wchar_t* s, int maxPresets) {
    edits into the live g_config (under the config lock, via config_modify) and
    leaves everything else alone.
 
-   Dialog-owned: savedPath, automaticPatchFind, the three distances, the five
-   hotkeys, the three feature toggles, the three HUD options.
+   Dialog-owned: savedPath, automaticPatchFind, the three distances, the display
+   unit of the distances (rangeInFoundations, 091), the five hotkeys, the three
+   feature toggles, the three HUD options.
    NOT dialog-owned (never copied): automaticSavedPath, enableVoiceOverlay,
    debugMode, enablePosFile, defaultsAppliedServer. */
 static inline void ui_cfg_merge_hud_fields(PluginConfig* g, const PluginConfig* w) {
@@ -307,6 +357,7 @@ static inline void ui_cfg_merge_dialog_fields(PluginConfig* g, const PluginConfi
     g->distanceWhisper = w->distanceWhisper;
     g->distanceNormal = w->distanceNormal;
     g->distanceShout = w->distanceShout;
+    g->rangeInFoundations = w->rangeInFoundations;
 
     g->whisperKey = w->whisperKey;
     g->normalKey = w->normalKey;

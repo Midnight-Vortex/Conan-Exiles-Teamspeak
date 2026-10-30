@@ -1,6 +1,7 @@
 #include "core/hub/hub_parser.h"
 #include "core/proximity/occlusion.h" /* OCCLUSION_INTENSITY_* (069) */
 
+#include "core/config/range_units.h" /* 091: foundation edge for ForceRangesInFoundations */
 #include "core/util/compat_crt.h"
 #include "core/util/num_parse.h" /* num_strtod: "13,5" = 13.5 for single numbers */
 
@@ -150,10 +151,14 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     else if ((v = hub_value_for(line, "AudioMinDistance")) != NULL) {
         out->audioMinDistance = hub_parse_clamped(v, 0.1f, HUB_DIST_MAX);
     }
-    else if ((v = hub_value_for(line, "MinimumWisper")) != NULL) {
+    /* Both spellings, like [RACE]: the old plugin wrote "Wisper", admins
+       naturally type "Whisper" — before 091 that was silently ignored here. */
+    else if ((v = hub_value_for(line, "MinimumWhisper")) != NULL
+        || (v = hub_value_for(line, "MinimumWisper")) != NULL) {
         out->minWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
     }
-    else if ((v = hub_value_for(line, "MaximumWisper")) != NULL) {
+    else if ((v = hub_value_for(line, "MaximumWhisper")) != NULL
+        || (v = hub_value_for(line, "MaximumWisper")) != NULL) {
         out->maxWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
     }
     else if ((v = hub_value_for(line, "MinimumNormal")) != NULL) {
@@ -176,6 +181,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
     else if ((v = hub_value_for(line, "ForceSpeakersOn")) != NULL) {
         out->forceSpeakersOn = hub_parse_bool(v);
+    }
+    else if ((v = hub_value_for(line, "ForceRangesInFoundations")) != NULL) {
+        out->forceRangesInFoundations = hub_parse_bool(v);
     }
     else if ((v = hub_value_for(line, "NicknameRandomizer")) != NULL) {
         out->nicknameRandomizer = hub_parse_bool(v);
@@ -297,7 +305,9 @@ static void hub_parse_defaults_line(const char* line, HubDefaults* def) {
     if ((v = hub_value_for(line, "EnableDefaultSettingsOnFirstConnection")) != NULL) {
         def->enabled = hub_parse_bool(v);
     }
-    else if ((v = hub_value_for(line, "DefaultWhisperKey")) != NULL) {
+    /* 091: both spellings, like [GLOBAL] / [RACE] / [ZONES]. */
+    else if ((v = hub_value_for(line, "DefaultWhisperKey")) != NULL
+        || (v = hub_value_for(line, "DefaultWisperKey")) != NULL) {
         def->whisperKey = hub_parse_key(v);
     }
     else if ((v = hub_value_for(line, "DefaultNormalKey")) != NULL) {
@@ -309,7 +319,8 @@ static void hub_parse_defaults_line(const char* line, HubDefaults* def) {
     else if ((v = hub_value_for(line, "DefaultVoiceToggleKey")) != NULL) {
         def->voiceToggleKey = hub_parse_key(v);
     }
-    else if ((v = hub_value_for(line, "DefaultDistanceWhisper")) != NULL) {
+    else if ((v = hub_value_for(line, "DefaultDistanceWhisper")) != NULL
+        || (v = hub_value_for(line, "DefaultDistanceWisper")) != NULL) {
         def->distanceWhisper = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
     }
     else if ((v = hub_value_for(line, "DefaultDistanceNormal")) != NULL) {
@@ -364,11 +375,61 @@ static void hub_parse_zone_line(const char* line, HubZone* zone) {
     else if ((v = hub_value_for(line, "AudioMaxVolume")) != NULL) zone->audioMaxVolume = hub_parse_max_volume(v);
     else if ((v = hub_value_for(line, "GroundY")) != NULL) zone->groundY = hub_parse_clamped(v, -1e7f, 1e7f);
     else if ((v = hub_value_for(line, "TopY")) != NULL) zone->topY = hub_parse_clamped(v, -1e7f, 1e7f);
-    else if ((v = hub_value_for(line, "Wisper")) != NULL) zone->whisperDist = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
+    else if ((v = hub_value_for(line, "Whisper")) != NULL
+        || (v = hub_value_for(line, "Wisper")) != NULL) zone->whisperDist = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
     else if ((v = hub_value_for(line, "Normal")) != NULL) zone->normalDist = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
     else if ((v = hub_value_for(line, "Shout")) != NULL) zone->shoutDist = hub_parse_clamped(v, 0.0f, HUB_DIST_MAX);
     else if ((v = hub_value_for(line, "SoundProof")) != NULL) zone->soundproof = hub_parse_bool(v);
     else if ((v = hub_value_for(line, "Reverb")) != NULL) zone->reverb = hub_parse_bool(v);
+}
+
+/* ---- 091 ForceRangesInFoundations: admin values in foundations -> meters ----- */
+
+/* One voice range written in foundations -> meters, kept inside the same
+   ceiling the parser applies to every distance (1000 F would be 2560 m).
+   0 ("not set" / "no override") stays 0. */
+static float hub_foundations_to_meters(float foundations) {
+    const float meters = range_to_meters(foundations, 1);
+    return (meters > HUB_DIST_MAX) ? HUB_DIST_MAX : meters;
+}
+
+/* Runs once at the END of hub_parse_settings, because the key may stand
+   anywhere in [GLOBAL] - also after the values it changes.  Converts exactly
+   the voice ranges (the six global limits, the same six + the listen bonus of
+   every race, the zone voice overrides, the [DEFAULT_SETTINGS] distances).
+   Everything that is not a voice range keeps its value: zone corners, GroundY /
+   TopY, AudioMinDistance, AudioMaxVolume, FilterIntensity, the Occ... / Occlusion... keys,
+   SteamIDs, passwords.  Each value was parsed once and is converted once, so a
+   race that inherited the global limits is converted like everything else. */
+static void hub_convert_ranges_to_meters(HubSettings* out) {
+    out->minWhisper = hub_foundations_to_meters(out->minWhisper);
+    out->maxWhisper = hub_foundations_to_meters(out->maxWhisper);
+    out->minNormal = hub_foundations_to_meters(out->minNormal);
+    out->maxNormal = hub_foundations_to_meters(out->maxNormal);
+    out->minShout = hub_foundations_to_meters(out->minShout);
+    out->maxShout = hub_foundations_to_meters(out->maxShout);
+
+    for (int i = 0; i < out->raceCount && i < HUB_MAX_RACES; i++) {
+        HubRace* race = &out->races[i];
+        race->minWhisper = hub_foundations_to_meters(race->minWhisper);
+        race->maxWhisper = hub_foundations_to_meters(race->maxWhisper);
+        race->minNormal = hub_foundations_to_meters(race->minNormal);
+        race->maxNormal = hub_foundations_to_meters(race->maxNormal);
+        race->minShout = hub_foundations_to_meters(race->minShout);
+        race->maxShout = hub_foundations_to_meters(race->maxShout);
+        race->listenAddDistance = hub_foundations_to_meters(race->listenAddDistance);
+    }
+
+    for (int i = 0; i < out->zoneCount && i < HUB_MAX_ZONES; i++) {
+        HubZone* zone = &out->zones[i];
+        zone->whisperDist = hub_foundations_to_meters(zone->whisperDist);
+        zone->normalDist = hub_foundations_to_meters(zone->normalDist);
+        zone->shoutDist = hub_foundations_to_meters(zone->shoutDist);
+    }
+
+    out->defaults.distanceWhisper = hub_foundations_to_meters(out->defaults.distanceWhisper);
+    out->defaults.distanceNormal = hub_foundations_to_meters(out->defaults.distanceNormal);
+    out->defaults.distanceShout = hub_foundations_to_meters(out->defaults.distanceShout);
 }
 
 /* ---- main entry -------------------------------------------------------------- */
@@ -479,6 +540,10 @@ int hub_parse_settings(const char* description, HubSettings* out) {
         else if (section == SEC_DEFAULTS) {
             hub_parse_defaults_line(line, &out->defaults);
         }
+    }
+
+    if (out->forceRangesInFoundations) {
+        hub_convert_ranges_to_meters(out);
     }
 
     return out->valid;

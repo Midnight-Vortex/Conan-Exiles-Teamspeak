@@ -596,7 +596,10 @@ LRESULT ui_config_on_ctlcolorstatic(HWND hwnd, WPARAM wParam, LPARAM lParam) {
             SetTextColor(hdcStatic, GetSysColor(COLOR_GRAYTEXT));
         }
         // HUD theme / position / size labels (526, 527, 528): white text on dark background art.
-        else if (controlId == 526 || controlId == 527 || controlId == 528) {
+        // "Show ranges in foundations" (091): its text is drawn by the static itself (it is not part
+        // of the background bitmap like the other checkbox labels) - same white, transparent.
+        else if (controlId == 526 || controlId == 527 || controlId == 528
+            || controlId == IDC_LABEL_RANGEUNIT) {
             SetTextColor(hdcStatic, RGB(255, 255, 255));
         }
         // HUD theme / position / size combo closed state (215, 216, 217): dark fill, white text.

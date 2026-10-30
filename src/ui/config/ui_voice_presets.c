@@ -151,10 +151,11 @@ void loadVoicePreset(int presetIndex) {
     if (hConfigDialog && IsWindow(hConfigDialog)) {
         isUpdatingInterface = TRUE;
 
+        // 091: the preset values are meters (now in the working copy); the edits show the display unit.
         wchar_t whisperText[32], normalText[32], shoutText[32];
-        swprintf(whisperText, 32, L"%.1f", ui_cfg()->distanceWhisper);
-        swprintf(normalText, 32, L"%.1f", ui_cfg()->distanceNormal);
-        swprintf(shoutText, 32, L"%.1f", ui_cfg()->distanceShout);
+        ui_range_text(whisperText, 32, ui_cfg()->distanceWhisper);
+        ui_range_text(normalText, 32, ui_cfg()->distanceNormal);
+        ui_range_text(shoutText, 32, ui_cfg()->distanceShout);
 
         if (hDistanceWhisperEdit) SetWindowTextW(hDistanceWhisperEdit, whisperText);
         if (hDistanceNormalEdit) SetWindowTextW(hDistanceNormalEdit, normalText);
@@ -183,6 +184,7 @@ void loadVoicePreset(int presetIndex) {
         }
     }
 
+    // writeFullConfiguration takes METERS as text (not the edit texts) - unchanged by 091.
     wchar_t distWhisper[32], distNormal[32], distShout[32];
     swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
     swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);

@@ -147,6 +147,9 @@ static inline void cfg_apply_line(PluginConfig* cfg, wchar_t* line) {
     else if (cfg_wieq(key, L"DistanceShout")) {
         cfg->distanceShout = cfg_parse_float(val);
     }
+    else if (cfg_wieq(key, L"ShowRangesInFoundations")) {
+        cfg->rangeInFoundations = cfg_parse_bool(val);
+    }
     else if (cfg_wieq(key, L"WhisperKey")) {
         cfg->whisperKey = cfg_parse_int(val);
     }
@@ -232,6 +235,8 @@ static inline void cfg_clamp_values(PluginConfig* cfg) {
     cfg_clamp_dist(&cfg->distanceWhisper, CFG_DEFAULT_DIST_WHISPER);
     cfg_clamp_dist(&cfg->distanceNormal, CFG_DEFAULT_DIST_NORMAL);
     cfg_clamp_dist(&cfg->distanceShout, CFG_DEFAULT_DIST_SHOUT);
+
+    cfg->rangeInFoundations = cfg->rangeInFoundations ? 1 : 0; /* 091: bool field, 0/1 only */
 
     if (cfg->whisperKey <= 0 || cfg->whisperKey >= 256) cfg->whisperKey = 97;
     if (cfg->normalKey <= 0 || cfg->normalKey >= 256) cfg->normalKey = 98;

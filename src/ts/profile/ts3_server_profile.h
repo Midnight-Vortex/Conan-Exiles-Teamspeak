@@ -65,6 +65,11 @@ int server_profile_force_distance_muting(void);
 /* 079: root key ForceSpeakersOn (0 without profile). Any thread. */
 int server_profile_force_speakers_on(void);
 
+/* 091: root key ForceRangesInFoundations (0 without profile): every player sees
+   the voice ranges in foundations while connected to this server.  Display only;
+   the player's own setting is never changed by it.  Any thread, lock-free. */
+int server_profile_force_ranges_in_foundations(void);
+
 /* 1 when ingame nicknames should be replaced with random digits before the
    ingame move. Default 1 without profile (legacy behavior). Any thread. */
 int server_profile_get_nickname_randomizer(void);
