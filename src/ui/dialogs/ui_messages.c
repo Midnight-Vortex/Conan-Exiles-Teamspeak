@@ -35,12 +35,18 @@ static float ui_shown(float meters) {
     return range_from_meters(meters, ui_ranges_in_foundations());
 }
 
-static float ui_shown_min(double hubMinMeters) {
-    return range_limit_min_display((float)hubMinMeters, ui_ranges_in_foundations());
+// Both limits of a mode are needed: a range narrower than one 0.1 F step is shown
+// rounded to nearest instead of inverted (range_limits_display).
+static float ui_shown_min(double hubMinMeters, double hubMaxMeters) {
+    float lo = 0.0f;
+    range_limits_display((float)hubMinMeters, (float)hubMaxMeters, ui_ranges_in_foundations(), &lo, NULL);
+    return lo;
 }
 
-static float ui_shown_max(double hubMaxMeters) {
-    return range_limit_max_display((float)hubMaxMeters, ui_ranges_in_foundations());
+static float ui_shown_max(double hubMinMeters, double hubMaxMeters) {
+    float hi = 0.0f;
+    range_limits_display((float)hubMinMeters, (float)hubMaxMeters, ui_ranges_in_foundations(), NULL, &hi);
+    return hi;
 }
 
 // Update distance message in real time | Fonction pour mettre à jour les messages de distance en temps réel
@@ -214,18 +220,18 @@ void updateConsolidatedDistanceMessages() {
         else {
             if (ui_cfg()->distanceWhisper < hubMinimumWhisper) {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
-                    ui_shown(ui_cfg()->distanceWhisper), ui_shown_min(hubMinimumWhisper), unit,
-                    ui_shown_min(hubMinimumWhisper));
+                    ui_shown(ui_cfg()->distanceWhisper), ui_shown_min(hubMinimumWhisper, hubMaximumWhisper), unit,
+                    ui_shown_min(hubMinimumWhisper, hubMaximumWhisper));
             }
             else if (ui_cfg()->distanceWhisper > hubMaximumWhisper) {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
-                    ui_shown(ui_cfg()->distanceWhisper), ui_shown_max(hubMaximumWhisper), unit,
-                    ui_shown_max(hubMaximumWhisper));
+                    ui_shown(ui_cfg()->distanceWhisper), ui_shown_max(hubMinimumWhisper, hubMaximumWhisper), unit,
+                    ui_shown_max(hubMinimumWhisper, hubMaximumWhisper));
             }
             else {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f %ls (Valid range: %.1f-%.1f)",
                     ui_shown(ui_cfg()->distanceWhisper), unit,
-                    ui_shown_min(hubMinimumWhisper), ui_shown_max(hubMaximumWhisper));
+                    ui_shown_min(hubMinimumWhisper, hubMaximumWhisper), ui_shown_max(hubMinimumWhisper, hubMaximumWhisper));
             }
         }
 
@@ -253,18 +259,18 @@ void updateConsolidatedDistanceMessages() {
         else {
             if (ui_cfg()->distanceNormal < hubMinimumNormal) {
                 swprintf(normalMsg, 300, L"Normal: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
-                    ui_shown(ui_cfg()->distanceNormal), ui_shown_min(hubMinimumNormal), unit,
-                    ui_shown_min(hubMinimumNormal));
+                    ui_shown(ui_cfg()->distanceNormal), ui_shown_min(hubMinimumNormal, hubMaximumNormal), unit,
+                    ui_shown_min(hubMinimumNormal, hubMaximumNormal));
             }
             else if (ui_cfg()->distanceNormal > hubMaximumNormal) {
                 swprintf(normalMsg, 300, L"Normal: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
-                    ui_shown(ui_cfg()->distanceNormal), ui_shown_max(hubMaximumNormal), unit,
-                    ui_shown_max(hubMaximumNormal));
+                    ui_shown(ui_cfg()->distanceNormal), ui_shown_max(hubMinimumNormal, hubMaximumNormal), unit,
+                    ui_shown_max(hubMinimumNormal, hubMaximumNormal));
             }
             else {
                 swprintf(normalMsg, 300, L"Normal: %.1f %ls (Valid range: %.1f-%.1f)",
                     ui_shown(ui_cfg()->distanceNormal), unit,
-                    ui_shown_min(hubMinimumNormal), ui_shown_max(hubMaximumNormal));
+                    ui_shown_min(hubMinimumNormal, hubMaximumNormal), ui_shown_max(hubMinimumNormal, hubMaximumNormal));
             }
         }
 
@@ -292,18 +298,18 @@ void updateConsolidatedDistanceMessages() {
         else {
             if (ui_cfg()->distanceShout < hubMinimumShout) {
                 swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
-                    ui_shown(ui_cfg()->distanceShout), ui_shown_min(hubMinimumShout), unit,
-                    ui_shown_min(hubMinimumShout));
+                    ui_shown(ui_cfg()->distanceShout), ui_shown_min(hubMinimumShout, hubMaximumShout), unit,
+                    ui_shown_min(hubMinimumShout, hubMaximumShout));
             }
             else if (ui_cfg()->distanceShout > hubMaximumShout) {
                 swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
-                    ui_shown(ui_cfg()->distanceShout), ui_shown_max(hubMaximumShout), unit,
-                    ui_shown_max(hubMaximumShout));
+                    ui_shown(ui_cfg()->distanceShout), ui_shown_max(hubMinimumShout, hubMaximumShout), unit,
+                    ui_shown_max(hubMinimumShout, hubMaximumShout));
             }
             else {
                 swprintf(shoutMsg, 300, L"Shout: %.1f %ls (Valid range: %.1f-%.1f)",
                     ui_shown(ui_cfg()->distanceShout), unit,
-                    ui_shown_min(hubMinimumShout), ui_shown_max(hubMaximumShout));
+                    ui_shown_min(hubMinimumShout, hubMaximumShout), ui_shown_max(hubMinimumShout, hubMaximumShout));
             }
         }
 

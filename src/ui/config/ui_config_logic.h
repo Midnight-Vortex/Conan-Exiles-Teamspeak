@@ -166,8 +166,10 @@ static inline UiDistStatus ui_dist_parse(const wchar_t* text, int limitsActive,
      bit for bit. Otherwise 40 m is shown as "15.6" foundations and pressing Save
      would turn it into 15.6 * 2.56 = 39.936 m. Applied in both units.
    - A changed text is checked against the server limits in the display unit
-     (min rounded up, max rounded down, see range_limit_*_display) and converted
-     to meters. An unchanged value is checked against the limits in meters.
+     (min rounded up, max rounded down, see range_limits_display), converted to
+     meters and pulled into the meter limits (float noise, range_clamp_meters).
+     An unchanged value is checked against the limits in meters; one a hair
+     outside that still reads as the typed text is pulled onto the limit.
    *outMeters is written only on UI_DIST_OK. */
 static inline UiDistStatus ui_dist_parse_display(const wchar_t* text, int inFoundations,
     float storedMeters, int limitsActive, float hubMinMeters, float hubMaxMeters,
@@ -179,26 +181,35 @@ static inline UiDistStatus ui_dist_parse_display(const wchar_t* text, int inFoun
     }
 
     if (range_display_unchanged(storedMeters, inFoundations, typed)) {
-        if (limitsActive
-            && ((hubMinMeters > 0.0f && storedMeters < hubMinMeters)
-                || (hubMaxMeters > 0.0f && storedMeters > hubMaxMeters))) {
-            return UI_DIST_OUT_OF_RANGE;
+        /* A stored value a hair outside the limits that still READS as the typed
+           text (15.4 m from an older Save against a 15.36 m = 6.0 F limit) is pulled
+           onto the limit; one that reads differently (16 m against 15 m) is refused
+           as before. */
+        const float kept = limitsActive
+            ? range_clamp_meters(storedMeters, hubMinMeters, hubMaxMeters) : storedMeters;
+        if (kept != storedMeters
+            && (!range_display_unchanged(kept, inFoundations, typed)
+                || (hubMinMeters > 0.0f && kept < hubMinMeters)
+                || (hubMaxMeters > 0.0f && kept > hubMaxMeters))) {
+            return UI_DIST_OUT_OF_RANGE;   /* reads differently, or min > max (admin error) */
         }
         if (outMeters) {
-            *outMeters = storedMeters;
+            *outMeters = kept;
         }
         return UI_DIST_OK;
     }
 
+    float shownMin = 0.0f;
+    float shownMax = 0.0f;
+    range_limits_display(hubMinMeters, hubMaxMeters, inFoundations, &shownMin, &shownMax);
     float shown = 0.0f;
-    const UiDistStatus st2 = ui_dist_parse(text, limitsActive,
-        range_limit_min_display(hubMinMeters, inFoundations),
-        range_limit_max_display(hubMaxMeters, inFoundations), &shown);
+    const UiDistStatus st2 = ui_dist_parse(text, limitsActive, shownMin, shownMax, &shown);
     if (st2 != UI_DIST_OK) {
         return st2;
     }
     if (outMeters) {
-        *outMeters = range_to_meters(shown, inFoundations);
+        const float meters = range_to_meters(shown, inFoundations);
+        *outMeters = limitsActive ? range_clamp_meters(meters, hubMinMeters, hubMaxMeters) : meters;
     }
     return UI_DIST_OK;
 }

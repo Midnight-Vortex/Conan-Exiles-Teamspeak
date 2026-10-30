@@ -492,10 +492,11 @@ static int showConfigInterfaceRun(void) {
                 *conanSandbox = L'\0';
             }
 
+            // 091: meters as hand-off text; exact in foundation mode (see ui_range_transport_text).
             wchar_t distWhisper[32], distNormal[32], distShout[32];
-            swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
-            swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
-            swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
+            ui_range_transport_text(distWhisper, 32, ui_cfg()->distanceWhisper);
+            ui_range_transport_text(distNormal, 32, ui_cfg()->distanceNormal);
+            ui_range_transport_text(distShout, 32, ui_cfg()->distanceShout);
 
             writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 

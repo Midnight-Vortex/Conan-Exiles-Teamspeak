@@ -409,7 +409,10 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         HWND hDistanceMutingLabel = CreateWindowW(L"STATIC", L"",
             WS_CHILD | SS_LEFT | SS_NOTIFY,
-            85, 147, 295, 20, hwnd, (HMENU)IDC_LABEL_DISTMUTING, NULL, NULL);
+            // 091: 240 wide (was 295): the click area must end left of the foundations
+            // checkbox at x=330 - it lay on top of it and toggled distance muting instead.
+            // The baked-in text ends at x~254, so the whole text stays clickable.
+            85, 147, 240, 20, hwnd, (HMENU)IDC_LABEL_DISTMUTING, NULL, NULL);
         ApplyFontToControl(hDistanceMutingLabel, hFont);
 
         SetWindowSubclass(hDistanceMutingLabel, CheckboxLabelProc, 201, (DWORD_PTR)hEnableDistanceMutingCheck);

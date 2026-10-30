@@ -203,6 +203,44 @@ Metern gueltig ist, werden die Grenzen **nach innen** auf 0,1 gerundet
 unveraendert. Liegt ein gespeicherter Wert genau auf der Grenze (z. B. 2,1 m = angezeigt
 "0.8"), bleibt er gueltig und wird nicht angefasst — geprueft wird in Metern.
 
+**Sehr enge Grenzen** (kein 0,1-F-Schritt dazwischen, z. B. Normal fest 15..15 m = 5,86 F):
+Nach innen gerundet ergaebe das "Minimum 5.9, Maximum 5.8" — kein Wert koennte je passen.
+Dann werden **beide** Grenzen so gerundet, wie ein Feld sie anzeigen wuerde ("%.1f"):
+15..15 m wird als **5.9..5.9** gezeigt. Beides erledigt `range_limits_display` (das
+**Paar** der Grenzen einer Sprechart; alle Stellen im Dialog benutzen es).
+
+**Zurueck in Meter immer in die Grenzen ziehen:** Eine getippte Fundament-Zahl wird nach
+dem Umrechnen auf die Meter-Grenzen geklemmt (`range_clamp_meters`). Grund: Fliesskomma.
+10 F × 2,56 ergibt in `float` **25,5999985 m** — knapp **unter** einer Admin-Grenze von
+25,6 m. Ohne Klemme wuerde genau die angezeigte Mindestzahl abgelehnt. Mit Klemme wird
+daraus exakt 25,6 m. Bei den engen Grenzen oben wird aus getippten 5,9 F (15,104 m) so
+exakt 15 m. In Metern aendert die Klemme nichts (dort ist die Zahl schon geprueft).
+
+### Nach dem Code-Review korrigiert (vor dem Merge)
+
+Ein Review mit unabhaengiger Gegenpruefung hat vier Fehler gefunden. Alle vier wurden auf
+dem Host nachgestellt und sind jetzt mit Tests abgesichert:
+
+| # | Fehler (vorher) | Folge fuer den Spieler | Korrektur |
+|---|---|---|---|
+| 1 | Save gab die gepruefte Distanz als Text `"%.1f"` an `writeFullConfiguration` weiter: aus 15,36 m (= 6 F) wurde **15,4 m** | Mit `ForceRangesInFoundations` (6..6 F) klappte das erste Save, das **zweite** meldete "must be between 6.0 and 6.0 foundations" | `ui_range_transport_text`: im **Fundamente-Modus** `"%.9g"` (gibt die exakte Zahl zurueck), im **Meter-Modus** weiter `"%.1f"` (bitgenau wie vorher) **und** ein unveraendertes Feld, das nur um Rundung neben der Grenze liegt, wird auf die Grenze gezogen statt abgelehnt (hilft auch im Meter-Modus bei Admin-Grenzen wie 15,36 m) |
+| 2 | 10 F = 25,5999985 m lag knapp unter einer 25,6-m-Grenze | Die angezeigte Mindestzahl wurde abgelehnt; ein zu kleiner Wert blieb bei der Korrektur dort "haengen", jedes Save scheiterte | `range_clamp_meters` nach jedem Zurueckrechnen aus Fundamenten (Tippen, Korrektur, Save); beim Tippen im Meter-Modus keine Klemme, dort bleibt alles wie vorher |
+| 3 | Enge Grenzen (z. B. 15..15 m) wurden als "5.9..5.8" gezeigt | Der Wert sprang bei jeder Aktualisierung zwischen 15,104 und 14,848 m, der Tab liess sich nicht speichern | `range_limits_display` (nie verkehrt herum) + Klemme |
+| 4 | Die unsichtbare Klickflaeche des Textes "Enable distance-based muting" war 295 px breit (bis x = 380) und lag **ueber** der neuen Checkbox (x = 330) | Klick auf die neue Checkbox schaltete das **Distanz-Muting** um | Klickflaeche 240 px (bis x = 325); der eingebrannte Text endet bei x ≈ 254, bleibt also ganz klickbar |
+
+Eine zweite, unabhaengige Pruefung der Korrekturen hat bestaetigt, dass alle vier Faelle
+behoben sind, und eine Kleinigkeit gefunden: `"%.9g"` an allen vier Stellen haette auch den
+**Meter-Modus** veraendert (getippte 12,34 m galten bis zum Neustart als 12,34 statt sofort
+12,3). Deshalb gilt `"%.9g"` jetzt nur im Fundamente-Modus. Steht ein Minimum ueber dem
+Maximum (Tippfehler des Admins), wird ein unveraendertes Feld wie vorher abgelehnt.
+
+> **Bekannt, aber nicht Teil von 091 (war schon vorher so):** Setzt ein Admin mit
+> `ForceDistanceBasedMuting=True` nur ein Minimum **ohne** Maximum, behandelt die
+> Dialog-Korrektur (`validateDistanceValue`) das fehlende Maximum als "0 m" — der Wert im
+> Feld springt. Im Spiel selbst gilt 0 richtig als "keine Grenze". Das betrifft auch den
+> reinen Meter-Modus und wird deshalb getrennt behoben. Bis dahin: immer Minimum **und**
+> Maximum setzen.
+
 ## 6. Server-Admins: Root-Beschreibung in Fundamenten
 
 Mit `ForceRangesInFoundations=True` im `[GLOBAL]`-Teil gilt: **Alle Sprachreichweiten der
@@ -219,6 +257,12 @@ Ohne den Schluessel aendert sich nichts (Meter, wie bisher).
 **Nicht umgerechnet:** Zonen-Ecken `X1..Z4`, `GroundY`/`TopY`, `AudioMinDistance`,
 `AudioMaxVolume` (auch in Zonen), `FilterIntensity`, alle `Occ*`/`Occlusion*`-Werte,
 Tasten-Codes, SteamIDs, Passwoerter — alles, was keine Sprachreichweite ist.
+
+> **Wichtig vor dem Umstellen:** Erst wenn **alle Spieler** das Plugin mit 091 (oder neuer)
+> haben, die Root-Beschreibung auf Fundamente umstellen. Ein aelteres Plugin kennt
+> `ForceRangesInFoundations` nicht und liest dieselben Zahlen als **Meter** (aus 6 Fundamenten
+> = 15,36 m wuerden dort 6 m). Dasselbe gilt fuer die neue Schreibweise `MinimumWhisper` in
+> `[GLOBAL]`: aeltere Plugins ueberlesen sie.
 
 **Der Schluessel darf irgendwo im `[GLOBAL]`-Teil stehen**, auch hinter den Werten. Deshalb
 wird **nicht pro Zeile**, sondern **einmal am Ende** umgerechnet. Eine Rasse, die die
@@ -276,16 +320,16 @@ DefaultDistanceShout=16
 ## 7. Wie wurde es getestet?
 
 Alle Host-Tests (`bash tests/run_tests.sh`): **35 Suiten**, `RESULT: ALL SUITES PASSED`
-(vorher 34), +164 Pruefungen; MinGW-DLL-Build (`bash build/build_mingw.sh`) **0 Warnungen**;
+(vorher 34), +212 Pruefungen; MinGW-DLL-Build (`bash build/build_mingw.sh`) **0 Warnungen**;
 jede angefasste `.c` zusaetzlich einzeln mit `-Wall -Wextra -Wconversion -Wshadow`
 (naehert MSVC `/W4`) ohne Warnung uebersetzt.
 
 | Suite | neu | Prueft |
 |---|---:|---|
-| `range_units_test` (neu) | 58 | 2,56-m-Konstante; 2/15/40 m → 0,78/5,86/15,63 und 1/6/16 F → 2,56/15,36/40,96 m; Rundlauf; Grenzen auf-/abrunden (2,1 m → 0,9; Vielfache von 2,56 m exakt; 2000 Grenzen als Eigenschaft); 0/negativ/NaN; "unveraendert"-Test; Einheiten-Namen |
+| `range_units_test` (neu) | 77 | 2,56-m-Konstante; 2/15/40 m → 0,78/5,86/15,63 und 1/6/16 F → 2,56/15,36/40,96 m; Rundlauf; Grenzen auf-/abrunden (2,1 m → 0,9; Vielfache von 2,56 m exakt; 2000 Grenzen als Eigenschaft); 0/negativ/NaN; "unveraendert"-Test; Einheiten-Namen; **Review:** Grenzen-Paar nie verkehrt (15..15 m → 5,9..5,9; 3,2 m = 1,25 F wie im Feld), Klemme (10 F gegen 25,6 m), Eigenschaft ueber ~40 000 Grenzpaare: jede angezeigte Zahl landet in den Meter-Grenzen und liest sich unveraendert zurueck |
 | `config_text_test` | +12 | `ShowRangesInFoundations` lesen (true/false/1/0/Gross-Klein/Unsinn), Standard aus, Nachbarschluessel, Normierung auf 0/1 |
-| `ui_config_logic_test` | +30 | Feld gehoert dem Dialog (Save uebernimmt es), `ui_dist_parse_display`: kein Drift in beiden Einheiten, Umrechnung, Grenzen in der Anzeige-Einheit, Fehlerfaelle |
-| `hub_parser_test` | +45 | Schluessel an/aus/fehlt; Beispiel-Block → 2,56/15,36/40,96/10,24 m; Zone, Defaults, Rassen-Erbe; Koordinaten/Occlusion/Passwort/SteamID unberuehrt; Schluessel **nach** den Werten; ohne Schluessel unveraendert; 1000-m-Deckel; Dezimalkomma; beide Schreibweisen `Whisper`/`Wisper` in allen Abschnitten |
+| `ui_config_logic_test` | +49 | Feld gehoert dem Dialog (Save uebernimmt es), `ui_dist_parse_display`: kein Drift in beiden Einheiten, Umrechnung, Grenzen in der Anzeige-Einheit, Fehlerfaelle; **Review:** zweites Save unter Server-Zwang (15,4 gegen 15,36 m), Rauschen (10 F gegen 25,6 m), enge Grenzen; Save-Text `"%.9g"` gibt ~40 000 Werte (0,5..1000 m) exakt zurueck |
+| `hub_parser_test` | +55 | Schluessel an/aus/fehlt; Beispiel-Block → 2,56/15,36/40,96/10,24 m; Zone, Defaults, Rassen-Erbe; Koordinaten/Occlusion/Passwort/SteamID unberuehrt; Schluessel **nach** den Werten; ohne Schluessel unveraendert; 1000-m-Deckel; Dezimalkomma; beide Schreibweisen `Whisper`/`Wisper` in allen Abschnitten |
 | `server_profile_test` | +12 | lock-freier Getter (ohne Profil 0, mit Profil 1, nach Reset 0), Werte im Profil in Metern, Hoerbonus-Zeile in beiden Einheiten |
 | `voice_modes_test` | +7 | Moduswechsel-Zeile: Meter unveraendert, eigener Haken, Server-Zwang, Zwang beruehrt die eigene Einstellung nicht, nach Verlassen wieder Meter |
 
@@ -324,6 +368,15 @@ Der Dialogcode selbst (Win32) laeuft nicht auf dem Host; seine reine Logik steck
     verbinden (oder die Root-Beschreibung live aendern) und **Save** klicken → Meldung
     "Display unit changed by the server ...", Felder in der neuen Einheit, noch nichts
     gespeichert; zweiter Klick speichert.
+11. **Klickflaechen (Review #4):** Klick auf die neue Checkbox und auf ihren Text schaltet
+    **nur** die Fundamente-Anzeige; der Haken "Enable distance-based muting" bleibt dabei
+    unveraendert. Klick auf den Text "Enable distance-based muting" schaltet weiterhin das Muting.
+12. **Zweimal Save unter Zwang (Review #1):** Server aus Punkt 8 (6..6 F), auf "Plugin Settings"
+    zweimal hintereinander **Save** (dazwischen z. B. eine Taste aendern) → beide Male gespeichert,
+    keine Grenzen-Meldung.
+13. **Enge Grenzen (Review #3):** Server mit `ForceDistanceBasedMuting=True`,
+    `MinimumNormal=15`, `MaximumNormal=15` (Meter) + eigener Haken: Statuszeile "Valid range:
+    5.9-5.9", Feld zeigt `5.9` und springt nicht; Save klappt, `plugin.cfg` hat `DistanceNormal=15.0`.
 
 ## 8. Lerneffekt
 
@@ -333,3 +386,11 @@ sie rechnet nur das um, was der Mensch wirklich geaendert hat, sonst "wandern" d
 durch Rundung. Und: wenn ein Feld je nach Zustand etwas anderes bedeutet (Meter oder
 Fundamente), muss es genau **eine** Stelle geben, die sagt, in welcher Einheit es gerade
 steht — sonst liest man eine Zahl in der falschen Einheit zurueck.
+
+Aus dem Review: **Wer zwischen zwei Einheiten hin- und herrechnet, muss am Ende in die
+Grenzen der Speicher-Einheit klemmen.** `float` kann 2,56 nicht exakt darstellen, also liegt
+"genau 10 Fundamente" immer ein Haar neben "genau 25,6 m". Und: eine Zahl, die nur als
+**Transport** zwischen zwei Funktionen als Text unterwegs ist, darf nicht auf Anzeige-Genauigkeit
+gerundet werden (`"%.9g"` statt `"%.1f"`) — aber nur dort, wo die Rundung schadet: eine
+Korrektur fuer die neue Option darf den alten Modus nicht nebenbei mitveraendern. Unsichtbare Klickflaechen (Labels mit `SS_NOTIFY`)
+gehoeren beim Platzieren neuer Controls mit auf den Plan.

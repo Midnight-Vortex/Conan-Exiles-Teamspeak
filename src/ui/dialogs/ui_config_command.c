@@ -36,8 +36,9 @@
 // Signale un champ de distance invalide : message de statut, bip, focus sur le champ.
 static void ui_report_bad_distance(HWND edit, const wchar_t* modeName, UiDistStatus status,
     float hubMinMeters, float hubMaxMeters, int inFoundations) {
-    const float hubMin = range_limit_min_display(hubMinMeters, inFoundations);
-    const float hubMax = range_limit_max_display(hubMaxMeters, inFoundations);
+    float hubMin = 0.0f;
+    float hubMax = 0.0f;
+    range_limits_display(hubMinMeters, hubMaxMeters, inFoundations, &hubMin, &hubMax);
     const wchar_t* unit = inFoundations ? L" foundations" : L"";
     wchar_t msg[220];
     switch (status) {
@@ -428,10 +429,11 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
     }
 
     // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
+    // 091: meters as hand-off text; exact in foundation mode (see ui_range_transport_text).
     wchar_t distWhisper[32], distNormal[32], distShout[32];
-    swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
-    swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
-    swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
+    ui_range_transport_text(distWhisper, 32, ui_cfg()->distanceWhisper);
+    ui_range_transport_text(distNormal, 32, ui_cfg()->distanceNormal);
+    ui_range_transport_text(distShout, 32, ui_cfg()->distanceShout);
 
     // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
     wchar_t gameFolder[MAX_PATH];
@@ -490,10 +492,11 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                // writeFullConfiguration() takes the distances as text and stores them in the
                // working copy itself.
+               // 091: meters as hand-off text; exact in foundation mode (see ui_range_transport_text).
                wchar_t distWhisper[32], distNormal[32], distShout[32];
-               swprintf(distWhisper, 32, L"%.1f", whisperValue);
-               swprintf(distNormal, 32, L"%.1f", normalValue);
-               swprintf(distShout, 32, L"%.1f", shoutValue);
+               ui_range_transport_text(distWhisper, 32, whisperValue);
+               ui_range_transport_text(distNormal, 32, normalValue);
+               ui_range_transport_text(distShout, 32, shoutValue);
 
                ui_read_hud_theme_from_combo();
                ui_read_hud_position_from_combo();

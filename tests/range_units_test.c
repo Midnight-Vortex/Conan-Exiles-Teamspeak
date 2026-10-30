@@ -170,6 +170,79 @@ static void test_unchanged(void) {
         "(precondition) typing 15.6 F back would give 39.936 m, not 40 m");
 }
 
+/* Review fixes: the PAIR of shown limits (never inverted) and the meter clamp. */
+static void test_limits_pair(void) {
+    printf("[5b] range_limits_display / range_clamp_meters: narrow ranges and float noise\n");
+    float lo = 0.0f, hi = 0.0f;
+
+    /* normal ranges: exactly the two single helpers */
+    range_limits_display(5.0f, 15.0f, 1, &lo, &hi);
+    CHECK(near(lo, 2.0f, 0.0001f) && near(hi, 5.8f, 0.0001f), "5..15 m -> 2.0..5.8 F (min up, max down)");
+    range_limits_display(2.1f, 10.0f, 1, &lo, &hi);
+    CHECK(near(lo, 0.9f, 0.0001f) && near(hi, 3.9f, 0.0001f), "2.1..10 m -> 0.9..3.9 F");
+    range_limits_display(15.0f, 15.0f, 0, &lo, &hi);
+    CHECK(lo == 15.0f && hi == 15.0f, "meter mode: unchanged, also for min == max");
+    range_limits_display(25.6f, 0.0f, 1, &lo, &hi);
+    CHECK(near(lo, 10.0f, 0.0001f) && hi == 0.0f, "only a min set: max stays 0 (= no limit)");
+    range_limits_display(0.0f, 15.0f, 1, &lo, &hi);
+    CHECK(lo == 0.0f && near(hi, 5.8f, 0.0001f), "only a max set: min stays 0");
+
+    /* narrow ranges (no 0.1 F step inside): nearest, never inverted */
+    range_limits_display(15.0f, 15.0f, 1, &lo, &hi);
+    CHECK(near(lo, 5.9f, 0.0001f) && near(hi, 5.9f, 0.0001f), "15..15 m -> 5.9..5.9 F (not 5.9..5.8)");
+    range_limits_display(2.0f, 2.0f, 1, &lo, &hi);
+    CHECK(near(lo, 0.8f, 0.0001f) && near(hi, 0.8f, 0.0001f), "2..2 m -> 0.8..0.8 F");
+    range_limits_display(40.0f, 40.0f, 1, &lo, &hi);
+    CHECK(near(lo, 15.6f, 0.0001f) && near(hi, 15.6f, 0.0001f), "40..40 m -> 15.6..15.6 F");
+    range_limits_display(14.9f, 15.0f, 1, &lo, &hi);
+    CHECK(near(lo, 5.8f, 0.0001f) && near(hi, 5.9f, 0.0001f), "14.9..15 m -> 5.8..5.9 F");
+    range_limits_display(6.0f * RANGE_FOUNDATION_EDGE_M, 6.0f * RANGE_FOUNDATION_EDGE_M, 1, &lo, &hi);
+    CHECK(near(lo, 6.0f, 0.0001f) && near(hi, 6.0f, 0.0001f), "6 F..6 F (server force) -> 6.0..6.0");
+    range_limits_display(3.1f, 3.2f, 1, &lo, &hi);
+    CHECK(near(lo, 1.2f, 0.0001f) && near(hi, 1.2f, 0.0001f)
+        && range_display_unchanged(3.2f, 1, hi), "3.1..3.2 m (3.2 m = 1.25 F exactly): shown as the field shows it");
+    range_limits_display(20.0f, 10.0f, 1, &lo, &hi);
+    CHECK(lo > hi, "min > max in METERS (admin error): left as is, like meter mode");
+    range_limits_display(15.0f, 15.0f, 1, NULL, NULL);
+    CHECK(1, "NULL outputs are allowed");
+
+    /* the clamp */
+    CHECK(range_clamp_meters(10.0f, 15.0f, 15.0f) == 15.0f, "below min -> min");
+    CHECK(range_clamp_meters(20.0f, 5.0f, 15.0f) == 15.0f, "above max -> max");
+    CHECK(range_clamp_meters(12.0f, 5.0f, 15.0f) == 12.0f, "inside: untouched");
+    CHECK(range_clamp_meters(12.0f, 0.0f, 0.0f) == 12.0f, "0 limits: untouched");
+    CHECK(range_to_meters(10.0f, 1) < 25.6f && range_clamp_meters(range_to_meters(10.0f, 1), 25.6f, 100.0f) == 25.6f,
+        "float noise: 10 F = 25.5999985 m is pulled up onto the 25.6 m min");
+
+    /* property: for every pair of meter limits, the shown range is ordered, every
+       value on the shown 0.1 grid lands INSIDE the meter limits after the clamp and
+       still reads as the typed value, and the limit targets are inside too (so the
+       dialog's auto-correction is stable: a corrected value is never corrected again) */
+    static const float gaps[] = { 0.0f, 0.01f, 0.05f, 0.1f, 0.2f, 0.25f, 0.256f, 0.3f, 1.0f, 7.5f };
+    int pairs = 0, bad = 0;
+    for (int i = 10; i <= 2000; i++) {                /* from 0.5 m: the personal-range floor */
+        for (size_t g = 0; g < sizeof(gaps) / sizeof(gaps[0]); g++) {
+            for (int kind = 0; kind < 2; kind++) {
+                const float mn = kind ? (float)i * 0.01f * RANGE_FOUNDATION_EDGE_M : (float)i * 0.05f;
+                const float mx = mn + gaps[g];
+                range_limits_display(mn, mx, 1, &lo, &hi);
+                pairs++;
+                if (lo > hi + 0.00001f) { bad++; continue; }
+                for (float v = lo; v <= hi + 0.00001f; v += 0.1f) {
+                    const float vr = (float)(floor((double)v * 10.0 + 0.5) / 10.0);
+                    const float m = range_clamp_meters(range_to_meters(vr, 1), mn, mx);
+                    if (m < mn || m > mx || !range_display_unchanged(m, 1, vr)) { bad++; break; }
+                }
+                const float tMin = range_clamp_meters(range_to_meters(lo, 1), mn, mx);
+                const float tMax = range_clamp_meters(range_to_meters(hi, 1), mn, mx);
+                if (tMin < mn || tMin > mx || tMax < mn || tMax > mx) bad++;
+            }
+        }
+    }
+    printf("       (%d limit pairs checked, %d bad)\n", pairs, bad);
+    CHECK(bad == 0, "every limit pair: ordered, shown values valid in meters and read back unchanged");
+}
+
 static void test_units(void) {
     printf("[6] unit names\n");
     CHECK(wcscmp(range_unit_name_w(0), L"meters") == 0, "wide name, meters");
@@ -189,6 +262,7 @@ int main(void) {
     test_effective_unit();
     test_limit_rounding();
     test_unchanged();
+    test_limits_pair();
     test_units();
     printf(g_failures ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", g_failures);
     return g_failures ? 1 : 0;

@@ -105,6 +105,10 @@ void handleDistanceEditChange(int editId) {
         BOOL valueChanged = FALSE;
         float correctedValue = newValue; // display unit until it is converted below
 
+        // Meter limits the converted value is pulled into (0 = none) | Limites en metres (0 = aucune)
+        float clampMinMeters = 0.0f;
+        float clampMaxMeters = 0.0f;
+
         // Apply digit filter if server limits are active | Appliquer le filtre de chiffres si les limites serveur sont actives
         if (shouldApplyDistanceLimits()) {
             float minimum, maximum;
@@ -127,9 +131,13 @@ void handleDistanceEditChange(int editId) {
             }
 
             // Hub limits in the display unit (min rounded up, max rounded down, so every
-            // value inside the shown range is also valid in meters). Meter mode: unchanged.
-            minimum = range_limit_min_display(minimum, inFoundations);
-            maximum = range_limit_max_display(maximum, inFoundations);
+            // value inside the shown range is also valid in meters; a range narrower than
+            // one 0.1 F step is rounded to nearest, never shown inverted). Meter mode: unchanged.
+            if (inFoundations) {   // meter mode: no clamp, exactly as before 091
+                clampMinMeters = minimum;
+                clampMaxMeters = maximum;
+            }
+            range_limits_display(minimum, maximum, inFoundations, &minimum, &maximum);
 
             // Check if we have enough digits before validating | Vérifier si on a assez de chiffres avant de valider
             if (!shouldValidateValue(newValue, minimum, maximum, modeName)) {
@@ -167,8 +175,11 @@ void handleDistanceEditChange(int editId) {
             }
         }
 
-        // Apply corrected or original value (converted to METERS) | Appliquer la valeur corrigée ou originale
-        const float newMeters = range_to_meters(correctedValue, inFoundations);
+        // Apply corrected or original value (converted to METERS; foundation mode pulls it
+        // into the meter limits: 10 F = 25.5999985 m must not fail a 25.6 m minimum)
+        // | Appliquer la valeur corrigée ou originale (en METRES, dans les limites)
+        const float newMeters = range_clamp_meters(range_to_meters(correctedValue, inFoundations),
+            clampMinMeters, clampMaxMeters);
         if (newMeters != *targetDistance) {
             *targetDistance = newMeters;
             valueChanged = TRUE;
@@ -214,17 +225,21 @@ static void ui_set_distance_edit_text(HWND hEdit, float meters, BOOL rewriteFocu
 // Clamp a working-copy distance (METERS) into the hub limits. In foundation mode a
 // correction lands on the limit AS SHOWN (min rounded up / max rounded down to 0.1 F),
 // so the field, the status line and the stored value agree and the value is valid in
-// meters too (2.1 m min is shown as 0.9 F = 2.304 m, not as 0.8). A value that is
-// already valid in meters is never touched. Meter mode: exactly validateDistanceValue.
+// meters too (2.1 m min is shown as 0.9 F = 2.304 m, not as 0.8). The result is always
+// pulled into the meter limits, so float noise (10 F = 25.5999985 m vs 25.6 m) or a
+// range narrower than one 0.1 F step (15..15 m) cannot leave it outside and make it
+// flip on every refresh. A value that is already valid in meters is never touched.
+// Meter mode: exactly validateDistanceValue.
 static float ui_correct_to_hub_limits(float meters, double hubMin, double hubMax, const char* modeName) {
     const float corrected = validateDistanceValue(meters, (float)hubMin, (float)hubMax, modeName);
     if (corrected == meters || !ui_ranges_in_foundations()) {
         return corrected;
     }
-    if (meters < (float)hubMin) {
-        return range_to_meters(range_limit_min_display((float)hubMin, 1), 1);
-    }
-    return range_to_meters(range_limit_max_display((float)hubMax, 1), 1);
+    float shownMin = 0.0f;
+    float shownMax = 0.0f;
+    range_limits_display((float)hubMin, (float)hubMax, 1, &shownMin, &shownMax);
+    const float target = (meters < (float)hubMin) ? range_to_meters(shownMin, 1) : range_to_meters(shownMax, 1);
+    return range_clamp_meters(target, (float)hubMin, (float)hubMax);
 }
 
 // Update dynamic interface | Mettre à jour l'interface dynamique

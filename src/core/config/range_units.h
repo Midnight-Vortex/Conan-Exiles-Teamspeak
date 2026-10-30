@@ -17,6 +17,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -78,6 +79,59 @@ static inline float range_limit_max_display(float maxMeters, int inFoundations) 
         shown = 0.1;
     }
     return (float)shown;
+}
+
+/* BOTH hub limits as shown, for one voice mode.  Normally min rounded up and max
+   rounded down (the two helpers above).  When the two meter limits are so close
+   that no 0.1 F step lies between them, that would read "min > max" (15..15 m =
+   5.86 F: up 5.9, down 5.8) and no typed value could ever pass.  Then both are
+   rounded to the NEAREST tenth instead (15..15 m is shown as 5.9..5.9); rounding
+   keeps the order, so the shown range is never inverted.  (Limits below 0.05 F
+   = 0.128 m still show 0.1: far under the 0.5 m every personal range has.)
+   A value typed in that range is pulled into the meter limits by
+   range_clamp_meters below.
+   Meter mode, or only one limit set: exactly the two helpers above. */
+static inline void range_limits_display(float minMeters, float maxMeters, int inFoundations,
+    float* outMin, float* outMax) {
+    float lo = range_limit_min_display(minMeters, inFoundations);
+    float hi = range_limit_max_display(maxMeters, inFoundations);
+    if (inFoundations && minMeters > 0.0f && maxMeters >= minMeters && lo > hi) {
+        /* "nearest" = exactly what a field shows for that value ("%.1f", the same
+           formatting as range_display_unchanged), so the shown limit and the field
+           agree even on an exact half tenth (3.2 m = 1.25 F). */
+        char txt[48];
+        snprintf(txt, sizeof(txt), "%.1f", (double)range_from_meters(minMeters, 1));
+        lo = (float)strtod(txt, NULL);
+        snprintf(txt, sizeof(txt), "%.1f", (double)range_from_meters(maxMeters, 1));
+        hi = (float)strtod(txt, NULL);
+        if (lo < 0.1f) {
+            lo = 0.1f;
+        }
+        if (hi < lo) {
+            hi = lo;
+        }
+    }
+    if (outMin) {
+        *outMin = lo;
+    }
+    if (outMax) {
+        *outMax = hi;
+    }
+}
+
+/* A value converted from the display unit back to meters, pulled into the hub
+   limits (0 = no limit).  The shown limits already passed, so any difference is
+   float noise (10 F = 25.5999985 m against a 25.6 m limit) or the nearest-rounded
+   narrow range above (5.9 F = 15.104 m against 15..15 m).  Same order as the
+   meter-mode clamp (validateDistanceValue): below the minimum -> the minimum. */
+static inline float range_clamp_meters(float meters, float minMeters, float maxMeters) {
+    if (minMeters > 0.0f && meters < minMeters) {
+        return minMeters;
+    }
+    if (maxMeters > 0.0f && meters > maxMeters) {
+        return maxMeters;
+    }
+    return meters;
 }
 
 /* 1 when a field that shows "%.1f" of the stored value still reads exactly as

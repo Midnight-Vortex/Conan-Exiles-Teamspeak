@@ -145,6 +145,15 @@ void ui_range_text(wchar_t* out, size_t cap, float meters) {
     swprintf(out, cap, L"%.1f", (double)range_from_meters(meters, ui_ranges_in_foundations()));
 }
 
+void ui_range_transport_text(wchar_t* out, size_t cap, float meters) {
+    if (ui_ranges_in_foundations()) {
+        swprintf(out, cap, L"%.9g", (double)meters);
+    }
+    else {
+        swprintf(out, cap, L"%.1f", (double)meters);
+    }
+}
+
 void ui_cfg_get_active_saved_path(wchar_t* out, size_t outLen) {
     if (!out || outLen == 0) {
         return;

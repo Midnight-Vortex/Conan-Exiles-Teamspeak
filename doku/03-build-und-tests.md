@@ -104,7 +104,7 @@ ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 `server_profile_test` (Getter, Hoerbonus-Zeile) und `voice_modes_test` (Chat-Zeile).
 
 Stand nach den Review-Fixes: **34 Suiten**, alle gruen; MinGW-DLL-Build ohne Warnungen.
-Stand nach 091: **35 Suiten** (+ `range_units_test`), +164 Pruefungen, weiter alle gruen,
+Stand nach 091: **35 Suiten** (+ `range_units_test`), +212 Pruefungen, weiter alle gruen,
 MinGW-Build ohne Warnungen.
 
 **Warum `-ffp-contract=off` in `tests/run_tests.sh`?** Auf einem Prozessor mit FMA
