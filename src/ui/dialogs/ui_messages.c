@@ -6,6 +6,7 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #endif
+#include "core/config/range_units.h"
 #include "core/proximity/proximity_math.h"
 #include <math.h>
 #include <stdio.h>
@@ -23,6 +24,30 @@
 // EN: In-game chat status lines (connection, zone, errors) shown to the player.
 // FR: Lignes de statut chat ingame (connexion, zone, erreurs) affichées au joueur.
 // ============================================================================
+
+// 091: the status lines below show a distance in the display unit (meters, or Conan
+// foundations when the player ticked the box / the server forces it). Everything they
+// COMPARE stays in meters (working copy and hub limits); only the numbers that are
+// printed are converted. Hub limits are shown rounded inward (min up, max down) so
+// every shown value is also valid in meters. In meter mode all three are identities.
+// 091 : seuls les nombres AFFICHES sont convertis ; les comparaisons restent en metres.
+static float ui_shown(float meters) {
+    return range_from_meters(meters, ui_ranges_in_foundations());
+}
+
+// Both limits of a mode are needed: a range narrower than one 0.1 F step is shown
+// rounded to nearest instead of inverted (range_limits_display).
+static float ui_shown_min(double hubMinMeters, double hubMaxMeters) {
+    float lo = 0.0f;
+    range_limits_display((float)hubMinMeters, (float)hubMaxMeters, ui_ranges_in_foundations(), &lo, NULL);
+    return lo;
+}
+
+static float ui_shown_max(double hubMinMeters, double hubMaxMeters) {
+    float hi = 0.0f;
+    range_limits_display((float)hubMinMeters, (float)hubMaxMeters, ui_ranges_in_foundations(), NULL, &hi);
+    return hi;
+}
 
 // Update distance message in real time | Fonction pour mettre à jour les messages de distance en temps réel
 void updateDistanceMessage(HWND hMessageControl, float currentValue, float minimum, float maximum, const char* modeName) {
@@ -174,6 +199,7 @@ void updateConsolidatedDistanceMessages() {
     if (!hConfigDialog || !IsWindow(hConfigDialog)) return;
 
     BOOL limitsActive = shouldApplyDistanceLimits();
+    const wchar_t* unit = range_unit_name_w(ui_ranges_in_foundations()); // 091: "meters" / "foundations"
 
     // Whisper consolidated message | Message whisper consolidé
     if (hDistanceWhisperMessage && IsWindow(hDistanceWhisperMessage)) {
@@ -183,24 +209,29 @@ void updateConsolidatedDistanceMessages() {
         wchar_t whisperMsg[300] = L"";
 
         if (currentZoneIndex != -1) {
-            swprintf(whisperMsg, 300, L"Whisper: %.1f meters (ZONE: %S - Range: %.1f-%.1f)",
-                ui_cfg()->distanceWhisper, zones[currentZoneIndex].name, zones[currentZoneIndex].whisperDist, zones[currentZoneIndex].whisperDist);
+            swprintf(whisperMsg, 300, L"Whisper: %.1f %ls (ZONE: %S - Range: %.1f-%.1f)",
+                ui_shown(ui_cfg()->distanceWhisper), unit, zones[currentZoneIndex].name,
+                ui_shown(zones[currentZoneIndex].whisperDist), ui_shown(zones[currentZoneIndex].whisperDist));
         }
         else if (!limitsActive) {
-            swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Free range - no server limits)", ui_cfg()->distanceWhisper);
+            swprintf(whisperMsg, 300, L"Whisper: %.1f %ls (Free range - no server limits)",
+                ui_shown(ui_cfg()->distanceWhisper), unit);
         }
         else {
             if (ui_cfg()->distanceWhisper < hubMinimumWhisper) {
-                swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
-                    ui_cfg()->distanceWhisper, (float)hubMinimumWhisper, (float)hubMinimumWhisper);
+                swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
+                    ui_shown(ui_cfg()->distanceWhisper), ui_shown_min(hubMinimumWhisper, hubMaximumWhisper), unit,
+                    ui_shown_min(hubMinimumWhisper, hubMaximumWhisper));
             }
             else if (ui_cfg()->distanceWhisper > hubMaximumWhisper) {
-                swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
-                    ui_cfg()->distanceWhisper, (float)hubMaximumWhisper, (float)hubMaximumWhisper);
+                swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
+                    ui_shown(ui_cfg()->distanceWhisper), ui_shown_max(hubMinimumWhisper, hubMaximumWhisper), unit,
+                    ui_shown_max(hubMinimumWhisper, hubMaximumWhisper));
             }
             else {
-                swprintf(whisperMsg, 300, L"Whisper: %.1f meters (Valid range: %.1f-%.1f)",
-                    ui_cfg()->distanceWhisper, (float)hubMinimumWhisper, (float)hubMaximumWhisper);
+                swprintf(whisperMsg, 300, L"Whisper: %.1f %ls (Valid range: %.1f-%.1f)",
+                    ui_shown(ui_cfg()->distanceWhisper), unit,
+                    ui_shown_min(hubMinimumWhisper, hubMaximumWhisper), ui_shown_max(hubMinimumWhisper, hubMaximumWhisper));
             }
         }
 
@@ -217,24 +248,29 @@ void updateConsolidatedDistanceMessages() {
         wchar_t normalMsg[300] = L"";
 
         if (currentZoneIndex != -1) {
-            swprintf(normalMsg, 300, L"Normal: %.1f meters (ZONE: %S - Range: %.1f-%.1f)",
-                ui_cfg()->distanceNormal, zones[currentZoneIndex].name, zones[currentZoneIndex].normalDist, zones[currentZoneIndex].normalDist);
+            swprintf(normalMsg, 300, L"Normal: %.1f %ls (ZONE: %S - Range: %.1f-%.1f)",
+                ui_shown(ui_cfg()->distanceNormal), unit, zones[currentZoneIndex].name,
+                ui_shown(zones[currentZoneIndex].normalDist), ui_shown(zones[currentZoneIndex].normalDist));
         }
         else if (!limitsActive) {
-            swprintf(normalMsg, 300, L" Normal: %.1f meters (Free range - no server limits)", ui_cfg()->distanceNormal);
+            swprintf(normalMsg, 300, L" Normal: %.1f %ls (Free range - no server limits)",
+                ui_shown(ui_cfg()->distanceNormal), unit);
         }
         else {
             if (ui_cfg()->distanceNormal < hubMinimumNormal) {
-                swprintf(normalMsg, 300, L"Normal: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
-                    ui_cfg()->distanceNormal, (float)hubMinimumNormal, (float)hubMinimumNormal);
+                swprintf(normalMsg, 300, L"Normal: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
+                    ui_shown(ui_cfg()->distanceNormal), ui_shown_min(hubMinimumNormal, hubMaximumNormal), unit,
+                    ui_shown_min(hubMinimumNormal, hubMaximumNormal));
             }
             else if (ui_cfg()->distanceNormal > hubMaximumNormal) {
-                swprintf(normalMsg, 300, L"Normal: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
-                    ui_cfg()->distanceNormal, (float)hubMaximumNormal, (float)hubMaximumNormal);
+                swprintf(normalMsg, 300, L"Normal: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
+                    ui_shown(ui_cfg()->distanceNormal), ui_shown_max(hubMinimumNormal, hubMaximumNormal), unit,
+                    ui_shown_max(hubMinimumNormal, hubMaximumNormal));
             }
             else {
-                swprintf(normalMsg, 300, L"Normal: %.1f meters (Valid range: %.1f-%.1f)",
-                    ui_cfg()->distanceNormal, (float)hubMinimumNormal, (float)hubMaximumNormal);
+                swprintf(normalMsg, 300, L"Normal: %.1f %ls (Valid range: %.1f-%.1f)",
+                    ui_shown(ui_cfg()->distanceNormal), unit,
+                    ui_shown_min(hubMinimumNormal, hubMaximumNormal), ui_shown_max(hubMinimumNormal, hubMaximumNormal));
             }
         }
 
@@ -251,24 +287,29 @@ void updateConsolidatedDistanceMessages() {
         wchar_t shoutMsg[300] = L"";
 
         if (currentZoneIndex != -1) {
-            swprintf(shoutMsg, 300, L"Shout: %.1f meters (ZONE: %S - Range: %.1f-%.1f)",
-                ui_cfg()->distanceShout, zones[currentZoneIndex].name, zones[currentZoneIndex].shoutDist, zones[currentZoneIndex].shoutDist);
+            swprintf(shoutMsg, 300, L"Shout: %.1f %ls (ZONE: %S - Range: %.1f-%.1f)",
+                ui_shown(ui_cfg()->distanceShout), unit, zones[currentZoneIndex].name,
+                ui_shown(zones[currentZoneIndex].shoutDist), ui_shown(zones[currentZoneIndex].shoutDist));
         }
         else if (!limitsActive) {
-            swprintf(shoutMsg, 300, L" Shout: %.1f meters (Free range - no server limits)", ui_cfg()->distanceShout);
+            swprintf(shoutMsg, 300, L" Shout: %.1f %ls (Free range - no server limits)",
+                ui_shown(ui_cfg()->distanceShout), unit);
         }
         else {
             if (ui_cfg()->distanceShout < hubMinimumShout) {
-                swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f meters (Auto-corrected: below minimum %.1f)",
-                    ui_cfg()->distanceShout, (float)hubMinimumShout, (float)hubMinimumShout);
+                swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
+                    ui_shown(ui_cfg()->distanceShout), ui_shown_min(hubMinimumShout, hubMaximumShout), unit,
+                    ui_shown_min(hubMinimumShout, hubMaximumShout));
             }
             else if (ui_cfg()->distanceShout > hubMaximumShout) {
-                swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f meters (Auto-corrected: above maximum %.1f)",
-                    ui_cfg()->distanceShout, (float)hubMaximumShout, (float)hubMaximumShout);
+                swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
+                    ui_shown(ui_cfg()->distanceShout), ui_shown_max(hubMinimumShout, hubMaximumShout), unit,
+                    ui_shown_max(hubMinimumShout, hubMaximumShout));
             }
             else {
-                swprintf(shoutMsg, 300, L"Shout: %.1f meters (Valid range: %.1f-%.1f)",
-                    ui_cfg()->distanceShout, (float)hubMinimumShout, (float)hubMaximumShout);
+                swprintf(shoutMsg, 300, L"Shout: %.1f %ls (Valid range: %.1f-%.1f)",
+                    ui_shown(ui_cfg()->distanceShout), unit,
+                    ui_shown_min(hubMinimumShout, hubMaximumShout), ui_shown_max(hubMinimumShout, hubMaximumShout));
             }
         }
 

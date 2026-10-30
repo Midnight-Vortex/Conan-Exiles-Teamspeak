@@ -192,6 +192,7 @@ Jeder Zustand hat ab V8 **genau einen** schreibenden Besitzer:
 | Kanal-IDs, Verbindungs-Epoche | Callback-Thread (atomar publiziert) | alle |
 | Overlay-Fenster (HWND) | Overlay-Thread | andere nur via PostMessage |
 | HUD-Spiegel (`zones`/`races`/`hub*`/`currentZoneIndex`) | Callback-Thread (Fremd-Threads fordern den Sync per Flag an, Review-Fix 088) | Overlay, Dialog |
+| Anzeige-Einheit der Reichweiten: eigene Wahl `rangeInFoundations` / Root-Zwang `forceRangesInFoundations` (091) | eigene Wahl: Dialog-Thread beim Save (`config_modify`); Zwang: Callback-Thread (atomar publiziert, nie in die Config geschrieben) | Dialog, Chat-Zeilen (`voice_modes`, Profil) |
 
 **Warum?** Fast jeder schwer findbare V7-Bug war ein "zwei Schreiber"-Bug: zwei Config-
 Writer, zwei Hotkey-Poller, Reset-Pfad schreibt in Audio-Rampen. Ein Besitzer = eine Wahrheit.

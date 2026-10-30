@@ -6,6 +6,7 @@
 #include "ts/adapter/ts3_adapter.h"
 #include "ts/profile/ts3_server_profile.h"
 #endif
+#include "core/config/range_units.h"
 #include "core/proximity/proximity_math.h"
 #include <math.h>
 #include <stdio.h>
@@ -29,9 +30,16 @@
 
 // Reports an invalid distance field: status message (red), beep, focus on the field.
 // Nothing has been written to the working copy or to disk at this point.
+// 091: the server limits arrive in METERS and are shown in the display unit (min rounded up,
+// max rounded down - the same numbers the status lines show); foundation mode names the
+// unit, meter mode keeps the text exactly as it was.
 // Signale un champ de distance invalide : message de statut, bip, focus sur le champ.
 static void ui_report_bad_distance(HWND edit, const wchar_t* modeName, UiDistStatus status,
-    float hubMin, float hubMax) {
+    float hubMinMeters, float hubMaxMeters, int inFoundations) {
+    float hubMin = 0.0f;
+    float hubMax = 0.0f;
+    range_limits_display(hubMinMeters, hubMaxMeters, inFoundations, &hubMin, &hubMax);
+    const wchar_t* unit = inFoundations ? L" foundations" : L"";
     wchar_t msg[220];
     switch (status) {
     case UI_DIST_EMPTY:
@@ -42,14 +50,14 @@ static void ui_report_bad_distance(HWND edit, const wchar_t* modeName, UiDistSta
         break;
     case UI_DIST_OUT_OF_RANGE:
         if (hubMin > 0.0f && hubMax > 0.0f) {
-            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be between %.1f and %.1f (server limits)",
-                modeName, hubMin, hubMax);
+            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be between %.1f and %.1f%ls (server limits)",
+                modeName, hubMin, hubMax, unit);
         }
         else if (hubMin > 0.0f) {
-            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be at least %.1f (server limit)", modeName, hubMin);
+            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be at least %.1f%ls (server limit)", modeName, hubMin, unit);
         }
         else {
-            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be at most %.1f (server limit)", modeName, hubMax);
+            swprintf(msg, 220, L"\u26A0 Error: %ls distance must be at most %.1f%ls (server limit)", modeName, hubMax, unit);
         }
         break;
     case UI_DIST_NOT_NUMBER:
@@ -80,16 +88,34 @@ BOOL ui_collect_distances_for_save(float* outWhisper, float* outNormal, float* o
         return TRUE;
     }
 
+    // 091: the Root force came or went while the dialog was open: the fields still show the old
+    // unit. Re-render them from the working copy and make the player look at them once before
+    // anything is saved - a number typed in one unit must never be read as the other.
+    // 091 : l'unite a change pendant que le dialogue etait ouvert : reafficher, ne rien enregistrer.
+    if (ui_range_unit_refresh()) {
+        ui_range_unit_changed();
+        showStatusMessage(L"\u26A0 Display unit changed by the server - check the values, then click Save again", TRUE);
+        MessageBeep(MB_ICONWARNING);
+        return FALSE;
+    }
+
+    // 091: the edits hold the DISPLAY unit (meters or foundations). ui_dist_parse_display reads
+    // them back to meters, checks the server limits in that unit and keeps the stored meters
+    // bit for bit when the player did not change a field (no 40 m -> 39.936 m drift).
+    // 091 : les champs contiennent l'unite d'AFFICHAGE ; les metres stockes restent intacts
+    // si le joueur n'a rien change.
     const BOOL limitsActive = shouldApplyDistanceLimits();
+    const int inFoundations = ui_ranges_in_foundations();
     const struct {
         HWND edit;
         const wchar_t* name;
         double hubMin;
         double hubMax;
+        float stored; // working copy, meters
     } fields[3] = {
-        { hDistanceWhisperEdit, L"Whisper", hubMinimumWhisper, hubMaximumWhisper },
-        { hDistanceNormalEdit, L"Normal", hubMinimumNormal, hubMaximumNormal },
-        { hDistanceShoutEdit, L"Shout", hubMinimumShout, hubMaximumShout },
+        { hDistanceWhisperEdit, L"Whisper", hubMinimumWhisper, hubMaximumWhisper, cfg->distanceWhisper },
+        { hDistanceNormalEdit, L"Normal", hubMinimumNormal, hubMaximumNormal, cfg->distanceNormal },
+        { hDistanceShoutEdit, L"Shout", hubMinimumShout, hubMaximumShout, cfg->distanceShout },
     };
     float parsed[3] = { 0.0f, 0.0f, 0.0f };
 
@@ -102,13 +128,13 @@ BOOL ui_collect_distances_for_save(float* outWhisper, float* outNormal, float* o
             }
             else {
                 GetWindowTextW(fields[i].edit, text, 32);
-                status = ui_dist_parse(text, limitsActive, (float)fields[i].hubMin,
-                    (float)fields[i].hubMax, &parsed[i]);
+                status = ui_dist_parse_display(text, inFoundations, fields[i].stored, limitsActive,
+                    (float)fields[i].hubMin, (float)fields[i].hubMax, &parsed[i]);
             }
         }
         if (status != UI_DIST_OK) {
             ui_report_bad_distance(fields[i].edit, fields[i].name, status,
-                (float)fields[i].hubMin, (float)fields[i].hubMax);
+                (float)fields[i].hubMin, (float)fields[i].hubMax, inFoundations);
             return FALSE;
         }
     }
@@ -206,6 +232,25 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
                     // Toggle normal géré par Windows
                     ui_cfg()->enableAutomaticChannelChange = (IsDlgButtonChecked(hwnd, 203) == BST_CHECKED);
                     updateDynamicInterface();
+                }
+            }
+            break;
+
+        case IDC_CHECK_RANGEUNIT: // "Show ranges in foundations" (091)
+            if (HIWORD(wParam) == BN_CLICKED) {
+                if (ui_ranges_forced_by_server()) {
+                    // The Root forces the display -> stay checked. The player's own choice
+                    // (working copy) is not touched, so it applies again off that server.
+                    // Serveur force -> garder coche ; le choix du joueur n'est pas modifie.
+                    CheckDlgButton(hwnd, IDC_CHECK_RANGEUNIT, BST_CHECKED);
+                    showStatusMessage(L"Cannot change: enforced by server", TRUE);
+                    MessageBeep(MB_ICONWARNING);
+                }
+                else {
+                    // Working copy only (Save persists, Cancel discards, like every dialog
+                    // setting); every distance is re-rendered at once from the meters it holds.
+                    ui_cfg()->rangeInFoundations = (IsDlgButtonChecked(hwnd, IDC_CHECK_RANGEUNIT) == BST_CHECKED) ? 1 : 0;
+                    ui_range_unit_changed();
                 }
             }
             break;
@@ -384,10 +429,11 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
     }
 
     // ✅ 3) Toutes les vérifications passées → SAUVEGARDER
+    // 091: meters as hand-off text; exact in foundation mode (see ui_range_transport_text).
     wchar_t distWhisper[32], distNormal[32], distShout[32];
-    swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
-    swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
-    swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
+    ui_range_transport_text(distWhisper, 32, ui_cfg()->distanceWhisper);
+    ui_range_transport_text(distNormal, 32, ui_cfg()->distanceNormal);
+    ui_range_transport_text(distShout, 32, ui_cfg()->distanceShout);
 
     // Extraire le dossier du jeu (sans ConanSandbox\Saved) pour writeFullConfiguration
     wchar_t gameFolder[MAX_PATH];
@@ -446,10 +492,11 @@ LRESULT ui_config_on_command(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
                // writeFullConfiguration() takes the distances as text and stores them in the
                // working copy itself.
+               // 091: meters as hand-off text; exact in foundation mode (see ui_range_transport_text).
                wchar_t distWhisper[32], distNormal[32], distShout[32];
-               swprintf(distWhisper, 32, L"%.1f", whisperValue);
-               swprintf(distNormal, 32, L"%.1f", normalValue);
-               swprintf(distShout, 32, L"%.1f", shoutValue);
+               ui_range_transport_text(distWhisper, 32, whisperValue);
+               ui_range_transport_text(distNormal, 32, normalValue);
+               ui_range_transport_text(distShout, 32, shoutValue);
 
                ui_read_hud_theme_from_combo();
                ui_read_hud_position_from_combo();

@@ -409,7 +409,10 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
         HWND hDistanceMutingLabel = CreateWindowW(L"STATIC", L"",
             WS_CHILD | SS_LEFT | SS_NOTIFY,
-            85, 147, 295, 20, hwnd, (HMENU)IDC_LABEL_DISTMUTING, NULL, NULL);
+            // 091: 240 wide (was 295): the click area must end left of the foundations
+            // checkbox at x=330 - it lay on top of it and toggled distance muting instead.
+            // The baked-in text ends at x~254, so the whole text stays clickable.
+            85, 147, 240, 20, hwnd, (HMENU)IDC_LABEL_DISTMUTING, NULL, NULL);
         ApplyFontToControl(hDistanceMutingLabel, hFont);
 
         SetWindowSubclass(hDistanceMutingLabel, CheckboxLabelProc, 201, (DWORD_PTR)hEnableDistanceMutingCheck);
@@ -447,6 +450,28 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         ApplyFontToControl(hVoiceToggleLabel, hFont);
 
         SetWindowSubclass(hVoiceToggleLabel, CheckboxLabelProc, 204, (DWORD_PTR)hEnableVoiceToggleCheck);
+
+
+        // === CHECKBOX 4 : Show ranges in foundations (091) ===
+        // Right column of the first row, right of "Enable distance-based muting" (the area
+        // x~320..565, y~140..205 of the background is plain). Unlike the three labels above,
+        // this text is NOT baked into the background bitmap: the static draws it itself
+        // (white, see ui_config_on_ctlcolorstatic). Clicking the text toggles the box.
+        // Colonne de droite de la 1re ligne. Le texte n'est PAS dans l'image de fond.
+        hRangeUnitCheck = CreateWindowW(L"BUTTON", L"",
+            WS_CHILD | BS_AUTOCHECKBOX,
+            330, 145, 20, 20, hwnd, (HMENU)IDC_CHECK_RANGEUNIT, NULL, NULL);
+
+        if (hCheckIcon) {
+            SendMessage(hRangeUnitCheck, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hCheckIcon);
+        }
+
+        HWND hRangeUnitLabel = CreateWindowW(L"STATIC", L"Show ranges in foundations",
+            WS_CHILD | SS_LEFT | SS_NOTIFY,
+            355, 147, 210, 20, hwnd, (HMENU)IDC_LABEL_RANGEUNIT, NULL, NULL);
+        ApplyFontToControl(hRangeUnitLabel, hFont);
+
+        SetWindowSubclass(hRangeUnitLabel, CheckboxLabelProc, IDC_CHECK_RANGEUNIT, (DWORD_PTR)hRangeUnitCheck);
 
         // Get real dimensions of IDB_Key_Box_01 (cached bitmap — not deleted here)
         // Récupérer les dimensions réelles de IDB_Key_Box_01 (bitmap en cache)
@@ -680,12 +705,19 @@ LRESULT ui_config_on_create(HWND hwnd, WPARAM wParam, LPARAM lParam) {
         CheckDlgButton(hwnd, 203, ui_cfg()->enableAutomaticChannelChange ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hwnd, 204, ui_cfg()->enableVoiceToggle ? BST_CHECKED : BST_UNCHECKED);
 
+        // 091: checked when the player ticked it OR the Root forces it (then locked). The force is
+        // only shown here - it is never written into the working copy / plugin.cfg.
+        // Coche si choisie OU imposee par le serveur (alors verrouillee) ; jamais enregistree.
+        CheckDlgButton(hwnd, IDC_CHECK_RANGEUNIT, ui_ranges_in_foundations() ? BST_CHECKED : BST_UNCHECKED);
+        EnableWindow(hRangeUnitCheck, ui_ranges_forced_by_server() ? FALSE : TRUE);
+
         // CORRECTION: Utiliser les valeurs CHARGÉES depuis le fichier de configuration
         // au lieu des valeurs par défaut
+        // 091: the working copy is in meters; the edits show the display unit (meters or foundations).
         wchar_t whisperText[32], normalText[32], shoutText[32];
-        swprintf(whisperText, 32, L"%.1f", ui_cfg()->distanceWhisper);
-        swprintf(normalText, 32, L"%.1f", ui_cfg()->distanceNormal);
-        swprintf(shoutText, 32, L"%.1f", ui_cfg()->distanceShout);
+        ui_range_text(whisperText, 32, ui_cfg()->distanceWhisper);
+        ui_range_text(normalText, 32, ui_cfg()->distanceNormal);
+        ui_range_text(shoutText, 32, ui_cfg()->distanceShout);
 
         SetWindowTextW(hDistanceWhisperEdit, whisperText);
         SetWindowTextW(hDistanceNormalEdit, normalText);

@@ -97,6 +97,7 @@ static void config_set_defaults(PluginConfig* cfg) {
     cfg->distanceWhisper = CFG_DEFAULT_DIST_WHISPER;
     cfg->distanceNormal = CFG_DEFAULT_DIST_NORMAL;
     cfg->distanceShout = CFG_DEFAULT_DIST_SHOUT;
+    cfg->rangeInFoundations = 0; /* 091: meters unless the player ticks the box */
     cfg->whisperKey = 97;      /* Num1 */
     cfg->normalKey = 98;       /* Num2 */
     cfg->shoutKey = 99;        /* Num3 */
@@ -357,6 +358,7 @@ static int cfg_serialize(const PluginConfig* cfg, char* out, size_t cap) {
         "DistanceWhisper=%.1f\r\n"
         "DistanceNormal=%.1f\r\n"
         "DistanceShout=%.1f\r\n"
+        "ShowRangesInFoundations=%s\r\n"
         "WhisperKey=%d\r\n"
         "NormalKey=%d\r\n"
         "ShoutKey=%d\r\n"
@@ -375,6 +377,7 @@ static int cfg_serialize(const PluginConfig* cfg, char* out, size_t cap) {
         saved, autoP,
         cfg->automaticPatchFind ? "true" : "false",
         cfg->distanceWhisper, cfg->distanceNormal, cfg->distanceShout,
+        cfg->rangeInFoundations ? "true" : "false",
         cfg->whisperKey, cfg->normalKey, cfg->shoutKey,
         cfg->voiceToggleKey, cfg->configUIKey,
         cfg->enableDistanceMuting ? "true" : "false",

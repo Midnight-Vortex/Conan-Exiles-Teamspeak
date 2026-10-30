@@ -11,13 +11,23 @@
  *
  *   [GLOBAL]
  *   AudioMaxVolume=1.0
- *   MinimumWisper=2 / MaximumWisper=10
+ *   MinimumWisper=2 / MaximumWisper=10   (091: "MinimumWhisper" / "MaximumWhisper" too)
  *   MinimumNormal=5 / MaximumNormal=30
  *   MinimumShout=20 / MaximumShout=100
  *   ForceDistanceBasedMuting=True
  *   ForceAutomaticChanelSwitching=True
  *   ForceSpeakersOn=True        (speakers muted in TS -> out of the ingame channel, others
  *                                no longer hear that player; default off, doku 079)
+ *   ForceRangesInFoundations=True (091, default off: every player sees the voice ranges in
+ *                                Conan foundations (1 = 2.56 m) instead of meters AND ALL voice
+ *                                ranges of this description are written in FOUNDATIONS:
+ *                                MinimumWisper/Whisper .. MaximumShout, the same keys and
+ *                                listenAddDistance in [RACE], Wisper/Normal/Shout in [ZONES],
+ *                                DefaultDistance* in [DEFAULT_SETTINGS]. They are converted to
+ *                                meters (x 2.56) when parsed. Not converted: zone corners,
+ *                                GroundY/TopY, AudioMinDistance, AudioMaxVolume, FilterIntensity,
+ *                                the Occ... / Occlusion... keys. The key may stand anywhere
+ *                                in [GLOBAL].)
  *   RealisticAudio=True
  *   FilterIntensity=100
  *   EnableHrtf=True             (binaural HRTF for headphones, default off)
@@ -33,7 +43,7 @@
  *   X1=.. Z1=.. .. X4=.. Z4=..  (quad corners, world meters)
  *   GroundY=.. TopY=..
  *   SoundProof=True / Reverb=True
- *   Wisper=.. Normal=.. Shout=..  (zone distance overrides)
+ *   Wisper=.. Normal=.. Shout=..  (zone distance overrides; 091: "Whisper=" too)
  *
  * HTML line breaks (<br>, <br/>) are treated as newlines. Values are
  * validated (finite, clamped) before they land in the struct.  Single-number
@@ -94,6 +104,10 @@ typedef struct HubSettings {
     int forceDistanceMuting;     /* server forces proximity muting on */
     int forceAutoChannelSwitch;  /* server forces hub<->ingame auto-move */
     int forceSpeakersOn;         /* 079: muted speakers -> hub, deaf speakers silenced */
+    int forceRangesInFoundations; /* 091: show ranges in foundations; the voice ranges of this
+                                     description are written in foundations (converted to
+                                     meters by hub_parse_settings - every other field of this
+                                     struct is in meters) */
     int nicknameRandomizer;      /* 1 = assign random digit nick ingame (default) */
     int realisticAudio;          /* 1 = Mumble-style spatial filter in open world */
     float filterIntensity;       /* 0..100 scales filter when realisticAudio=1 */

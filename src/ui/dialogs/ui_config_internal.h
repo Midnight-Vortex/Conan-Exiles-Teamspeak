@@ -29,6 +29,11 @@ extern BOOL g_configDialogDestroying;
 #define IDC_LABEL_DISTMUTING  2011 /* distance-based muting   (Advanced tab) */
 #define IDC_LABEL_CHANSWITCH  2012 /* automatic channel switching (Advanced tab) */
 #define IDC_LABEL_VOICETOGGLE 2013 /* voice mode toggle button (Advanced tab) */
+#define IDC_LABEL_RANGEUNIT   2014 /* "Show ranges in foundations" (091). Unlike the three above its
+                                      text is NOT baked into the background bitmap: this static draws it. */
+
+/* Checkbox of that label (Plugin Settings tab, 091). 200/201/203/204 are the other checkboxes. */
+#define IDC_CHECK_RANGEUNIT   205
 
 /* Image cache (ui_config_draw.c). Resource images used by the owner-draw code
    are decoded ONCE (on first use) and kept until the dialog is gone, instead of

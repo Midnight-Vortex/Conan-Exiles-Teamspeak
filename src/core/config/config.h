@@ -32,6 +32,11 @@ typedef struct PluginConfig {
     float distanceNormal;
     float distanceShout;
 
+    /* 091: 1 = the F10 dialog and the voice-mode chat line SHOW the distances in
+       Conan foundations (1 = 2.56 m) instead of meters.  Display only: every
+       distance above stays in meters (core/config/range_units.h). */
+    int rangeInFoundations;
+
     /* Hotkeys (virtual key codes). */
     int whisperKey;
     int normalKey;

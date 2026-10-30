@@ -220,6 +220,10 @@ run_suite pos_parse_test \
 run_suite config_text_test \
     tests/config_text_test.c
 
+# 091 — voice ranges in Conan foundations (1 = 2.56 m): conversion, hub-limit rounding, unit names.
+run_suite range_units_test \
+    tests/range_units_test.c
+
 # 083 — CEPOS received-name sanitising (pure wire helper).
 run_suite cepos_wire_test \
     tests/cepos_wire_test.c

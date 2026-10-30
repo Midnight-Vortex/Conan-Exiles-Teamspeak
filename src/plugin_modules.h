@@ -91,6 +91,7 @@ void setOverlayHighlightState(mumble_userid_t userID, mumble_connection_t connec
 /* ui */
 void updateDynamicInterface(void);
 void forceInterfaceRefresh(void);
+void ui_range_unit_changed(void);
 void handleDistanceEditChange(int editId);
 void updateConsolidatedDistanceMessages(void);
 void updateServerLimitMessages(void);

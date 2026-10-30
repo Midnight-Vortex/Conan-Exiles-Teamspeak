@@ -123,6 +123,7 @@ void ShowCategoryControls(int category) {
     HWND hDistanceMutingLabel = GetDlgItem(hConfigDialog, IDC_LABEL_DISTMUTING);
     HWND hChannelSwitchingLabel = GetDlgItem(hConfigDialog, IDC_LABEL_CHANSWITCH);
     HWND hVoiceToggleLabel = GetDlgItem(hConfigDialog, IDC_LABEL_VOICETOGGLE);
+    HWND hRangeUnitLabel = GetDlgItem(hConfigDialog, IDC_LABEL_RANGEUNIT); // 091
 
     // Preset category controls | Contrôles de la catégorie presets
     HWND hPresetTitle = GetDlgItem(hConfigDialog, 800);
@@ -151,6 +152,7 @@ void ShowCategoryControls(int category) {
             hShoutKeyEdit, hShoutButton, hConfigKeyEdit, hConfigButton,
             hEnableDistanceMutingCheck, hEnableAutomaticChannelChangeCheck,
             hEnableVoiceToggleCheck, hVoiceToggleKeyEdit, hVoiceToggleButton,
+            hRangeUnitCheck, hRangeUnitLabel,
             hHudThemeLabel, hHudThemeCombo,
             hHudPositionLabel, hHudPositionCombo,
             hHudSizeLabel, hHudSizeCombo,
@@ -245,6 +247,8 @@ void ShowCategoryControls(int category) {
         if (hDistanceMutingLabel) ShowWindow(hDistanceMutingLabel, SW_SHOW);
         if (hChannelSwitchingLabel) ShowWindow(hChannelSwitchingLabel, SW_SHOW);
         if (hVoiceToggleLabel) ShowWindow(hVoiceToggleLabel, SW_SHOW);
+        if (hRangeUnitCheck) ShowWindow(hRangeUnitCheck, SW_SHOW);
+        if (hRangeUnitLabel) ShowWindow(hRangeUnitLabel, SW_SHOW);
 
         // Show messages | Afficher messages
         if (hDistanceWhisperMessage) ShowWindow(hDistanceWhisperMessage, SW_SHOW);
@@ -295,6 +299,8 @@ void ShowCategoryControls(int category) {
         if (hDistanceMutingLabel) ShowWindow(hDistanceMutingLabel, SW_HIDE);
         if (hChannelSwitchingLabel) ShowWindow(hChannelSwitchingLabel, SW_HIDE);
         if (hVoiceToggleLabel) ShowWindow(hVoiceToggleLabel, SW_HIDE);
+        if (hRangeUnitCheck) ShowWindow(hRangeUnitCheck, SW_HIDE);
+        if (hRangeUnitLabel) ShowWindow(hRangeUnitLabel, SW_HIDE);
 
         // Hide advanced options | Masquer options avancées
         if (hPluginLabel) ShowWindow(hPluginLabel, SW_HIDE);
@@ -486,10 +492,11 @@ static int showConfigInterfaceRun(void) {
                 *conanSandbox = L'\0';
             }
 
+            // 091: meters as hand-off text; exact in foundation mode (see ui_range_transport_text).
             wchar_t distWhisper[32], distNormal[32], distShout[32];
-            swprintf(distWhisper, 32, L"%.1f", ui_cfg()->distanceWhisper);
-            swprintf(distNormal, 32, L"%.1f", ui_cfg()->distanceNormal);
-            swprintf(distShout, 32, L"%.1f", ui_cfg()->distanceShout);
+            ui_range_transport_text(distWhisper, 32, ui_cfg()->distanceWhisper);
+            ui_range_transport_text(distNormal, 32, ui_cfg()->distanceNormal);
+            ui_range_transport_text(distShout, 32, ui_cfg()->distanceShout);
 
             writeFullConfiguration(gameFolder, distWhisper, distNormal, distShout);
 

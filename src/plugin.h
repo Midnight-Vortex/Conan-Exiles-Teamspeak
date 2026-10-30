@@ -244,6 +244,7 @@ extern HWND hConfigDialog;
 extern HWND hWhisperKeyEdit, hNormalKeyEdit, hShoutKeyEdit, hConfigKeyEdit;
 extern HWND hWhisperButton, hNormalButton, hShoutButton, hConfigButton;
 extern HWND hEnableDistanceMutingCheck, hEnableAutomaticChannelChangeCheck;
+extern HWND hRangeUnitCheck; /* 091: "Show ranges in foundations" checkbox (Plugin Settings tab) */
 extern HWND hDistanceWhisperEdit, hDistanceNormalEdit, hDistanceShoutEdit;
 extern HWND hSavedPathEdit, hSavedPathButton, hSavedPathBg;
 extern HBITMAP hPathBoxBitmap;
@@ -342,6 +343,7 @@ extern double hubMaximumShout;
 extern BOOL hubForceDistanceBasedMuting;
 extern BOOL hubForceAutomaticChannelSwitching;
 extern BOOL hubNicknameRandomizer;
+extern BOOL hubForceRangesInFoundations; /* 091: Root key ForceRangesInFoundations (mirror, callback thread writes) */
 
 // Voice system variables
 extern CompletePositionalData localVoiceData;

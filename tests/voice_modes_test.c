@@ -212,6 +212,69 @@ static void test_apply_edge(void) {
     voice_mode_apply(VOICE_MODE_NORMAL);
 }
 
+/* ---- 091: the chat line follows the display unit ---------------------------- */
+
+static char g_lastChat[256];
+
+static void hook_capture_chat(const char* m) {
+    snprintf(g_lastChat, sizeof(g_lastChat), "%s", m);
+}
+
+static void install_chat_capture(void) {
+    VoiceModeHooks hooks;
+    memset(&hooks, 0, sizeof(hooks));
+    hooks.get_profile = fake_get_profile;
+    hooks.notify_chat = hook_capture_chat;
+    voice_mode_set_hooks(&hooks);
+    g_lastChat[0] = '\0';
+}
+
+static void test_chat_unit(void) {
+    printf("[5b] mode-change chat line: meters by default, foundations on request (091)\n");
+    reset_state();
+    install_chat_capture();
+    voice_mode_apply(VOICE_MODE_NORMAL);   /* normalise */
+
+    /* default: byte-for-byte the old line */
+    g_lastChat[0] = '\0';
+    voice_mode_apply(VOICE_MODE_SHOUT);
+    CHECK(strcmp(g_lastChat, "[Conan Exiles] Voice mode: Shout - Distance: 40.0 m") == 0,
+        "meter mode: unchanged line");
+
+    /* the player's own checkbox */
+    g_config.rangeInFoundations = 1;
+    voice_mode_apply(VOICE_MODE_NORMAL);
+    CHECK(strcmp(g_lastChat, "[Conan Exiles] Voice mode: Normal - Distance: 5.9 foundations (15.0 m)") == 0,
+        "own setting: 15 m -> 5.9 foundations (15.0 m)");
+    voice_mode_apply(VOICE_MODE_WHISPER);
+    CHECK(strcmp(g_lastChat, "[Conan Exiles] Voice mode: Whisper - Distance: 2.0 foundations (5.0 m)") == 0,
+        "own setting: 5 m -> 2.0 foundations (5.0 m)");
+
+    /* the Root force, own setting off: foundations only while the profile says so */
+    g_config.rangeInFoundations = 0;
+    g_fakeProfileActive = 1;
+    g_fakeProfile.active = 1;
+    g_fakeProfile.hub.valid = 1;
+    g_fakeProfile.hub.forceRangesInFoundations = 1;
+    voice_mode_apply(VOICE_MODE_SHOUT);
+    CHECK(strcmp(g_lastChat, "[Conan Exiles] Voice mode: Shout - Distance: 15.6 foundations (40.0 m)") == 0,
+        "server force: 40 m -> 15.6 foundations (40.0 m)");
+    CHECK(g_config.rangeInFoundations == 0, "the force does not touch the player's own setting");
+
+    /* profile active but no force, then no profile at all: meters again */
+    g_fakeProfile.hub.forceRangesInFoundations = 0;
+    voice_mode_apply(VOICE_MODE_NORMAL);
+    CHECK(strstr(g_lastChat, "Distance: 15.0 m") != NULL && strstr(g_lastChat, "foundations") == NULL,
+        "profile without the force: meters");
+    g_fakeProfile.hub.forceRangesInFoundations = 1;
+    g_fakeProfileActive = 0;
+    voice_mode_apply(VOICE_MODE_SHOUT);
+    CHECK(strstr(g_lastChat, "Distance: 40.0 m") != NULL && strstr(g_lastChat, "foundations") == NULL,
+        "left the server (no profile): own choice (meters) applies again");
+
+    voice_mode_apply(VOICE_MODE_NORMAL);
+}
+
 #define RACE_ROUNDS 3000
 
 static pthread_barrier_t g_raceStart;
@@ -270,6 +333,7 @@ int main(void) {
     test_race_beats_hub();
     test_zone_override();
     test_apply_edge();
+    test_chat_unit();
     test_apply_race();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;

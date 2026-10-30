@@ -198,6 +198,159 @@ static void test_dist_parse_limits(void) {
     CHECK(ui_dist_parse(L"0", 0, 5.0f, 15.0f, &v) == UI_DIST_NOT_POSITIVE, "limits off: 0 still refused");
 }
 
+/* ---- [3d] 091: a distance edit read in the display unit ---------------------- */
+
+static void test_dist_parse_display(void) {
+    printf("[3d] ui_dist_parse_display: meters or foundations, no drift on Save\n");
+    float out = -1.0f;
+
+    /* NO DRIFT: 40 m is shown as "15.6" foundations; leaving the field alone keeps 40 m */
+    CHECK(ui_dist_parse_display(L"15.6", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_OK && out == 40.0f,
+        "foundations: unchanged text keeps the exact 40 m (not 39.936)");
+    CHECK(ui_dist_parse_display(L"15.60", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_OK && out == 40.0f,
+        "foundations: '15.60' reads as the same number -> exact 40 m");
+    CHECK(ui_dist_parse_display(L"5,9", 1, 15.0f, 0, 0, 0, &out) == UI_DIST_OK && out == 15.0f,
+        "foundations: decimal comma, 15 m shown as 5.9 -> exact 15 m");
+    CHECK(ui_dist_parse_display(L"13.0", 0, 13.0f, 0, 0, 0, &out) == UI_DIST_OK && out == 13.0f,
+        "meters: unchanged -> exact");
+    CHECK(ui_dist_parse_display(L"13", 0, 13.04f, 0, 0, 0, &out) == UI_DIST_OK && out == 13.04f,
+        "meters: 13.04 shown as 13.0, typed '13' -> the stored 13.04 is kept");
+
+    /* a real change converts the typed number */
+    CHECK(ui_dist_parse_display(L"6.5", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_OK && fabsf(out - 16.64f) < 0.0001f,
+        "foundations: typed 6.5 -> 16.64 m");
+    CHECK(ui_dist_parse_display(L"1", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_OK && fabsf(out - 2.56f) < 0.0001f,
+        "foundations: typed 1 -> 2.56 m");
+    CHECK(ui_dist_parse_display(L"16", 1, 3.0f, 0, 0, 0, &out) == UI_DIST_OK && fabsf(out - 40.96f) < 0.0001f,
+        "foundations: typed 16 -> 40.96 m");
+    CHECK(ui_dist_parse_display(L"25.5", 0, 13.0f, 0, 0, 0, &out) == UI_DIST_OK && out == 25.5f,
+        "meters: typed 25.5 -> 25.5 (identity, as before the feature)");
+
+    /* strictness is the same as ui_dist_parse, in both units */
+    CHECK(ui_dist_parse_display(L"", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_EMPTY, "empty");
+    CHECK(ui_dist_parse_display(L"abc", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_NOT_NUMBER, "abc");
+    CHECK(ui_dist_parse_display(L"nan", 0, 40.0f, 0, 0, 0, &out) == UI_DIST_NOT_NUMBER, "nan");
+    CHECK(ui_dist_parse_display(L"0", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_NOT_POSITIVE, "0");
+    CHECK(ui_dist_parse_display(L"-2", 1, 40.0f, 0, 0, 0, &out) == UI_DIST_NOT_POSITIVE, "-2");
+    out = 123.0f;
+    ui_dist_parse_display(L"abc", 1, 40.0f, 0, 0, 0, &out);
+    CHECK(out == 123.0f, "*out untouched on every error");
+
+    /* server limits are checked in the DISPLAY unit: 15 m max = 5.8 F, 5 m min = 2.0 F */
+    CHECK(ui_dist_parse_display(L"5.8", 1, 10.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OK
+        && fabsf(out - 14.848f) < 0.001f && out <= 15.0f, "foundations: shown max 5.8 is accepted and is <= 15 m");
+    CHECK(ui_dist_parse_display(L"5.9", 1, 10.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "foundations: 5.9 F = 15.1 m is over the max");
+    CHECK(ui_dist_parse_display(L"2.0", 1, 10.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OK
+        && out >= 5.0f, "foundations: shown min 2.0 is accepted and is >= 5 m");
+    CHECK(ui_dist_parse_display(L"1.9", 1, 10.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "foundations: 1.9 F = 4.86 m is under the min");
+    CHECK(ui_dist_parse_display(L"0.9", 1, 10.0f, 1, 2.1f, 15.0f, &out) == UI_DIST_OK && out >= 2.1f,
+        "min 2.1 m (0.82 F): 0.9 is the first valid value");
+    CHECK(ui_dist_parse_display(L"0.8", 1, 10.0f, 1, 2.1f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "min 2.1 m: 0.8 F = 2.048 m is below the limit");
+    CHECK(ui_dist_parse_display(L"4.9", 0, 10.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE
+        && ui_dist_parse_display(L"5.0", 0, 10.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OK && out == 5.0f,
+        "meters: limits exactly as ui_dist_parse");
+    CHECK(ui_dist_parse_display(L"500", 1, 10.0f, 0, 5.0f, 15.0f, &out) == UI_DIST_OK,
+        "limits inactive: not checked");
+    CHECK(ui_dist_parse_display(L"100", 1, 10.0f, 1, 0.0f, 0.0f, &out) == UI_DIST_OK,
+        "limits active but unset (0): not checked");
+
+    /* unchanged text is validated against the limits in METERS, not in rounded tenths */
+    CHECK(ui_dist_parse_display(L"0.8", 1, 2.1f, 1, 2.1f, 15.0f, &out) == UI_DIST_OK && out == 2.1f,
+        "stored 2.1 m (== min) shows as 0.8 F, unchanged: still valid, kept exactly");
+    CHECK(ui_dist_parse_display(L"6.0", 1, 15.36f, 1, 5.0f, 15.36f, &out) == UI_DIST_OK && out == 15.36f,
+        "stored value == max in meters, unchanged: valid");
+    CHECK(ui_dist_parse_display(L"7.8", 1, 20.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "stored value above the max (server changed the limit), unchanged: reported, not silently kept");
+
+    /* the file round trip never invents a change: display -> meters -> 0.1 m file -> display */
+    CHECK(ui_dist_parse_display(L"5.9", 1, 15.1f, 0, 0, 0, &out) == UI_DIST_OK && out == 15.1f,
+        "15.1 m (what a typed 5.9 F becomes in plugin.cfg) shows as 5.9 and stays 15.1");
+}
+
+/* Review fixes (091): the cases the review reproduced, against the real header. */
+static void test_dist_parse_display_review(void) {
+    printf("[3e] ui_dist_parse_display: second Save, float noise, narrow ranges\n");
+    float out = -1.0f;
+    const float f1 = 1.0f * RANGE_FOUNDATION_EDGE_M, f6 = 6.0f * RANGE_FOUNDATION_EDGE_M,
+        f16 = 16.0f * RANGE_FOUNDATION_EDGE_M;
+
+    /* server force, limits 6..6 F = 15.36 m; an older Save left 15.4 m in the working copy */
+    CHECK(ui_dist_parse_display(L"6.0", 1, 15.4f, 1, f6, f6, &out) == UI_DIST_OK && out == f6,
+        "stored 15.4 m vs 15.36 m limit, field '6.0' untouched: OK, pulled onto the limit");
+    CHECK(ui_dist_parse_display(L"1.0", 1, 2.6f, 1, f1, f1, &out) == UI_DIST_OK && out == f1,
+        "stored 2.6 m vs 1 F limit: OK, 2.56 m");
+    CHECK(ui_dist_parse_display(L"16.0", 1, 41.0f, 1, f16, f16, &out) == UI_DIST_OK && out == f16,
+        "stored 41.0 m vs 16 F limit: OK, 40.96 m");
+    CHECK(ui_dist_parse_display(L"6.0", 1, f6, 1, f6, f6, &out) == UI_DIST_OK && out == f6,
+        "stored exactly on the limit: kept");
+    CHECK(ui_dist_parse_display(L"7.8", 1, 20.0f, 1, 5.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "a stored value that READS outside (7.8 F vs max 5.8 F) is still refused");
+    CHECK(ui_dist_parse_display(L"16.0", 0, 16.0f, 1, 15.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "meters: stored 16 vs 15..15, unchanged: still refused (as before)");
+    CHECK(ui_dist_parse_display(L"15.0", 0, 15.04f, 1, 5.0f, 15.0f, &out) == UI_DIST_OK && out == 15.0f,
+        "meters: stored 15.04 reads '15.0' vs max 15: pulled onto 15");
+    CHECK(ui_dist_parse_display(L"1.0", 0, 0.951f, 1, 1.0f, 0.5f, &out) == UI_DIST_OUT_OF_RANGE
+        && ui_dist_parse_display(L"0.4", 1, 0.951f, 1, 1.0f, 0.5f, &out) == UI_DIST_OUT_OF_RANGE,
+        "min > max (admin error), unchanged field: still refused in both units (as before)");
+    CHECK(ui_dist_parse_display(L"15.4", 0, 15.4f, 1, 5.0f, 15.36f, &out) == UI_DIST_OK && out == 15.36f,
+        "meters: admin max 15.36 m, plugin.cfg gave 15.4 (shown '15.4'): pulled onto 15.36, not refused");
+
+    /* float noise: 10 F = 25.5999985 m against a 25.6 m minimum written in meters */
+    CHECK(ui_dist_parse_display(L"10", 1, 15.0f, 1, 25.6f, 100.0f, &out) == UI_DIST_OK && out == 25.6f,
+        "typed 10 F against a 25.6 m min: OK, exactly 25.6 m (not 25.5999985)");
+    CHECK(ui_dist_parse_display(L"10.0", 1, range_to_meters(10.0f, 1), 1, 25.6f, 100.0f, &out) == UI_DIST_OK
+        && out == 25.6f, "stored 25.5999985 m (from an older build), unchanged: OK, 25.6 m");
+    CHECK(ui_dist_parse_display(L"5", 1, 15.0f, 1, 12.8f, 100.0f, &out) == UI_DIST_OK && out == 12.8f,
+        "typed 5 F against a 12.8 m min: OK");
+
+    /* narrow range 15..15 m (no 0.1 F step inside): shown 5.9..5.9, never inverted */
+    CHECK(ui_dist_parse_display(L"5.9", 1, 10.0f, 1, 15.0f, 15.0f, &out) == UI_DIST_OK && out == 15.0f,
+        "15..15 m: typed 5.9 F -> exactly 15 m");
+    CHECK(ui_dist_parse_display(L"5.8", 1, 10.0f, 1, 15.0f, 15.0f, &out) == UI_DIST_OUT_OF_RANGE,
+        "15..15 m: typed 5.8 F refused");
+    CHECK(ui_dist_parse_display(L"5.9", 1, 15.0f, 1, 15.0f, 15.0f, &out) == UI_DIST_OK && out == 15.0f,
+        "15..15 m: stored 15 m, unchanged: kept");
+    CHECK(ui_dist_parse_display(L"5.8", 1, 10.0f, 1, 14.9f, 15.0f, &out) == UI_DIST_OK && out == 14.9f,
+        "14.9..15 m: typed 5.8 F -> 14.9 m");
+    CHECK(ui_dist_parse_display(L"15", 0, 10.0f, 1, 15.0f, 15.0f, &out) == UI_DIST_OK && out == 15.0f,
+        "meters 15..15: typed 15 -> 15 (identity, as before)");
+}
+
+/* Review fix (091): Save hands the validated meters to writeFullConfiguration as
+   TEXT ("%.9g"), which parses them back with ui_dist_parse.  That must give back
+   the exact float - "%.1f" turned 15.36 m into 15.4 m. */
+static void test_save_text_round_trip(void) {
+    printf("[3f] Save text round trip: \"%%.9g\" -> ui_dist_parse is exact\n");
+    int n = 0, bad = 0;
+    for (int i = 5; i <= 10000; i++) {               /* 0.5 .. 1000 m in 0.1 m steps */
+        const float tenth = (float)i / 10.0f;
+        const float vals[4] = { tenth, nextafterf(tenth, 0.0f), nextafterf(tenth, 2000.0f),
+            (float)i / 10.0f / 4.0f * RANGE_FOUNDATION_EDGE_M };
+        for (int k = 0; k < 4; k++) {
+            wchar_t txt[32];
+            swprintf(txt, 32, L"%.9g", (double)vals[k]);
+            float back = -1.0f;
+            n++;
+            if (ui_dist_parse(txt, 0, 0.0f, 0.0f, &back) != UI_DIST_OK || back != vals[k]) {
+                bad++;
+            }
+        }
+    }
+    printf("       (%d values, %d mismatches)\n", n, bad);
+    CHECK(bad == 0, "every float 0.5..1000 m (0.1 m grid, neighbours, quarter foundations) comes back exactly");
+
+    wchar_t a[32], b[32];
+    float pa = 0.0f, pb = 0.0f;
+    swprintf(a, 32, L"%.1f", 15.3);
+    swprintf(b, 32, L"%.9g", (double)15.3f);
+    ui_dist_parse(a, 0, 0.0f, 0.0f, &pa);
+    ui_dist_parse(b, 0, 0.0f, 0.0f, &pb);
+    CHECK(pa == pb, "meter mode: a 0.1 m value gives the same float as the old \"%.1f\" text");
+}
+
 /* ---- [4] voice_presets.cfg validation --------------------------------------- */
 
 static void test_preset_header(void) {
@@ -331,6 +484,7 @@ static void test_merge_ownership(void) {
         && g.enableVoiceToggle == w.enableVoiceToggle, "three feature toggles copied");
     CHECK(g.hudTheme == w.hudTheme && g.hudPosition == w.hudPosition && g.hudSize == w.hudSize,
         "HUD theme/position/size copied");
+    CHECK(g.rangeInFoundations == w.rangeInFoundations, "rangeInFoundations (091, display unit) copied");
 
     /* NOT dialog-owned: exactly what another thread may have changed meanwhile. */
     CHECK(wcscmp(g.automaticSavedPath, L"G:\\auto-from-watcher") == 0,
@@ -350,6 +504,7 @@ static void test_merge_ownership(void) {
         "hud merge leaves the distances alone");
     CHECK(g2.whisperKey == before.whisperKey && g2.automaticPatchFind == before.automaticPatchFind,
         "hud merge leaves keys / auto-find alone");
+    CHECK(g2.rangeInFoundations == before.rangeInFoundations, "hud merge leaves the display unit alone");
 
     /* A maximal (259 char) savedPath copies completely and stays terminated. */
     for (int i = 0; i < CONFIG_MAX_PATH - 1; i++) w.savedPath[i] = L'z';
@@ -366,6 +521,9 @@ int main(void) {
     test_dist_parse_valid();
     test_dist_parse_invalid();
     test_dist_parse_limits();
+    test_dist_parse_display();
+    test_dist_parse_display_review();
+    test_save_text_round_trip();
     test_preset_header();
     test_preset_values();
     test_preset_file_simulation();
