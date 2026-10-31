@@ -640,7 +640,8 @@ static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remot
     out->soundproof = soundproof;
     out->reverbZone = reverbZone;
     /* 095: the echo inside a Reverb=True zone follows the root key CaveReverb (percent,
-       default 70); indoorWet (room factor) stays 0 unless OcclusionReverb is set. */
+       default 70). Outside a zone the room factor from the mod decides (indoorWet,
+       OcclusionReverb): natural caves echo, the mod reports built rooms as 0. */
     const float caveWet = (reverbZone && hub) ? hub->caveReverb / 100.0f : 0.0f;
     out->reverbWet = reverbZone ? caveWet : indoorWet;
     out->valid = 1;

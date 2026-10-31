@@ -33,9 +33,10 @@
  *   EnableHrtf=True             (binaural HRTF for headphones, default off)
  *   EnableOcclusion=True        (mod-reported wall occlusion prototype, default off)
  *   OcclusionIntensity=100      (occlusion strength in percent, 0..300, default 100)
- *   OcclusionAttackMs=500 / OcclusionReleaseMs=250 / OcclusionDiffraction=100 / OcclusionReverb=0
- *                               (OcclusionReverb: echo in rooms from the mod's room factor, 0..200 %,
- *                                default 0 = off since 095, so houses do not echo)
+ *   OcclusionAttackMs=500 / OcclusionReleaseMs=250 / OcclusionDiffraction=100 / OcclusionReverb=100
+ *                               (OcclusionReverb: echo outside Reverb=True zones from the mod's room
+ *                                factor = natural caves without a zone, 0..200 %, default 100, needs
+ *                                EnableOcclusion=True, 0 = no such echo; zones use CaveReverb)
  *   CaveReverb=70               (095: strength of the echo inside Reverb=True zones, 0..200 %,
  *                                default 70, 100 = the old fixed strength, 0 = no echo, only the
  *                                dull cave sound)
@@ -123,7 +124,7 @@ typedef struct HubSettings {
     float occlusionIntensity;    /* 0..300 %, strength of the occlusion (069, default 100) */
     float occAttackMs, occReleaseMs;  /* 072: smoothing towards more / less occlusion (ms) */
     float occDiffraction;        /* 072: strength of the around-the-corner curve, 0..300 % */
-    float occReverb;             /* 072: indoor reverb from the room factor, 0..200 %, default 0 (095) */
+    float occReverb;             /* 072: echo from the mod's room factor (no zone), 0..200 %, default 100 */
     float caveReverb;            /* 095: echo strength inside Reverb=True zones, 0..200 %, default 70 */
     int occModParams[OCCLUSION_MOD_PARAM_COUNT]; /* 072: forwarded to the mod (occcfg) */
     char ingameChannelPassword[HUB_PASSWORD_LEN];
