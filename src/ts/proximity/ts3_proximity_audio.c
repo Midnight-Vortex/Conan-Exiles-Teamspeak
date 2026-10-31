@@ -470,7 +470,7 @@ typedef struct AudioPublishParams {
     int soundproof;
     int reverbZone;
     int reverbSlot;
-    float reverbWet;     /* 072 B4: 1 = cave zone, < 1 indoor, 0 off */
+    float reverbWet;     /* echo strength: CaveReverb/100 in a cave zone, room factor indoors, 0 off */
     int valid;
     int neutral;
     float azimuth;     /* HRTF direction, radians (listener-relative) */
@@ -639,7 +639,10 @@ static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remot
     out->drr = drr;
     out->soundproof = soundproof;
     out->reverbZone = reverbZone;
-    out->reverbWet = reverbZone ? 1.0f : indoorWet;
+    /* 095: the echo inside a Reverb=True zone follows the root key CaveReverb (percent,
+       default 70); indoorWet (room factor) stays 0 unless OcclusionReverb is set. */
+    const float caveWet = (reverbZone && hub) ? hub->caveReverb / 100.0f : 0.0f;
+    out->reverbWet = reverbZone ? caveWet : indoorWet;
     out->valid = 1;
     out->neutral = 0;
 
@@ -659,7 +662,7 @@ static void audio_publish_client(anyID clientID, const AudioPublishParams* param
     dir_publish(clientID, params->azimuth, params->elevation, params->dirValid);
 
     int reverbSlot = -1;
-    if (params->reverbZone || params->reverbWet > 0.01f) {
+    if (params->reverbWet > 0.01f) { /* 095: CaveReverb=0 needs no echo slot */
         reverbSlot = cave_slot_acquire(clientID);
     }
     else {

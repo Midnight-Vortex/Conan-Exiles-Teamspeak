@@ -237,6 +237,7 @@ static void test_cave_tail_not_replayed(void) {
     g_testHub.zones[0].x3 = 1000;  g_testHub.zones[0].z3 = 1000;
     g_testHub.zones[0].x4 = -1000; g_testHub.zones[0].z4 = 1000;
     g_testHub.zones[0].reverb = 1;
+    g_testHub.caveReverb = 100.0f; /* 095: echo strength = CaveReverb / 100 */
     t_put_and_publish(id, 5.0f, 40.0f);
     AudioTarget t;
     CHECK(t_target(id, &t) && t.reverbSlot >= 0 && t.reverbWet > 0.9f, "speaker is in the cave (slot assigned)");
@@ -461,6 +462,7 @@ static void t_cave_hub(void) {
     g_testHub.zones[0].x3 = 1000;  g_testHub.zones[0].z3 = 1000;
     g_testHub.zones[0].x4 = -1000; g_testHub.zones[0].z4 = 1000;
     g_testHub.zones[0].reverb = 1;
+    g_testHub.caveReverb = 100.0f; /* 095: echo strength = CaveReverb / 100 */
 }
 
 static int t_dsp_is_zero(const CaveDsp* d) {
@@ -649,6 +651,33 @@ static void test_misc(void) {
     CHECK(ts3_proximity_audio_soundproof_muted(id) == 0, "soundproof query still works");
 }
 
+/* 095: the echo in a Reverb=True zone follows CaveReverb; a room outside any zone
+   gets no echo unless OcclusionReverb is set (houses must not echo). */
+static void test_cave_reverb_strength(void) {
+    printf("[095] CaveReverb scales the cave echo; 0 = no echo slot; outside a zone no echo\n");
+    t_world_reset();
+    const unsigned id = 60;
+    t_cave_hub();
+    g_testHub.caveReverb = 70.0f;
+    t_put_and_publish(id, 5.0f, 40.0f);
+    AudioTarget t;
+    CHECK(t_target(id, &t) && t.reverbSlot >= 0 && fabsf(t.reverbWet - 0.7f) < 0.001f,
+        "CaveReverb=70 -> cave echo at 0.70 of the old fixed strength");
+    CHECK(t.cutoffHz < 19000.0f, "the dull cave lowpass is independent of CaveReverb");
+
+    g_testHub.caveReverb = 0.0f;
+    t_put_and_publish(id, 5.0f, 40.0f);
+    CHECK(t_target(id, &t) && t.reverbSlot < 0 && t.reverbWet < 0.001f,
+        "CaveReverb=0 -> no echo slot");
+    CHECK(t.cutoffHz < 19000.0f, "CaveReverb=0 keeps the dull cave lowpass");
+
+    g_testHub.zones[0].reverb = 0;
+    g_testHub.caveReverb = 100.0f;
+    t_put_and_publish(id, 5.0f, 40.0f);
+    CHECK(t_target(id, &t) && t.reverbSlot < 0 && t.reverbWet < 0.001f,
+        "zone without Reverb=True -> no echo (house / room)");
+}
+
 int main(void) {
     printf("audio PCM path host tests (084)\n");
     test_no_leak_after_generation_bump();
@@ -661,6 +690,7 @@ int main(void) {
     test_unmute_flags();
     test_expired_entry_mutes();
     test_cave_slot_recycle();
+    test_cave_reverb_strength();
     test_hrtf_gap_and_busy();
     test_once_per_pass();
     test_voice_cap();

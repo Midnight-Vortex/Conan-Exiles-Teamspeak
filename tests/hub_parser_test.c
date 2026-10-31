@@ -356,15 +356,28 @@ static void test_hrtf_switch(void) {
     CHECK(s.occlusionIntensity == 0.0f, "negative OcclusionIntensity -> 0");
 
     /* 072 */
-    CHECK(s.occAttackMs == 500.0f && s.occReleaseMs == 250.0f && s.occDiffraction == 100.0f && s.occReverb == 100.0f
-        && s.occModParams[0] == 80 && s.occModParams[11] == 2, "072 defaults");
+    CHECK(s.occAttackMs == 500.0f && s.occReleaseMs == 250.0f && s.occDiffraction == 100.0f && s.occReverb == 0.0f
+        && s.caveReverb == 70.0f && s.occModParams[0] == 80 && s.occModParams[11] == 2,
+        "072 defaults (095: room reverb off, CaveReverb 70)");
     hub_parse_settings("[GLOBAL]\nOcclusionAttackMs=800\nOcclusionReleaseMs=99999\nOcclusionDiffraction=150\n"
-        "OcclusionReverb=0\nOccDetourNearPct=45\nOccDetourNear=200\noccfar = 600\nOccBudget=5\n", &s);
-    CHECK(s.occAttackMs == 800.0f && s.occReleaseMs == 5000.0f && s.occDiffraction == 150.0f && s.occReverb == 0.0f,
+        "OcclusionReverb=150\nOccDetourNearPct=45\nOccDetourNear=200\noccfar = 600\nOccBudget=5\n", &s);
+    CHECK(s.occAttackMs == 800.0f && s.occReleaseMs == 5000.0f && s.occDiffraction == 150.0f && s.occReverb == 150.0f,
         "072 sound keys parsed + clamped");
     CHECK(s.occModParams[5] == 45 && s.occModParams[3] == 200, "OccDetourNearPct and OccDetourNear kept apart (exact keys)");
     CHECK(s.occModParams[2] == 600 && s.occModParams[10] == 20, "case-insensitive mod key, OccBudget clamped to 20");
     CHECK(s.occlusionIntensity == 100.0f && s.enableOcclusion == 0, "new keys leave the other settings alone");
+
+    /* 095: OcclusionReverb clamp (the 072 block above now uses a mid value) + CaveReverb */
+    hub_parse_settings("[GLOBAL]\nOcclusionReverb=999\n", &s);
+    CHECK(s.occReverb == 200.0f && s.caveReverb == 70.0f, "OcclusionReverb clamped to 200, CaveReverb untouched");
+    hub_parse_settings("[GLOBAL]\nRealisticAudio=True\n", &s);
+    CHECK(s.caveReverb == 70.0f, "absent CaveReverb -> 70");
+    hub_parse_settings("[GLOBAL]\nCaveReverb=40\n", &s);
+    CHECK(s.caveReverb == 40.0f && s.occReverb == 0.0f, "CaveReverb=40 parsed, room reverb untouched");
+    hub_parse_settings("[GLOBAL]<br>cavereverb = 999<br>", &s);
+    CHECK(s.caveReverb == 200.0f, "CaveReverb clamped to 200, case-insensitive key");
+    hub_parse_settings("[GLOBAL]\nCaveReverb=-5\n", &s);
+    CHECK(s.caveReverb == 0.0f, "negative CaveReverb -> 0");
 }
 
 static void test_decimal_comma(void) {

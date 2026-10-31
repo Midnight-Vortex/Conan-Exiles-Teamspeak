@@ -80,7 +80,9 @@ int occlusion_append_cfg_json(char* out, int outSize);
 #define OCCLUSION_SMOOTH_MS_MAX        5000
 #define OCCLUSION_DIFFRACTION_DEFAULT  100
 #define OCCLUSION_DIFFRACTION_MAX      300
-#define OCCLUSION_REVERB_DEFAULT       100
+/* 095: indoor room reverb is OFF unless the root channel asks for it. Houses and
+   other rooms must not echo; the cave echo comes from Reverb=True zones (CaveReverb). */
+#define OCCLUSION_REVERB_DEFAULT       0
 #define OCCLUSION_REVERB_MAX           200
 /* Around-the-corner curve (kind D, B2): mild loss of highs, little volume loss.
    strength = OcclusionDiffraction / 100. At amount 1 / strength 1: -3 dB and

@@ -58,7 +58,7 @@ typedef struct AudioTarget {
     float drr;           /* 1.0 = no diffuse; lower = more diffuse mix */
     int soundproof;      /* hard mute (different soundproof zone) */
     int reverbSlot;      /* cave reverb slot, -1 = off */
-    float reverbWet;     /* 1 = cave, < 1 = indoor room reverb */
+    float reverbWet;     /* echo strength: CaveReverb/100 in a cave zone, room factor indoors */
 } AudioTarget;
 
 typedef struct AudioSnap {

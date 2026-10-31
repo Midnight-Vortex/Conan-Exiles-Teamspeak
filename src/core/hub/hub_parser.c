@@ -122,6 +122,7 @@ static void hub_defaults(HubSettings* out) {
     out->occReleaseMs = (float)OCCLUSION_RELEASE_MS_DEFAULT;
     out->occDiffraction = (float)OCCLUSION_DIFFRACTION_DEFAULT;
     out->occReverb = (float)OCCLUSION_REVERB_DEFAULT;
+    out->caveReverb = (float)HUB_CAVE_REVERB_DEFAULT; /* 095 */
     for (int i = 0; i < OCCLUSION_MOD_PARAM_COUNT; i++) {
         out->occModParams[i] = occlusion_mod_param_default(i);
     }
@@ -219,6 +220,9 @@ static void hub_parse_global_line(const char* line, HubSettings* out) {
     }
     else if ((v = hub_value_for_exact(line, "OcclusionReverb")) != NULL) {
         out->occReverb = hub_parse_clamped(v, 0.0f, (float)OCCLUSION_REVERB_MAX);
+    }
+    else if ((v = hub_value_for_exact(line, "CaveReverb")) != NULL) {
+        out->caveReverb = hub_parse_clamped(v, 0.0f, (float)HUB_CAVE_REVERB_MAX);
     }
     else {
         hub_parse_occ_mod_param(line, out);

@@ -33,7 +33,12 @@
  *   EnableHrtf=True             (binaural HRTF for headphones, default off)
  *   EnableOcclusion=True        (mod-reported wall occlusion prototype, default off)
  *   OcclusionIntensity=100      (occlusion strength in percent, 0..300, default 100)
- *   OcclusionAttackMs=500 / OcclusionReleaseMs=250 / OcclusionDiffraction=100 / OcclusionReverb=100
+ *   OcclusionAttackMs=500 / OcclusionReleaseMs=250 / OcclusionDiffraction=100 / OcclusionReverb=0
+ *                               (OcclusionReverb: echo in rooms from the mod's room factor, 0..200 %,
+ *                                default 0 = off since 095, so houses do not echo)
+ *   CaveReverb=70               (095: strength of the echo inside Reverb=True zones, 0..200 %,
+ *                                default 70, 100 = the old fixed strength, 0 = no echo, only the
+ *                                dull cave sound)
  *   OccFanEdge, OccNear, OccFar, OccDetourNear, OccDetourFar, OccDetourNearPct, OccDetourFarPct,
  *   OccSameBuilding, OccFloor, OccThin, OccBudget, OccFast   (mod parameters, doku 072)
  *   NicknameRandomizer=True
@@ -53,6 +58,8 @@
  * Pure parse function — no state, no locks, no API. Any thread.
  */
 
+#define HUB_CAVE_REVERB_DEFAULT 70
+#define HUB_CAVE_REVERB_MAX     200
 #define HUB_MAX_ZONES     16
 #define HUB_ZONE_NAME_LEN 64
 #define HUB_PASSWORD_LEN  128
@@ -116,7 +123,8 @@ typedef struct HubSettings {
     float occlusionIntensity;    /* 0..300 %, strength of the occlusion (069, default 100) */
     float occAttackMs, occReleaseMs;  /* 072: smoothing towards more / less occlusion (ms) */
     float occDiffraction;        /* 072: strength of the around-the-corner curve, 0..300 % */
-    float occReverb;             /* 072: indoor reverb from the room factor, 0..200 % */
+    float occReverb;             /* 072: indoor reverb from the room factor, 0..200 %, default 0 (095) */
+    float caveReverb;            /* 095: echo strength inside Reverb=True zones, 0..200 %, default 70 */
     int occModParams[OCCLUSION_MOD_PARAM_COUNT]; /* 072: forwarded to the mod (occcfg) */
     char ingameChannelPassword[HUB_PASSWORD_LEN];
 
