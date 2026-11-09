@@ -292,6 +292,15 @@ int cepos_on_plugin_command(const char* pluginName, const char* pluginCommand,
         return 1;
     }
     if (!ts3_client_id_valid(invokerClientID)) {
+        /* 099: such a client has no per-client state. Say so (once a minute) instead
+           of dropping its position in silence. */
+        static ULONGLONG s_lastBadIdLog = 0;
+        const ULONGLONG nowBad = GetTickCount64();
+        if (nowBad - s_lastBadIdLog > 60000) {
+            s_lastBadIdLog = nowBad;
+            log_write("CEPOS: dropped a packet from client ID %u (valid IDs are 1..%d)",
+                (unsigned)invokerClientID, TS3_MAX_CLIENT_ID - 1);
+        }
         return 1;
     }
 

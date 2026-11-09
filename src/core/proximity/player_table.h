@@ -35,6 +35,11 @@ int player_table_put(unsigned short clientID, const char* name,
     float x, float y, float z, float voiceDistance,
     unsigned short* evictedClientID);
 
+/* 099: how many positions were stored since the plugin started (any thread).
+   The diagnostics line compares it between two points in time to show how many
+   CEPOS packets really arrived. */
+unsigned long player_table_put_count(void);
+
 /* Copy one player's entry. Returns 1 when found and fresh. */
 int player_table_get(unsigned short clientID, PlayerEntry* out);
 

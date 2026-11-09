@@ -45,8 +45,10 @@ static void test_flags(void) {
     talk_state_clear_client(5);
     CHECK(!talk_state_is_talking(5), "clear_client");
     talk_state_set(0, 1, 0);
-    talk_state_set(4096, 1, 0);
-    CHECK(!talk_state_is_talking(0) && !talk_state_is_talking(4096), "out of range IDs ignored");
+    talk_state_set(65536, 1, 0);
+    CHECK(!talk_state_is_talking(0) && !talk_state_is_talking(65536), "out of range IDs ignored");
+    talk_state_set(60000, 1, 0);
+    CHECK(talk_state_is_talking(60000), "a high 16-bit client ID (099) is tracked");
 }
 
 static void test_json(void) {
@@ -153,7 +155,7 @@ static void test_voice_gate(void) {
     CHECK(strstr(buf, "\"talkers\":\"\"") != NULL, "clear() forgets all voice ticks");
 
     talk_state_note_voice(0, NOW);
-    talk_state_note_voice(4096, NOW);
+    talk_state_note_voice(65536, NOW);
     CHECK(1, "out of range IDs in note_voice are ignored (no crash)");
 }
 

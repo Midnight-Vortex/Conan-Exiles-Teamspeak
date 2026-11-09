@@ -69,6 +69,7 @@
 
 #include <windows.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #define TS3_RECOMPUTE_ALL_MIN_MS 100   /* 10 Hz cap when local pos unchanged */
@@ -133,13 +134,18 @@ static LONG g_renderGeneration[TS3_MAX_CLIENT_ID];         /* audio thread only 
    main snapshot layout stays unchanged. Written under g_writerLock. */
 static AudioDirSnap g_dirSnap[TS3_MAX_CLIENT_ID];
 
-/* HRTF render state — post-process audio thread only. */
-static HrtfState g_hrtf[TS3_MAX_CLIENT_ID];
-static LONG g_hrtfGeneration[TS3_MAX_CLIENT_ID];
-static char g_hrtfActive[TS3_MAX_CLIENT_ID];
-static ULONGLONG g_hrtfLastMs[TS3_MAX_CLIENT_ID];   /* 084 #3: talk-pause detection */
-static AudioDir g_dirCache[TS3_MAX_CLIENT_ID];      /* 084 #6: last good direction */
-static char g_dirCacheValid[TS3_MAX_CLIENT_ID];
+/* HRTF render state — post-process audio thread only. One state is ~0.8 KB, so
+   it is only kept for the first TS3_HRTF_MAX_CLIENT_ID client IDs (099: the other
+   arrays cover the whole 16-bit range; a speaker above this ID just plays with
+   TeamSpeak's own 3D pan instead of the HRTF rendering - gain and distance still
+   apply). */
+#define TS3_HRTF_MAX_CLIENT_ID 4096
+static HrtfState g_hrtf[TS3_HRTF_MAX_CLIENT_ID];
+static LONG g_hrtfGeneration[TS3_HRTF_MAX_CLIENT_ID];
+static char g_hrtfActive[TS3_HRTF_MAX_CLIENT_ID];
+static ULONGLONG g_hrtfLastMs[TS3_HRTF_MAX_CLIENT_ID];   /* 084 #3: talk-pause detection */
+static AudioDir g_dirCache[TS3_HRTF_MAX_CLIENT_ID];      /* 084 #6: last good direction */
+static char g_dirCacheValid[TS3_HRTF_MAX_CLIENT_ID];
 
 /* Step-0 diagnostics: last seen channel layouts. Audio thread stores (atomic,
    only on change), callback thread logs in ts3_audio_diag_flush. */
@@ -147,6 +153,9 @@ static volatile LONG g_diagPlaybackChannels = 0;
 static volatile LONG g_diagPostChannels = 0;
 static volatile LONG g_diagPostSpeakers = 0;
 static volatile LONG g_diagPostFill = 0;
+/* 099: voice blocks of a client ID outside the per-client arrays (only ID 0 now)
+   that were silenced in PROXIMITY mode. Audio thread counts, callback thread logs. */
+static volatile LONG g_diagInvalidIdBlocks = 0;
 
 /* Unmute bookkeeping. Flags set from any thread (the audio thread included:
    one atomic CAS + one atomic increment, no lock, no spin), consumed on the
@@ -486,6 +495,72 @@ static float audio_lerp_realistic(float bypass, float target, float intensity) {
     return bypass + (target - bypass) * intensity;
 }
 
+/* ---- 099 diagnostics: requests (any thread) --------------------------------- */
+
+/* A snapshot (see audio_diag_write_snapshot) is written by the callback thread at
+   its next drain. Who asks: the user (Plugins > Conan Exiles menu), the stale-
+   audible warning below, or the server's anti-flood refusing plugin commands. */
+enum { DIAG_SNAP_NONE = 0, DIAG_SNAP_MENU = 1, DIAG_SNAP_STALE = 2, DIAG_SNAP_FLOOD = 3 };
+static volatile LONG g_diagSnapRequest = DIAG_SNAP_NONE;
+static volatile LONG g_diagSnapMenuDone = 0;
+static volatile LONG g_diagFloodErrors = 0;
+
+static void audio_diag_request(LONG reason) {
+    if (reason == DIAG_SNAP_MENU) {
+        InterlockedExchange(&g_diagSnapRequest, reason);                        /* the user asked: wins */
+    }
+    else {
+        InterlockedCompareExchange(&g_diagSnapRequest, reason, DIAG_SNAP_NONE); /* never replace a pending one */
+    }
+    ts3_request_wakeup();
+}
+
+void ts3_audio_request_diag_snapshot(void) {
+    audio_diag_request(DIAG_SNAP_MENU);
+}
+
+void ts3_audio_note_flood(void) {
+    InterlockedIncrement(&g_diagFloodErrors);
+    audio_diag_request(DIAG_SNAP_FLOOD);
+}
+
+int ts3_audio_take_menu_snapshot_done(void) {
+    return InterlockedExchange(&g_diagSnapMenuDone, 0) != 0;
+}
+
+/* 099: evidence for "heard louder than expected" reports (callback thread only).
+   - Warning (always on, once per 30 s per speaker): a speaker is audible although
+     his last CEPOS is older than TS3_STALE_WARN_MS. His keepalive comes every
+     second, so the plugin commands are getting lost (server anti-flood, packet
+     loss) or his position source stalled - and the gain below is computed from the
+     old position / voice distance.
+   - DebugMode line (once per 5 s per speaker): every input of the gain. */
+#define TS3_STALE_WARN_MS 5000ULL
+static ULONGLONG g_staleLogMs[TS3_MAX_CLIENT_ID];
+static ULONGLONG g_gainDbgMs[TS3_MAX_CLIENT_ID];
+
+static void audio_log_audible(const AudioPass* pass, const PlayerEntry* remote,
+    float distance, float hearRange, float gain) {
+    const anyID cid = remote->clientID;
+    if (gain <= 0.05f || !ts3_client_id_valid(cid)) {
+        return;
+    }
+    const ULONGLONG nowMs = GetTickCount64();
+    const ULONGLONG ageMs = nowMs > remote->lastUpdateMs ? nowMs - remote->lastUpdateMs : 0ULL;
+    if (ageMs > TS3_STALE_WARN_MS && nowMs - g_staleLogMs[cid] >= 30000ULL) {
+        g_staleLogMs[cid] = nowMs;
+        log_write("AUDIO: client %u is audible (gain %.2f at %.1f m, range %.1f m) but his last position is %.1f s old - CEPOS keepalive missing",
+            (unsigned)cid, gain, distance, hearRange, (double)ageMs / 1000.0);
+        audio_diag_request(DIAG_SNAP_STALE); /* write everybody's inputs next to it */
+    }
+    if (nowMs - g_gainDbgMs[cid] >= 5000ULL) {
+        g_gainDbgMs[cid] = nowMs;
+        log_debug("AUDIO-DBG cid=%u dist=%.1f m announced=%.1f m cap=%.1f listenAdd=%.1f -> range=%.1f gain=%.2f age=%.1f s",
+            (unsigned)cid, distance, remote->voiceDistance, pass->voiceCap, pass->listenAdd,
+            hearRange, gain, (double)ageMs / 1000.0);
+    }
+}
+
 /* Phase 4.3 — math outside lock; cave slots + publish under g_writerLock.
    `remote` is the player-table entry the caller already holds (084 #8). */
 static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remote,
@@ -617,7 +692,7 @@ static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remot
             }
         }
         /* C1: with DebugMode (plugin.cfg) one line per speaker and second. */
-        if (clientID < TS3_MAX_CLIENT_ID && nowMs - g_occDebugTick[clientID] >= 1000ULL) {
+        if (nowMs - g_occDebugTick[clientID] >= 1000ULL) { /* anyID < TS3_MAX_CLIENT_ID (099) */
             g_occDebugTick[clientID] = nowMs;
             if (oi.kind != OCCLUSION_KIND_NONE || sm.gain < 0.999f || oi.room > 0.0f) {
                 log_debug("OCC-DBG cid=%u kind=%d amount=%.2f room=%.2f -> gain=%.2f cutoff=%.0f relayW=%.2f",
@@ -646,14 +721,22 @@ static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remot
     out->reverbWet = reverbZone ? caveWet : indoorWet;
     out->valid = 1;
     out->neutral = 0;
+    audio_log_audible(pass, remote, distance, hearRange, gain);
 
     if (gain > TS3_AUDIBLE_GAIN) {
         audio_signal_unmute_flag_only(clientID);
     }
 }
 
+/* 099: highest client ID that ever got a snapshot (under g_writerLock). The
+   expiry sweep only scans up to it instead of the whole 16-bit ID range. */
+static int g_snapHighWater = 0;
+
 /* Caller must hold g_writerLock. */
 static void audio_publish_client(anyID clientID, const AudioPublishParams* params) {
+    if ((int)clientID > g_snapHighWater) {
+        g_snapHighWater = (int)clientID;
+    }
     if (params->neutral || !params->valid) {
         cave_slot_release(clientID);
         snap_publish_neutral(clientID, params->valid);
@@ -775,7 +858,7 @@ static void audio_recompute_all_impl(void) {
     for (int i = 0; i < batchCount; i++) {
         audio_publish_client(batchIds[i], &batch[i]);
     }
-    expiredCount = audio_snap_find_orphans(g_snap, fresh, TS3_MAX_CLIENT_ID,
+    expiredCount = audio_snap_find_orphans(g_snap, fresh, g_snapHighWater + 1,
         expired, PLAYER_TABLE_MAX_PLAYERS);
     for (int i = 0; i < expiredCount; i++) {
         AudioPublishParams params;
@@ -982,12 +1065,15 @@ void ts3_audio_process_playback(anyID clientID, short* samples, int sampleCount,
         return;
     }
     if (!ts3_client_id_valid(clientID)) {
-        /* 084 #10: an ID outside the per-client arrays (>= TS3_MAX_CLIENT_ID,
-           or 0) has no snapshot and no render state. In PROXIMITY mode it stays
-           untouched (as before). In hub MUTE mode every voice must be silent,
-           so it must NOT fail open here. */
-        if (InterlockedCompareExchange(&g_audioMode, 0, 0) == TS3_AUDIO_MUTE) {
+        /* 084 #10 / 099: an ID outside the per-client arrays (only 0 since the cap
+           is 65536) has no snapshot and no render state, so it can never be
+           distance-attenuated. PASSTHROUGH leaves the voice alone (not ingame). In
+           hub MUTE and in PROXIMITY mode it must be silent: failing open here played
+           such a speaker at full volume for everybody in the ingame channel. */
+        const long idMode = InterlockedCompareExchange(&g_audioMode, 0, 0);
+        if (idMode == TS3_AUDIO_MUTE || idMode == TS3_AUDIO_PROXIMITY) {
             audio_zero_block(samples, sampleCount, channels);
+            InterlockedIncrement(&g_diagInvalidIdBlocks);
         }
         return;
     }
@@ -1222,6 +1308,11 @@ void ts3_audio_process_postprocess(anyID clientID, short* samples, int sampleCou
         InterlockedExchange(&g_diagPostFill, (LONG)*channelFillMask);
     }
 
+    /* 099: no HRTF state above TS3_HRTF_MAX_CLIENT_ID (TS 3D pan plays instead). */
+    if (clientID >= TS3_HRTF_MAX_CLIENT_ID) {
+        return;
+    }
+
     /* Headphones / stereo only: HRTF is a two-ear rendering. 4.0/5.1 keep TS 3D. */
     if (!server_profile_get_hrtf_enabled() || channels != 2
         || InterlockedCompareExchange(&g_audioMode, 0, 0) != TS3_AUDIO_PROXIMITY) {
@@ -1286,8 +1377,153 @@ void ts3_audio_process_postprocess(anyID clientID, short* samples, int sampleCou
     *channelFillMask |= pairMask;
 }
 
+/* ---- 099 diagnostics: always written to plugin.log, no DebugMode needed -------- */
+
+#define TS3_DIAG_STAT_MS        30000ULL   /* AUDIO-STAT line interval */
+#define TS3_DIAG_AUTO_MIN_MS    120000ULL  /* automatic snapshots at most every 2 minutes */
+#define TS3_DIAG_SNAP_MAX_LINES 48
+#define TS3_DIAG_AUDIBLE_GAIN   0.05f
+
+static const char* audio_diag_mode_text(long mode) {
+    return mode == TS3_AUDIO_PROXIMITY ? "proximity" : mode == TS3_AUDIO_MUTE ? "hub-mute" : "passthrough";
+}
+
+/* One block with the inputs of every known speaker: the numbers the gain was
+   computed from. Callback thread. */
+static void audio_diag_write_snapshot(LONG reason) {
+    static const char* const reasonText[] = { "?", "menu", "stale-audible", "flood" };
+    AudioPass pass;
+    audio_pass_begin(&pass);
+    PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
+    const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
+    log_write("AUDIO-SNAP[%s]: mode=%s localPos=%s hub=%s zone=%d listenAdd=%.1f m maxVolume=%.2f cap=%.1f m speakers=%d",
+        reasonText[reason >= 0 && reason <= DIAG_SNAP_FLOOD ? reason : 0],
+        audio_diag_mode_text(InterlockedCompareExchange(&g_audioMode, 0, 0)),
+        pass.localValid ? "ok" : "none", pass.hubActive ? "yes" : "no", pass.localZone,
+        pass.listenAdd, pass.maxVolume, pass.voiceCap, count);
+
+    const ULONGLONG nowMs = GetTickCount64();
+    const float lx = (float)(pass.local.x / 100.0);
+    const float ly = (float)(pass.local.y / 100.0);
+    const float lz = (float)(pass.local.z / 100.0);
+    for (int i = 0; i < count && i < TS3_DIAG_SNAP_MAX_LINES; i++) {
+        const PlayerEntry* p = &players[i];
+        const float dist = pass.localValid ? prox_distance(lx, ly, lz, p->x, p->y, p->z) : -1.0f;
+        AudioTarget tgt;
+        memset(&tgt, 0, sizeof(tgt));
+        const int have = ts3_client_id_valid(p->clientID)
+            && audio_snap_read(&g_snap[p->clientID], &tgt) == AUDIO_SNAP_OK;
+        char gainText[16];
+        if (have) {
+            snprintf(gainText, sizeof(gainText), "%.2f", tgt.gain);
+        }
+        else {
+            snprintf(gainText, sizeof(gainText), "muted");
+        }
+        const ULONGLONG ageMs = nowMs > p->lastUpdateMs ? nowMs - p->lastUpdateMs : 0ULL;
+        log_write("AUDIO-SNAP:   cid=%u '%s' dist=%.1f m announced=%.1f m range=%.1f m gain=%s age=%.1f s%s",
+            (unsigned)p->clientID, p->name, dist, p->voiceDistance,
+            audio_remote_hear_range(&pass, p), gainText, (double)ageMs / 1000.0,
+            (have && tgt.soundproof) ? " soundproof" : "");
+    }
+    if (count > TS3_DIAG_SNAP_MAX_LINES) {
+        log_write("AUDIO-SNAP:   (+%d more not listed)", count - TS3_DIAG_SNAP_MAX_LINES);
+    }
+}
+
+/* Every TS3_DIAG_STAT_MS while peers are known in the ingame channel: how many
+   positions arrived, how many speakers are audible and how old their data is,
+   how often the server refused plugin commands. Callback thread. */
+static void audio_diag_stat(ULONGLONG nowMs) {
+    static ULONGLONG lastMs = 0;
+    static unsigned long lastPuts = 0;
+    static LONG lastFloods = 0;
+
+    const unsigned long puts = player_table_put_count();
+    const LONG floods = InterlockedCompareExchange(&g_diagFloodErrors, 0, 0);
+    if (lastMs == 0) {
+        lastMs = nowMs;
+        lastPuts = puts;
+        lastFloods = floods;
+        return;
+    }
+    if (nowMs - lastMs < TS3_DIAG_STAT_MS) {
+        return;
+    }
+    const double secs = (double)(nowMs - lastMs) / 1000.0;
+    const unsigned long rx = puts - lastPuts;
+    const LONG fl = floods - lastFloods;
+    lastMs = nowMs;
+    lastPuts = puts;
+    lastFloods = floods;
+
+    if (InterlockedCompareExchange(&g_audioMode, 0, 0) != TS3_AUDIO_PROXIMITY) {
+        return;
+    }
+    PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
+    const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
+    if (count <= 0) {
+        return;
+    }
+    int audible = 0;
+    ULONGLONG audibleMaxAge = 0, tableMaxAge = 0;
+    for (int i = 0; i < count; i++) {
+        const ULONGLONG ageMs = nowMs > players[i].lastUpdateMs ? nowMs - players[i].lastUpdateMs : 0ULL;
+        if (ageMs > tableMaxAge) {
+            tableMaxAge = ageMs;
+        }
+        AudioTarget tgt;
+        memset(&tgt, 0, sizeof(tgt));
+        if (ts3_client_id_valid(players[i].clientID)
+            && audio_snap_read(&g_snap[players[i].clientID], &tgt) == AUDIO_SNAP_OK
+            && tgt.gain > TS3_DIAG_AUDIBLE_GAIN) {
+            audible++;
+            if (ageMs > audibleMaxAge) {
+                audibleMaxAge = ageMs;
+            }
+        }
+    }
+    PosSample localPos;
+    log_write("AUDIO-STAT: %.0f s | cepos_rx=%lu (%.1f/s) speakers=%d audible=%d oldest_audible=%.1f s oldest_entry=%.1f s | flood_errors=%ld | localPos=%s",
+        secs, rx, (double)rx / secs, count, audible, (double)audibleMaxAge / 1000.0,
+        (double)tableMaxAge / 1000.0, (long)fl, pos_get_current(&localPos) ? "ok" : "none");
+}
+
 /* Callback thread: log the step-0 channel layouts once per change. */
 void ts3_audio_diag_flush(void) {
+    /* 099: requested snapshot + periodic status line. */
+    const ULONGLONG diagNow = GetTickCount64();
+    const LONG snapReason = InterlockedExchange(&g_diagSnapRequest, DIAG_SNAP_NONE);
+    if (snapReason != DIAG_SNAP_NONE) {
+        static ULONGLONG lastAutoSnapMs = 0;
+        if (snapReason == DIAG_SNAP_MENU || lastAutoSnapMs == 0
+            || diagNow - lastAutoSnapMs >= TS3_DIAG_AUTO_MIN_MS) {
+            if (snapReason != DIAG_SNAP_MENU) {
+                lastAutoSnapMs = diagNow;
+            }
+            audio_diag_write_snapshot(snapReason);
+            if (snapReason == DIAG_SNAP_MENU) {
+                InterlockedExchange(&g_diagSnapMenuDone, 1);
+            }
+        }
+    }
+    audio_diag_stat(diagNow);
+
+    /* 099: voice of a client ID without per-client state was silenced (audio thread
+       counts). First time at once, then at most once per minute. */
+    static LONG lastInvalid = 0;
+    static ULONGLONG lastInvalidLogMs = 0;
+    const LONG invalidBlocks = InterlockedCompareExchange(&g_diagInvalidIdBlocks, 0, 0);
+    if (invalidBlocks != lastInvalid) {
+        const ULONGLONG nowMs = GetTickCount64();
+        if (lastInvalid == 0 || nowMs - lastInvalidLogMs >= 60000ULL) {
+            log_write("AUDIO: %ld voice blocks of a client ID without state were silenced (ID 0 / out of range)",
+                (long)(invalidBlocks - lastInvalid));
+            lastInvalidLogMs = nowMs;
+            lastInvalid = invalidBlocks;
+        }
+    }
+
     static LONG lastPlayback = -1;
     static LONG lastPost = -1;
     static LONG lastSpeakers = -1;

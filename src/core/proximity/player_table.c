@@ -11,6 +11,7 @@ static CRITICAL_SECTION g_tableLock;
 static INIT_ONCE g_tableLockOnce = INIT_ONCE_STATIC_INIT;
 static PlayerEntry g_players[PLAYER_TABLE_MAX_PLAYERS];
 static volatile long g_evictionCount = 0;
+static volatile long g_putCount = 0;   /* 099: successful puts (= received CEPOS) since start */
 
 static BOOL CALLBACK table_lock_init_once(PINIT_ONCE once, PVOID param, PVOID* ctx) {
     (void)once; (void)param; (void)ctx;
@@ -113,11 +114,18 @@ int player_table_put(unsigned short clientID, const char* name,
     }
     LeaveCriticalSection(&g_tableLock);
 
+    if (slot >= 0) {
+        InterlockedIncrement(&g_putCount);
+    }
     if (logEviction) {
         log_debug("PLAYER-TABLE: LRU eviction #%ld (dropped client %u for %u)",
             evictionNumber, (unsigned)droppedClient, (unsigned)clientID);
     }
     return slot >= 0;
+}
+
+unsigned long player_table_put_count(void) {
+    return (unsigned long)InterlockedCompareExchange(&g_putCount, 0, 0);
 }
 
 int player_table_get(unsigned short clientID, PlayerEntry* out) {

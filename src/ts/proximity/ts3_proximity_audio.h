@@ -130,6 +130,17 @@ void ts3_audio_invalidate_client(anyID clientID);
 /* 1 when the client's proximity snapshot is soundproof-muted. Any thread. */
 int ts3_proximity_audio_soundproof_muted(unsigned int clientID);
 
+/* 099: diagnostics that always go to plugin.log (no DebugMode needed).
+   - "AUDIO-STAT" every 30 s while peers are known in the ingame channel.
+   - "AUDIO-SNAP" block (the inputs of every speaker) when the user asks for it
+     (Plugins > Conan Exiles menu), or automatically (at most every 2 minutes) when a
+     speaker is audible with an old position or the server refused plugin commands.
+   The request functions are callable from any thread; the block is written by the
+   callback thread at its next drain (ts3_audio_diag_flush). */
+void ts3_audio_request_diag_snapshot(void);   /* user asked */
+void ts3_audio_note_flood(void);              /* server anti-flood refused a command */
+int ts3_audio_take_menu_snapshot_done(void);  /* 1 once after a user-requested block was written */
+
 /* Reset everything (disconnect/shutdown/tab switch). Callback thread.
    Bumps every client's generation counter so the next PCM buffer reinitializes
    the ramp/LPF itself — no cross-thread write into the render arrays. */

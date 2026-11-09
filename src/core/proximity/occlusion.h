@@ -24,7 +24,7 @@
  *   Never calls the TS API, never takes a lock held by the audio thread.
  */
 
-#define OCCLUSION_MAX_CLIENT_ID 4096   /* mirrors TS3_MAX_CLIENT_ID (core must not include ts/) */
+#define OCCLUSION_MAX_CLIENT_ID 65536  /* mirrors TS3_MAX_CLIENT_ID (core must not include ts/) */
 #define OCCLUSION_STALE_MS      1000   /* older values count as "no occlusion" */
 #define OCCLUSION_MAX_PROBES    16
 #define OCCLUSION_PROBE_RANGE_M 60.0f

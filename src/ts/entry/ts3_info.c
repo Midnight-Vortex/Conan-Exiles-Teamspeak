@@ -11,6 +11,7 @@
 #include "ts/info/ts3_plugin_version.h"
 #include "ts/proximity/ts3_cemode.h"
 #include "ts/proximity/ts3_ceauth.h"
+#include "ts/proximity/ts3_proximity_audio.h"
 #include "plugin_modules.h"
 #include "ui/plugin_ui_compat.h"
 #include "plugin.h"
@@ -23,7 +24,8 @@
 enum {
     MENU_ID_SETTINGS = 1,
     MENU_ID_OPEN_PLUGINS_FOLDER = 2,
-    MENU_ID_OPEN_LOG_FOLDER = 3
+    MENU_ID_OPEN_LOG_FOLDER = 3,
+    MENU_ID_DIAG_SNAPSHOT = 4
 };
 
 static struct PluginMenuItem* menu_item_create(enum PluginMenuType type, int id,
@@ -47,8 +49,8 @@ void ts3plugin_initMenus(struct PluginMenuItem*** menuItems, char** menuIcon) {
     }
     *menuIcon = NULL; /* no plugin submenu icon */
 
-    /* 3 items + NULL terminator — TeamSpeak frees each entry via freeMemory. */
-    items = (struct PluginMenuItem**)malloc(sizeof(struct PluginMenuItem*) * 4);
+    /* 4 items + NULL terminator — TeamSpeak frees each entry via freeMemory. */
+    items = (struct PluginMenuItem**)malloc(sizeof(struct PluginMenuItem*) * 5);
     if (!items) {
         *menuItems = NULL;
         return;
@@ -59,11 +61,14 @@ void ts3plugin_initMenus(struct PluginMenuItem*** menuItems, char** menuIcon) {
         "Plugins-Ordner oeffnen");
     items[2] = menu_item_create(PLUGIN_MENU_TYPE_GLOBAL, MENU_ID_OPEN_LOG_FOLDER,
         "Log-Ordner oeffnen");
-    items[3] = NULL;
-    if (!items[0] || !items[1] || !items[2]) {
+    items[3] = menu_item_create(PLUGIN_MENU_TYPE_GLOBAL, MENU_ID_DIAG_SNAPSHOT,
+        "Diagnose-Schnappschuss ins Log schreiben");
+    items[4] = NULL;
+    if (!items[0] || !items[1] || !items[2] || !items[3]) {
         free(items[0]);
         free(items[1]);
         free(items[2]);
+        free(items[3]);
         free(items);
         *menuItems = NULL;
         return;
@@ -92,6 +97,10 @@ void ts3plugin_onMenuItemEvent(uint64 serverConnectionHandlerID, enum PluginMenu
         break;
     case MENU_ID_OPEN_LOG_FOLDER:
         open_plugin_log_folder();
+        break;
+    case MENU_ID_DIAG_SNAPSHOT:
+        /* Only a flag + wakeup: the callback thread writes the block (099). */
+        ts3_audio_request_diag_snapshot();
         break;
     default:
         break;

@@ -263,7 +263,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.21";
+    return "8.0.22";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -715,7 +715,10 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
         if (ts3_audio_has_pending_unmutes()) {
             ts3_audio_flush_unmutes();
         }
-        ts3_audio_diag_flush(); /* step-0 channel layout log (on change only) */
+        ts3_audio_diag_flush(); /* step-0 channel layout log (on change only) + 099 AUDIO-STAT / AUDIO-SNAP */
+        if (ts3_audio_take_menu_snapshot_done()) {
+            ts3_print_to_chat("[Conan Exiles] Diagnose-Schnappschuss wurde in plugin.log geschrieben (Zeilen AUDIO-SNAP).");
+        }
         /* Re-wake if any work is still pending — leftover from a per-drain
            budget (e.g. dirty-client recomputes capped at
            TS3_RECOMPUTE_DRAIN_BUDGET) or queued from another thread while we
@@ -839,9 +842,28 @@ void ts3plugin_onClientKickFromServerEvent(uint64 serverConnectionHandlerID, any
    channel module and still printed by TeamSpeak exactly as before. Codes that
    are not ours (or NULL/empty) return 0 = unchanged behaviour. */
 int ts3plugin_onServerErrorEvent(uint64 serverConnectionHandlerID, const char* errorMessage, unsigned int error, const char* returnCode, const char* extraMessage) {
-    (void)extraMessage;
-
     ts3_thread_mark_callback();
+
+    /* 099: the server's anti-flood protection refuses commands of a client that
+       sends too many (CEPOS goes out up to 33 times a second while moving, and every
+       one is relayed to everybody). A refused CEPOS/CEMODE is simply gone - the plugin
+       has no other way to notice. Log it (at most every 10 s, with a counter) so a
+       group that is "not respected" can be matched to a flood on the server. Not
+       handled here: TeamSpeak keeps its own message (return 0). */
+    if (error == ERROR_client_is_flooding && serverConnectionHandlerID == ts3_get_active_connection()) {
+        static ULONGLONG s_lastFloodLogMs = 0;
+        static unsigned s_floodSince = 0;
+        const ULONGLONG nowMs = GetTickCount64();
+        s_floodSince++;
+        ts3_audio_note_flood(); /* counted in AUDIO-STAT, asks for an AUDIO-SNAP block */
+        if (nowMs - s_lastFloodLogMs >= 10000ULL) {
+            s_lastFloodLogMs = nowMs;
+            log_write("TS-EVT: server anti-flood refused a command (%u in the last interval): %s %s",
+                s_floodSince, errorMessage ? errorMessage : "", extraMessage ? extraMessage : "");
+            s_floodSince = 0;
+        }
+    }
+
     if (!returnCode || !returnCode[0]
         || serverConnectionHandlerID != ts3_get_active_connection()) {
         return 0;

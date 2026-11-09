@@ -40,8 +40,8 @@ static void test_parse(void) {
     const unsigned long long now = 100000ULL;
     CHECK(occlusion_store_from_text("SEQ=1 X=1 Y=2 Z=3 YAW=0", now) == -1, "no OCC key -> -1");
     CHECK(occlusion_store_from_text("SEQ=1 X=1 Y=2 Z=3 YAW=0 OCC=", now) == 0, "empty OCC -> opt-in, 0 stored");
-    CHECK(occlusion_store_from_text("SEQ=1 X=1 OCC=12:80;15:0;20:250;0:50;9999:40;7:-5", now) == 4,
-        "4 valid ids stored (0 and 9999 rejected)");
+    CHECK(occlusion_store_from_text("SEQ=1 X=1 OCC=12:80;15:0;20:250;0:50;70000:40;7:-5", now) == 4,
+        "4 valid ids stored (0 and 70000 rejected)");
     CHECK(feq(occlusion_get(12, now), 0.80f), "cid 12 = 0.80");
     CHECK(feq(occlusion_get(15, now), 0.0f), "cid 15 = 0");
     CHECK(feq(occlusion_get(20, now), 1.0f), "cid 20 clamped to 1.0");
@@ -50,6 +50,8 @@ static void test_parse(void) {
     CHECK(occlusion_store_from_text("OCC=30:55,5;31:10", now) == 2, "decimal tail tolerated");
     CHECK(feq(occlusion_get(30, now), 0.55f) && feq(occlusion_get(31, now), 0.10f), "decimal tail values");
     CHECK(occlusion_store_from_text("OCC=abc", now) == 0, "garbage after OCC -> 0");
+    CHECK(occlusion_store_from_text("OCC=9999:40;65535:60", now) == 2, "099: high 16-bit ids are stored too");
+    CHECK(feq(occlusion_get(9999, now), 0.40f) && feq(occlusion_get(65535, now), 0.60f), "099: high ids read back");
 }
 
 static void test_stale(void) {

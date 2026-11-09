@@ -15,6 +15,7 @@
    Build/run: bash tests/run_tests.sh (see the run_suite block for the sources).
    Exit code 0 = all checks passed. */
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <math.h>
@@ -47,7 +48,18 @@ static anyID g_unmuteCalls[8][64];
 static int g_unmuteCallLen[8];
 static int g_unmuteCallCount;
 
-void log_write(const char* fmt, ...) { (void)fmt; }
+/* 099: log_write is captured (the diagnostics tests read the lines back);
+   log_debug stays silent - the whole point is that the evidence needs no DebugMode. */
+static char g_logLines[256][320];
+static int g_logCount;
+void log_write(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    if (g_logCount < 256) {
+        vsnprintf(g_logLines[g_logCount++], sizeof(g_logLines[0]), fmt, ap);
+    }
+    va_end(ap);
+}
 void log_debug(const char* fmt, ...) { (void)fmt; }
 
 int pos_get_current(PosSample* out) {
@@ -325,28 +337,51 @@ static void test_busy_without_cache(void) {
  * 10: out-of-range IDs
  * ======================================================================== */
 static void test_out_of_range_ids(void) {
-    printf("[7] fix 10: IDs >= TS3_MAX_CLIENT_ID are silenced in MUTE mode, untouched otherwise\n");
+    printf("[7] fix 10 / 099: ID 0 (no per-client state) is silenced in MUTE and PROXIMITY mode, untouched in PASSTHROUGH; every 16-bit ID gets the distance gain\n");
     t_world_reset();
-    const anyID ids[] = { 4096, 5000, 60000, 0 };
-    for (int k = 0; k < 4; k++) {
+    {
+        const anyID id = 0;
         ts3_audio_set_mode(TS3_AUDIO_MUTE);
         t_fill(g_buf, FRAMES, 2, 10000);
-        ts3_audio_process_playback(ids[k], g_buf, FRAMES, 2);
-        char name[96];
-        snprintf(name, sizeof(name), "MUTE: id %u silenced", (unsigned)ids[k]);
-        CHECK(t_peak(g_buf, FRAMES * 2) == 0.0f, name);
+        ts3_audio_process_playback(id, g_buf, FRAMES, 2);
+        CHECK(t_peak(g_buf, FRAMES * 2) == 0.0f, "MUTE: id 0 silenced");
 
         ts3_audio_set_mode(TS3_AUDIO_PROXIMITY);
         t_fill(g_buf, FRAMES, 2, 10000);
-        ts3_audio_process_playback(ids[k], g_buf, FRAMES, 2);
-        snprintf(name, sizeof(name), "PROXIMITY: id %u unchanged", (unsigned)ids[k]);
-        CHECK(g_buf[0] == 10000 && g_buf[FRAMES * 2 - 1] == 10000, name);
+        ts3_audio_process_playback(id, g_buf, FRAMES, 2);
+        CHECK(t_peak(g_buf, FRAMES * 2) == 0.0f, "PROXIMITY: id 0 silenced (fail closed, no full-volume leak)");
 
         ts3_audio_set_mode(TS3_AUDIO_PASSTHROUGH);
         t_fill(g_buf, FRAMES, 2, 10000);
-        ts3_audio_process_playback(ids[k], g_buf, FRAMES, 2);
-        snprintf(name, sizeof(name), "PASSTHROUGH: id %u unchanged", (unsigned)ids[k]);
-        CHECK(g_buf[0] == 10000, name);
+        ts3_audio_process_playback(id, g_buf, FRAMES, 2);
+        CHECK(g_buf[0] == 10000, "PASSTHROUGH: id 0 unchanged");
+    }
+    /* 099: the former cap (4096) made these IDs invisible: no CEPOS, voice untouched = full volume. */
+    const anyID high[] = { 4096, 5000, 60000, 65535 };
+    for (int k = 0; k < 4; k++) {
+        const unsigned id = high[k];
+        char name[112];
+
+        t_world_reset();                                        /* PROXIMITY */
+        t_fill(g_buf, FRAMES, 2, 10000);
+        ts3_audio_process_playback((anyID)id, g_buf, FRAMES, 2);
+        snprintf(name, sizeof(name), "id %u: no position data yet -> silent", id);
+        CHECK(t_peak(g_buf, FRAMES * 2) == 0.0f, name);
+
+        t_put_and_publish(id, 60.0f, 40.0f);                    /* outside his 40 m range */
+        t_block(id, 10000);
+        snprintf(name, sizeof(name), "id %u: 60 m away (range 40 m) -> silent, not full volume", id);
+        CHECK(t_peak(g_buf, FRAMES * 2) == 0.0f, name);
+
+        t_put_and_publish(id, 5.0f, 40.0f);                     /* close by */
+        AudioTarget tg;
+        memset(&tg, 0, sizeof(tg));
+        snprintf(name, sizeof(name), "id %u: snapshot published", id);
+        CHECK(t_target(id, &tg) && tg.gain > 0.5f, name);
+        t_block(id, 10000);
+        snprintf(name, sizeof(name), "id %u: block follows the snapshot (attenuated, not passed through)", id);
+        CHECK(t_peak(g_buf, FRAMES * 2) > 0.0f
+            && t_peak(g_buf, FRAMES * 2) <= tg.gain * 10000.0f * t_ampl(&tg) + 2.0f, name);
     }
     ts3_audio_set_mode(TS3_AUDIO_MUTE);
     ts3_audio_process_playback(4097, NULL, FRAMES, 2);        /* must not crash */
@@ -678,6 +713,83 @@ static void test_cave_reverb_strength(void) {
         "zone without Reverb=True -> no echo (house / room)");
 }
 
+static int t_log_count(const char* needle) {
+    int n = 0;
+    for (int i = 0; i < g_logCount; i++) {
+        if (strstr(g_logLines[i], needle) != NULL) n++;
+    }
+    return n;
+}
+
+/* ===========================================================================
+ * 099: evidence in plugin.log without DebugMode
+ * ======================================================================== */
+static void test_diagnostics(void) {
+    printf("[099] AUDIO-STAT / AUDIO-SNAP / stale warning are written without DebugMode\n");
+    t_world_reset();
+    g_logCount = 0;
+    t_put_and_publish(30, 5.0f, 40.0f);     /* near: audible */
+    t_put_and_publish(31, 70.0f, 40.0f);    /* beyond his range: muted */
+
+    /* user asks (Plugins > Conan Exiles menu) */
+    ts3_audio_request_diag_snapshot();
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-SNAP[menu]") == 1, "menu request writes one AUDIO-SNAP header");
+    CHECK(t_log_count("cid=30 'p' dist=5.0 m announced=40.0 m range=40.0 m gain=0.") == 1,
+        "the near speaker is listed with distance, announced range, range and gain");
+    CHECK(t_log_count("cid=31 'p' dist=70.0 m announced=40.0 m range=40.0 m gain=muted") == 1,
+        "the far speaker is listed as muted");
+    CHECK(ts3_audio_take_menu_snapshot_done() == 1 && ts3_audio_take_menu_snapshot_done() == 0,
+        "the menu snapshot is reported done exactly once (chat feedback)");
+
+    /* status line every 30 s, counting the CEPOS that arrived in between */
+    win32_shim_advance_ms(31000);
+    t_put_and_publish(30, 5.0f, 40.0f);
+    t_put_and_publish(31, 70.0f, 40.0f);
+    g_logCount = 0;
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-STAT: 31 s | cepos_rx=2 ") == 1 && t_log_count("speakers=2 audible=1 ") == 1,
+        "AUDIO-STAT after 30 s: 2 positions received, 2 speakers, 1 audible");
+    g_logCount = 0;
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-STAT") == 0, "no second status line within the interval");
+
+    /* an audible speaker whose last position is older than 5 s */
+    win32_shim_advance_ms(6000);
+    ts3_audio_recompute_all_force();
+    CHECK(t_log_count("client 30 is audible") == 1 && t_log_count("last position is 6.0 s old") == 1,
+        "audible speaker with a 6 s old position -> warning (always on)");
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-SNAP[stale-audible]") == 1, "the warning asks for an automatic snapshot");
+
+    /* the server's anti-flood refused commands */
+    g_logCount = 0;
+    ts3_audio_note_flood();
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-SNAP[flood]") == 0, "second automatic snapshot within 2 minutes is suppressed");
+    win32_shim_advance_ms(121000);
+    t_put_and_publish(30, 5.0f, 40.0f);
+    t_put_and_publish(31, 70.0f, 40.0f);
+    ts3_audio_note_flood();
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-SNAP[flood]") == 1, "after 2 minutes a flood writes a snapshot again");
+    CHECK(t_log_count("flood_errors=2") == 1, "AUDIO-STAT counts the flood errors of the interval");
+
+    /* a menu request is never suppressed */
+    g_logCount = 0;
+    ts3_audio_request_diag_snapshot();
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("AUDIO-SNAP[menu]") == 1, "a user request always writes a block");
+
+    /* voice of a client ID without state: silenced, counted, logged */
+    g_logCount = 0;
+    t_fill(g_buf, FRAMES, 2, 10000);
+    ts3_audio_process_playback(0, g_buf, FRAMES, 2);
+    ts3_audio_diag_flush();
+    CHECK(t_log_count("voice blocks of a client ID without state were silenced") == 1,
+        "silenced blocks of ID 0 are reported");
+}
+
 int main(void) {
     printf("audio PCM path host tests (084)\n");
     test_no_leak_after_generation_bump();
@@ -695,6 +807,7 @@ int main(void) {
     test_once_per_pass();
     test_voice_cap();
     test_misc();
+    test_diagnostics();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

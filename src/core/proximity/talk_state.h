@@ -23,7 +23,7 @@
  *   Never calls the TS API, never takes a lock held by the audio thread.
  */
 
-#define TALK_STATE_MAX_CLIENT_ID 4096   /* mirrors TS3_MAX_CLIENT_ID (core must not include ts/) */
+#define TALK_STATE_MAX_CLIENT_ID 65536  /* mirrors TS3_MAX_CLIENT_ID (core must not include ts/) */
 #define TALK_MAX_TALKERS         16
 #define TALK_RANGE_M             50.0f  /* mouths farther away are not worth animating */
 #define TALK_VOICE_HOLD_MS       250    /* 098: voice block this recent = still audible (covers word pauses) */
