@@ -25,6 +25,8 @@ As a security measure, compare the SHA-256 hash of the file you downloaded with 
 
 | Version | File | SHA-256 |
 |---|---|---|
+| 8.0.22 | `conan_exiles-win64.ts3_plugin` (installer package) | `16e63fdf8ea373ff7c90ccb9d6b8d44ba72b95e543015880ffd5ebe41fd3b43b` |
+| 8.0.22 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `3c67583cd7d4228d9f017e2bf527368b7b403d11c8291433a6afd750b3adb49b` |
 | 8.0.15 | `conan_exiles-8.0.15-win64.ts3_plugin` (installer package) | `c710831f4dacf4228e5b463c0900d368e4940108e45600c6b6f524ba2de97886` |
 | 8.0.15 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `7b2fdb24820f5f15c4d866ea41f9a8a7f79d0628febc6373ed9bf964720bd632` |
 | 8.0.14 | `conan_exiles-8.0.14-win64.ts3_plugin` (installer package) | `b83b23656b2f1a6ff251ec1556c40d85e75770d960ba0dca97118d0e4164dd2c` |
@@ -46,22 +48,24 @@ As a security measure, compare the SHA-256 hash of the file you downloaded with 
 | 8.0.6 | `conan_exiles-8.0.6-win64.ts3_plugin` (installer package) | `5241183845dcda022b105141cf84036c5092455f3105ecc2efed22afa290c138` |
 | 8.0.6 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `71c853e493abf3f7dc60510bc246812a010cc9fb14ef0bfdf283df28e1b36d60` |
 
+Since 8.0.22 the package has the same file name in every release (`conan_exiles-win64.ts3_plugin`, no version in the name); older releases still carry the version in the file name. Replace the name in the commands below if you check an older release.
+
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\conan_exiles-8.0.15-win64.ts3_plugin -Algorithm SHA256
+Get-FileHash .\conan_exiles-win64.ts3_plugin -Algorithm SHA256
 ```
 
 Windows Command Prompt:
 
 ```bat
-certutil -hashfile conan_exiles-8.0.15-win64.ts3_plugin SHA256
+certutil -hashfile conan_exiles-win64.ts3_plugin SHA256
 ```
 
 Linux / macOS / Git Bash:
 
 ```bash
-sha256sum conan_exiles-8.0.15-win64.ts3_plugin
+sha256sum conan_exiles-win64.ts3_plugin
 ```
 
 Since 8.0.7 every release also contains a `SHA256SUMS` file. Put it next to the downloaded package and run `sha256sum -c --ignore-missing SHA256SUMS` (the `conan_exiles.dll` line only applies after extracting the package).
