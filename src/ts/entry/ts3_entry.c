@@ -263,7 +263,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.20";
+    return "8.0.21";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -735,6 +735,8 @@ void ts3plugin_onEditPlaybackVoiceDataEvent(uint64 serverConnectionHandlerID, an
     if (serverConnectionHandlerID != ts3_get_active_connection()) {
         return;
     }
+    /* 098: this client's voice is being played right now (mouth animation). */
+    talk_state_note_voice(clientID, GetTickCount64());
     ts3_audio_process_playback(clientID, samples, sampleCount, channels);
 }
 
@@ -951,8 +953,6 @@ void ts3plugin_onUpdateChannelEditedEvent(uint64 serverConnectionHandlerID, uint
 /* PTT indicator on the range HUD: highlight border while the local client
    is transmitting (STATUS_TALKING / STATUS_TALKING_WHILE_DISABLED). */
 void ts3plugin_onTalkStatusChangeEvent(uint64 serverConnectionHandlerID, int status, int isReceivedWhisper, anyID clientID) {
-    (void)isReceivedWhisper;
-
     ts3_thread_mark_callback();
     if (pluginShuttingDown || serverConnectionHandlerID != ts3_get_active_connection()) {
         return;
@@ -960,7 +960,9 @@ void ts3plugin_onTalkStatusChangeEvent(uint64 serverConnectionHandlerID, int sta
     if (clientID == 0) {
         return;
     }
-    const BOOL talking = (status == STATUS_TALKING || status == STATUS_TALKING_WHILE_DISABLED);
+    /* 098: a received TS whisper is no proximity speech - its mouth stays shut. */
+    const BOOL talking = !isReceivedWhisper
+        && (status == STATUS_TALKING || status == STATUS_TALKING_WHILE_DISABLED);
     const int isLocal = (clientID == ts3_get_local_client_id());
     /* 067: every client's talk status (any PTT key / voice activation) for the
        mod's mouth animation. */

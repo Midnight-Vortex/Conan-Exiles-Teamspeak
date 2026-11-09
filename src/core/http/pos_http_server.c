@@ -570,7 +570,7 @@ static void http_handle_client(SOCKET client) {
                 }
                 /* 067: talk status for the mod's mouth animation (appended last,
                    so the mod's probe parser - text up to the next quote - is unaffected). */
-                talk_state_append_json(reply, (int)sizeof(reply), lx, ly, lz);
+                talk_state_append_json(reply, (int)sizeof(reply), lx, ly, lz, GetTickCount64());
                 http_send(client, 200, reply);
             }
             else {

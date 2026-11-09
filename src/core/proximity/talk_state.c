@@ -14,6 +14,10 @@
 
 static volatile long g_talk[TALK_STATE_MAX_CLIENT_ID];
 static volatile long g_localTalk = 0;
+/* 098: low 32 bits of the tick (ms) of the last voice block played per remote
+   client; 0 = never. 32 bits are plenty for a 250 ms window (wraps after 49 days;
+   the unsigned difference below survives the wrap). */
+static volatile long g_voiceTick[TALK_STATE_MAX_CLIENT_ID];
 
 /* HTTP listener thread only (talk_state_append_json). */
 static PlayerEntry g_talkSnap[PLAYER_TABLE_MAX_PLAYERS];
@@ -26,6 +30,27 @@ void talk_state_set(unsigned int clientID, int talking, int isLocal) {
     if (clientID > 0 && clientID < TALK_STATE_MAX_CLIENT_ID) {
         InterlockedExchange(&g_talk[clientID], v);
     }
+}
+
+void talk_state_note_voice(unsigned int clientID, unsigned long long nowMs) {
+    if (clientID > 0 && clientID < TALK_STATE_MAX_CLIENT_ID) {
+        unsigned long tick = (unsigned long)(nowMs & 0xFFFFFFFFULL);
+        if (tick == 0) {
+            tick = 1; /* 0 means "never" */
+        }
+        InterlockedExchange(&g_voiceTick[clientID], (long)tick);
+    }
+}
+
+/* 1 when a voice block of this client was played within TALK_VOICE_HOLD_MS.
+   A block newer than the caller's clock read (negative age) counts as fresh. */
+static int talk_state_voice_recent(unsigned int clientID, unsigned long long nowMs) {
+    const unsigned long t = (unsigned long)InterlockedCompareExchange(&g_voiceTick[clientID], 0, 0);
+    if (t == 0) {
+        return 0;
+    }
+    const unsigned long age = ((unsigned long)(nowMs & 0xFFFFFFFFULL) - t) & 0xFFFFFFFFUL;
+    return age <= TALK_VOICE_HOLD_MS || age >= 0x80000000UL;
 }
 
 int talk_state_local(void) {
@@ -42,18 +67,20 @@ int talk_state_is_talking(unsigned int clientID) {
 void talk_state_clear_client(unsigned int clientID) {
     if (clientID > 0 && clientID < TALK_STATE_MAX_CLIENT_ID) {
         InterlockedExchange(&g_talk[clientID], 0);
+        InterlockedExchange(&g_voiceTick[clientID], 0);
     }
 }
 
 void talk_state_clear(void) {
     for (int i = 0; i < TALK_STATE_MAX_CLIENT_ID; i++) {
         InterlockedExchange(&g_talk[i], 0);
+        InterlockedExchange(&g_voiceTick[i], 0);
     }
     InterlockedExchange(&g_localTalk, 0);
 }
 
 int talk_state_append_json(char* out, int outSize,
-    float localX, float localY, float localZ) {
+    float localX, float localY, float localZ, unsigned long long nowMs) {
     if (!out || outSize < 32) {
         return 0;
     }
@@ -68,7 +95,9 @@ int talk_state_append_json(char* out, int outSize,
     float pickDist[TALK_MAX_TALKERS];
     int picked = 0;
     for (int i = 0; i < count; i++) {
-        if (!talk_state_is_talking(g_talkSnap[i].clientID)) {
+        /* 098: TS says talking AND its voice is really being played right now. */
+        if (!talk_state_is_talking(g_talkSnap[i].clientID)
+            || !talk_state_voice_recent(g_talkSnap[i].clientID, nowMs)) {
             continue;
         }
         const float d = prox_distance(localX, localY, localZ,
