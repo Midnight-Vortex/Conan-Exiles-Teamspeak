@@ -162,3 +162,7 @@ zu einer fremden Figur; die eigene Figur darf ihn nicht „verbrauchen“.
 **Hinweis zur Logzeile `TSMOUTH`:** Der `PrintString`-Knoten ist als „nur Entwicklung“ markiert. Ob die Zeile
 im ausgelieferten Spiel-Client ins `ConanSandbox.log` geschrieben wird, ist nicht belegt; die Mund-Regel haengt
 nicht davon ab.
+
+**Stand 2026-11-10 abends:** Die Zeile erscheint im Spiel-Client (Auswertung in Doku 100, Abschnitt 7). Sie wird
+seit Doku 100 mit `Log String` statt `Print String` geschrieben und steht damit nur noch im Log, nicht mehr in
+der Konsole im Spiel.
