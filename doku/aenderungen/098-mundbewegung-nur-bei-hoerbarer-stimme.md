@@ -122,3 +122,43 @@ Plugins nicht gemacht.
 Ein Ereignis („hat aufgehoert zu sprechen“) kann verloren gehen; die Frage „kommt gerade Audio an?“
 nicht. Wer nur eine Eigenschaft einer Sache anzeigen will, sollte sie von der Quelle ableiten, die
 nicht ausfallen kann — und eine Zuordnung nach Abstand braucht einen **Gewinner**, nicht einen Radius.
+
+---
+
+## 9. Nachtrag 2026-11-10 — eigene Figur nimmt keinen Sprecherpunkt mehr (nur Mod)
+
+**Was:** In `UpdateTalk` (innere Schleife ueber die Figuren) lautet die Bedingung jetzt
+`Abstand < BestDist UND Figur != GetPlayerCharacter(0)` statt nur `Abstand < BestDist`
+(zwei neue Knoten: `NotEqual_ObjectObject`, `BooleanAND`).
+
+**Wie war es vorher:** Die eigene Figur des Hoerers lief in der Suche „naechste Figur zum Sprecherpunkt“ mit.
+Lag ein (leicht hinterherhinkender) Sprecherpunkt naeher an der eigenen Figur als an der Figur des Sprechers,
+gewann die eigene Figur — und weil sie am Ende immer auf den eigenen Sprechstatus gesetzt wird, bewegte
+**niemand** den Mund. Gefunden in der Vorab-Pruefung der Mod (vier unabhaengige Pruefer).
+
+**Warum besser:** Das Plugin listet den eigenen Client nie als Sprecher. Ein Sprecherpunkt gehoert also immer
+zu einer fremden Figur; die eigene Figur darf ihn nicht „verbrauchen“.
+
+**Getestet (DevKit-Editor):**
+- kompiliert ohne Fehler und Warnungen; gespeichert wurde nur `Vo_PosStreamer_Actor.uasset`;
+- Editor-Test wie am 09.11. (9 Faelle) unveraendert bestanden;
+- Spieltest im Editor (PIE) mit eigener Figur + einer zweiten Figur in 85 cm Abstand:
+
+  | Fall | eigene Figur | fremde Figur |
+  |---|---|---|
+  | Sprecherpunkt genau auf der **eigenen** Figur | zu | **spricht** (vorher: niemand) |
+  | Sprecherpunkt auf der fremden Figur | zu | spricht |
+  | Punkt auf eigener Figur + ich spreche selbst | spricht | spricht |
+  | nur ich spreche | spricht | zu |
+  | niemand spricht | zu | zu |
+  | Punkt 150 cm von mir, 235 cm von der fremden Figur | zu | zu |
+
+- Logik-Vergleich aller neun Graphen gegen den Stand vom Morgen (Umlenk-Knoten herausgerechnet): nur
+  `UpdateTalk` unterscheidet sich (+2 Knoten, +5 Verbindungen, −1 Verbindung).
+
+**Nicht geprueft:** echte Spieler, gekochte Pak. **Sicherung vor der Aenderung:**
+`…\CountEmporiumDragons-Backup-20260927\teamspeak-20261110`.
+
+**Hinweis zur Logzeile `TSMOUTH`:** Der `PrintString`-Knoten ist als „nur Entwicklung“ markiert. Ob die Zeile
+im ausgelieferten Spiel-Client ins `ConanSandbox.log` geschrieben wird, ist nicht belegt; die Mund-Regel haengt
+nicht davon ab.
