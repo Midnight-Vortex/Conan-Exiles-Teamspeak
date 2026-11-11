@@ -263,7 +263,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.22";
+    return "8.0.23";
 }
 
 int ts3plugin_apiVersion(void) {
@@ -391,6 +391,7 @@ int ts3plugin_init(void) {
        thread (single owner of the arming/debounce state — see voice_modes.h). */
     pos_watcher_start();
     pos_inject_set_notify_callback(ts3_on_http_position_update);
+    pos_http_server_set_version(ts3plugin_version()); /* 102: shown by GET /v1/status */
     pos_http_server_start();
     overlay_schedule_start();
     if (ts3_adopt_current_connection() && ts3_is_connected()) {
@@ -486,6 +487,52 @@ static void ts3_sync_overlay_channel_state(uint64 knownChannelID) {
     updateVoiceOverlay();
 }
 
+/* 102: two TeamSpeak processes can run on one PC and both load this plugin.
+   Tell the HTTP listener whether THIS instance is the one with the Conan
+   server (it answers the game mod with "act" and gives the primary port away
+   only while it is not), and show the listener's port notice in the chat
+   once. TS callback thread. */
+static void ts3_http_port_tick(void) {
+    const int active = ts3_is_connected() && server_profile_is_active();
+    int port = 0;
+    unsigned long holder = 0;
+    char msg[320];
+
+    pos_http_server_set_active(active);
+    if (!active) {
+        return; /* a notice waits until a Conan server tab can show it */
+    }
+    {
+        const unsigned long ended = pos_http_server_take_ended_frozen();
+        if (ended != 0) {
+            snprintf(msg, sizeof(msg),
+                "[Conan Exiles] A frozen TeamSpeak process (process ID %lu) blocked the port for the game "
+                "mod and was closed.", ended);
+            ts3_print_to_chat(msg);
+        }
+    }
+    switch (pos_http_server_take_notice(&port, &holder)) {
+    case POS_HTTP_NOTICE_FALLBACK:
+        snprintf(msg, sizeof(msg),
+            "[Conan Exiles] Port %d is used by another program (process ID %lu). The plugin now uses "
+            "port %d. If you are not moved into the ingame channel: close every other TeamSpeak "
+            "window or process and restart TeamSpeak.", POS_HTTP_PORT, holder, port);
+        ts3_print_to_chat(msg);
+        log_write("HTTP: chat hint shown - fallback port %d, primary held by PID %lu", port, holder);
+        break;
+    case POS_HTTP_NOTICE_NO_PORT:
+        snprintf(msg, sizeof(msg),
+            "[Conan Exiles] No local port is free for the game mod (process ID %lu holds port %d). "
+            "Positions come through the file only. Close every other TeamSpeak window or process "
+            "and restart TeamSpeak.", holder, POS_HTTP_PORT);
+        ts3_print_to_chat(msg);
+        log_write("HTTP: chat hint shown - no port free, primary held by PID %lu", holder);
+        break;
+    default:
+        break;
+    }
+}
+
 /* Connect, tab switch, or plugin re-enable while already online. */
 static void ts3_bootstrap_connected_session(void) {
     nick_on_connected();
@@ -494,6 +541,7 @@ static void ts3_bootstrap_connected_session(void) {
     pos_autodetect_saved_path();
     plugin_ui_sync_from_config();
     server_profile_tick();
+    ts3_http_port_tick();
     chan_tick();
     overlay_request_immediate_start();
     ts3_sync_overlay_channel_state(0);
@@ -519,6 +567,7 @@ static void ts3_reset_connection_state(void) {
     ts3d_reset();
     chan_reset();
     server_profile_reset();
+    pos_http_server_set_active(0); /* 102: no Conan server any more - the port may be handed over */
     /* CEVER table: replied flags and versions of the old session must not
        leak into the new one (peers would never get our reply again, and stale
        versions showed up in the info panel). Pure reset, no TS API. */
@@ -711,6 +760,7 @@ void ts3plugin_onPluginCommandEvent(uint64 serverConnectionHandlerID, const char
             ts3d_apply();
         }
         server_profile_tick();
+        ts3_http_port_tick(); /* 102: "act" for the game mod + port notice */
         chan_tick();
         if (ts3_audio_has_pending_unmutes()) {
             ts3_audio_flush_unmutes();

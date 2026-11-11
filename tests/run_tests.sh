@@ -212,6 +212,10 @@ run_suite voice_keys_test \
 run_suite http_request_test \
     tests/http_request_test.c
 
+# 102 — fallback port + handover between plugin instances (header-only http_ports.h).
+run_suite http_ports_test \
+    tests/http_ports_test.c
+
 # 085 — Pos.txt / legacy HTTP line parser + sample sanity (header-only pos_parse.h).
 run_suite pos_parse_test \
     tests/pos_parse_test.c

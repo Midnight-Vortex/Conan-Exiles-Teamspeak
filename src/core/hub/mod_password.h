@@ -8,11 +8,12 @@
  * " TSPW=<password>" as the LAST field of every POST /v1/position.
  * The HTTP thread cuts that field off before anything parses or logs the
  * body and stores the value here. The password lives in memory only: it is
- * never logged and never written to disk. A value counts only while the mod
- * keeps posting (MOD_PASSWORD_TTL_MS); the first read after that wipes it.
+ * never logged and the plugin never writes it to disk. A value counts only
+ * while the mod keeps posting (MOD_PASSWORD_TTL_MS); the first read after
+ * that wipes it.
  *
- * Thread contract: take/store = HTTP listener thread; get/clear = any thread
- * (internal lock).
+ * Thread contract: take/store = HTTP listener thread or the Pos.txt watcher
+ * thread (file variant); get/clear = any thread (internal lock).
  */
 
 #include "core/hub/hub_parser.h"
@@ -24,6 +25,16 @@
    NUL-terminated body in place, stores the value and wipes it from the body.
    Returns the new body length (unchanged when the field is absent). */
 int mod_password_take_from_body(char* body, int bodyLen, unsigned long long nowMs);
+
+/* File variant (102), used only while no HTTP port works: the mod then writes
+   " TSPWU=<url-encoded value>" + line end as the LAST field of the Pos.txt
+   line, for a few seconds at a time. URL-encoded because a single umlaut made
+   the game write the whole file as UTF-16 (measured), which nothing here could
+   read. Cuts the field off the mutable, NUL-terminated line in place and wipes
+   it; the value is decoded and stored only when the line is complete (ends
+   with '\n', not truncated) and every escape is valid - otherwise it is
+   dropped unread. Returns the new line length (unchanged when absent). */
+int mod_password_take_from_file_line(char* line, int lineLen, int truncated, unsigned long long nowMs);
 
 /* Stores a value (len bytes, no NUL needed). Empty = the server has no
    password (clears). Too long or control characters = ignored. Logs only

@@ -11,6 +11,9 @@
 
 #define MOD_PASSWORD_FIELD     "TSPW="
 #define MOD_PASSWORD_FIELD_LEN 5
+/* 102: the same value in Pos.txt, URL-encoded so the file stays plain ASCII. */
+#define MOD_PASSWORD_FILE_FIELD     "TSPWU="
+#define MOD_PASSWORD_FILE_FIELD_LEN 6
 
 static CRITICAL_SECTION g_pwLock;
 static INIT_ONCE g_pwLockOnce = INIT_ONCE_STATIC_INIT;
@@ -70,6 +73,49 @@ void mod_password_store(const char* value, int len, unsigned long long nowMs) {
     }
 }
 
+/* Position of a field marker that starts the text or follows a blank, so a
+   value of another field that merely contains the marker never matches.
+   First match wins. Returns -1 when the field is absent. */
+static int pw_find_field(const char* text, int avail, const char* field, int fieldLen) {
+    for (int i = 0; i + fieldLen <= avail; i++) {
+        if (memcmp(text + i, field, (size_t)fieldLen) == 0
+            && (i == 0 || text[i - 1] == ' ' || text[i - 1] == '\t')) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int pw_hex(char c) {
+    if (c >= '0' && c <= '9') { return c - '0'; }
+    if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+    if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+    return -1;
+}
+
+/* Turns "%C3%A4" back into bytes, in place. Returns the new length, or -1
+   when an escape is broken or cut off (the value must then not be used). */
+static int pw_url_decode(char* s, int len) {
+    int out = 0;
+    for (int i = 0; i < len; i++) {
+        if (s[i] != '%') {
+            s[out++] = s[i];
+            continue;
+        }
+        if (i + 2 >= len) {
+            return -1;
+        }
+        const int hi = pw_hex(s[i + 1]);
+        const int lo = pw_hex(s[i + 2]);
+        if (hi < 0 || lo < 0) {
+            return -1;
+        }
+        s[out++] = (char)((hi << 4) | lo);
+        i += 2;
+    }
+    return out;
+}
+
 int mod_password_take_from_body(char* body, int bodyLen, unsigned long long nowMs) {
     if (!body || bodyLen <= 0) {
         return bodyLen;
@@ -79,17 +125,8 @@ int mod_password_take_from_body(char* body, int bodyLen, unsigned long long nowM
         avail++;
     }
 
-    /* The field must start the body or follow a blank, so a value of another
-       field that merely contains "TSPW=" never matches. First match wins:
-       everything behind the marker belongs to the password. */
-    int start = -1;
-    for (int i = 0; i + MOD_PASSWORD_FIELD_LEN <= avail; i++) {
-        if (memcmp(body + i, MOD_PASSWORD_FIELD, MOD_PASSWORD_FIELD_LEN) == 0
-            && (i == 0 || body[i - 1] == ' ' || body[i - 1] == '\t')) {
-            start = i;
-            break;
-        }
-    }
+    /* Everything behind the marker belongs to the password. */
+    const int start = pw_find_field(body, avail, MOD_PASSWORD_FIELD, MOD_PASSWORD_FIELD_LEN);
     if (start < 0) {
         return bodyLen;
     }
@@ -106,6 +143,43 @@ int mod_password_take_from_body(char* body, int bodyLen, unsigned long long nowM
         cut--;
     }
     pw_wipe(body + cut, avail - cut);
+    return cut;
+}
+
+int mod_password_take_from_file_line(char* line, int lineLen, int truncated, unsigned long long nowMs) {
+    if (!line || lineLen <= 0) {
+        return lineLen;
+    }
+    int avail = 0;
+    while (avail < lineLen && line[avail] != '\0') {
+        avail++;
+    }
+
+    const int start = pw_find_field(line, avail, MOD_PASSWORD_FILE_FIELD, MOD_PASSWORD_FILE_FIELD_LEN);
+    if (start < 0) {
+        return lineLen;
+    }
+
+    /* The mod writes the line end only behind this field: without it the file
+       was read half-written, and half a password must never be used. */
+    const int valueAt = start + MOD_PASSWORD_FILE_FIELD_LEN;
+    const int complete = !truncated && avail > valueAt && line[avail - 1] == '\n';
+    if (complete) {
+        int valueEnd = avail;
+        while (valueEnd > valueAt && (line[valueEnd - 1] == '\r' || line[valueEnd - 1] == '\n')) {
+            valueEnd--;
+        }
+        const int len = pw_url_decode(line + valueAt, valueEnd - valueAt);
+        if (len >= 0) {
+            mod_password_store(line + valueAt, len, nowMs);
+        }
+    }
+
+    int cut = start;
+    while (cut > 0 && (line[cut - 1] == ' ' || line[cut - 1] == '\t')) {
+        cut--;
+    }
+    pw_wipe(line + cut, avail - cut);
     return cut;
 }
 

@@ -136,11 +136,72 @@ static void test_wipe_on_expiry(void) {
     mod_password_clear();
 }
 
+/* Runs take_from_file_line on a copy of text; returns the new length, line in buf. */
+static int take_file(const char* text, char* buf, int cap, int truncated, unsigned long long now) {
+    strncpy(buf, text, (size_t)cap - 1);
+    buf[cap - 1] = '\0';
+    return mod_password_take_from_file_line(buf, (int)strlen(buf), truncated, now);
+}
+
+static void test_take_file(void) {
+    printf("[4] take_from_file_line (102: Pos.txt while no HTTP port works)\n");
+    char line[512], pw[MOD_PASSWORD_MAX];
+    mod_password_clear();
+    g_log[0] = '\0';
+
+    /* The two lines exactly as the mod wrote them in the editor test (2026-11-11). */
+    const char* pos = "SEQ=289 X=1030.0 Y=354.150002 Z=-600.0 YAW=-132.188 YAWY=0";
+    int n = take_file("SEQ=289 X=1030.0 Y=354.150002 Z=-600.0 YAW=-132.188 YAWY=0 TSPWU=P%C3%A4ss%2Cw%C3%B6rt%201\n",
+        line, sizeof(line), 0, 1000);
+    CHECK(strcmp(line, pos) == 0 && n == (int)strlen(pos), "field cut off, position intact");
+    CHECK(mod_password_get(pw, sizeof(pw), 1000) && strcmp(pw, "P\xc3\xa4ss,w\xc3\xb6rt 1") == 0,
+        "umlauts, comma and blank decoded to UTF-8");
+    CHECK(memchr(line + n, '%', sizeof(line) - (size_t)n) == NULL && strstr(line + n + 1, "ss") == NULL,
+        "value wiped from the buffer");
+
+    take_file("SEQ=361 X=1 Y=2 Z=3 YAW=0 YAWY=0 TSPWU=Pie%20Test%2C1\n", line, sizeof(line), 0, 1100);
+    CHECK(strcmp(line, "SEQ=361 X=1 Y=2 Z=3 YAW=0 YAWY=0") == 0
+        && mod_password_get(pw, sizeof(pw), 1100) && strcmp(pw, "Pie Test,1") == 0, "plain value");
+
+    take_file("SEQ=1 X=1 TSPWU=a%2fb%2Fc\r\n", line, sizeof(line), 0, 1200);
+    CHECK(mod_password_get(pw, sizeof(pw), 1200) && strcmp(pw, "a/b/c") == 0, "lower-case hex, CR LF line end");
+
+    /* Half-written file: no line end -> cut out, but never used. */
+    n = take_file("SEQ=2 X=1 TSPWU=Pie%20Te", line, sizeof(line), 0, 1300);
+    CHECK(strcmp(line, "SEQ=2 X=1") == 0 && n == 9, "no line end: field still cut off");
+    CHECK(mod_password_get(pw, sizeof(pw), 1300) && strcmp(pw, "a/b/c") == 0, "no line end: value not taken");
+
+    take_file("SEQ=3 X=1 TSPWU=other\n", line, sizeof(line), 1, 1400);
+    CHECK(strcmp(line, "SEQ=3 X=1") == 0 && mod_password_get(pw, sizeof(pw), 1400) && strcmp(pw, "a/b/c") == 0,
+        "truncated read: cut off, not taken");
+
+    take_file("SEQ=4 X=1 TSPWU=bad%zzend\n", line, sizeof(line), 0, 1500);
+    CHECK(strcmp(line, "SEQ=4 X=1") == 0 && mod_password_get(pw, sizeof(pw), 1500) && strcmp(pw, "a/b/c") == 0,
+        "broken escape: not taken");
+    take_file("SEQ=4 X=1 TSPWU=cut%4\n", line, sizeof(line), 0, 1600);
+    CHECK(mod_password_get(pw, sizeof(pw), 1600) && strcmp(pw, "a/b/c") == 0, "cut-off escape: not taken");
+    take_file("SEQ=4 X=1 TSPWU=ctl%01x\n", line, sizeof(line), 0, 1700);
+    CHECK(mod_password_get(pw, sizeof(pw), 1700) && strcmp(pw, "a/b/c") == 0, "control character: not taken");
+
+    n = take_file("SEQ=5 X=1 Y=2 Z=3 YAW=0 YAWY=0", line, sizeof(line), 0, 1800);
+    CHECK(n == (int)strlen(line) && strcmp(line, "SEQ=5 X=1 Y=2 Z=3 YAW=0 YAWY=0") == 0, "no field: line unchanged");
+    take_file("SEQ=6 X=1 OCC=XTSPWU=abc\n", line, sizeof(line), 0, 1900);
+    CHECK(strcmp(line, "SEQ=6 X=1 OCC=XTSPWU=abc\n") == 0, "marker inside another value does not match");
+    take_file("SEQ=7 X=1 TSPW=plain\n", line, sizeof(line), 0, 2000);
+    CHECK(strcmp(line, "SEQ=7 X=1 TSPW=plain\n") == 0 && mod_password_get(pw, sizeof(pw), 2000) && strcmp(pw, "a/b/c") == 0,
+        "the HTTP field name is not read from the file");
+
+    CHECK(strstr(g_log, "ss,w") == NULL && strstr(g_log, "Pie") == NULL && strstr(g_log, "a/b") == NULL,
+        "log never has the value");
+    mod_password_clear();
+}
+
 int main(void) {
     printf("mod_password_test\n");
     test_take();
     test_store_rules();
     test_wipe_on_expiry();
+    test_take_file();
     printf(g_failures ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", g_failures);
     return g_failures ? 1 : 0;
 }

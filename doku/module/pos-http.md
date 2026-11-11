@@ -69,7 +69,9 @@ Die Teamspeak-Mod (Zeilenformat `SEQ=… X=… … OCC=…`) hängt **als letzte
 Alles hinter `TSPW=` gehört zum Passwort (Leerzeichen erlaubt). Das Plugin schneidet das
 Feld ab und löscht es aus dem Puffer, **bevor** der Body geparst oder geloggt wird. Es
 hält das Passwort nur im Speicher und gilt nur, solange die Mod sendet (10 s).
-`TSPW=` ohne Wert = „Server hat kein Passwort“. In `Pos.txt` steht es nie.
+`TSPW=` ohne Wert = „Server hat kein Passwort“. In `Pos.txt` steht das Passwort nur in
+der Datei-Variante, wenn kein Port antwortet — dort als eigenes Feld `TSPWU=` und
+URL-kodiert (Abschnitt 11, ab Plugin 8.0.23).
 
 ### Ablehnung (HTTP 400)
 
@@ -366,7 +368,44 @@ Wartezeit (Backoff): 250 → 500 → 1000 → 2000 → 4000 → 5000 ms (Maximum
 Alle Wartezeiten sind Wartezeiten auf das Stop-Event: `pos_http_server_stop()` bleibt
 sofort. Dauerhafte Bind-Fehler werden nur alle 30 s geloggt.
 
-Gebunden wird zuerst **ohne** `SO_REUSEADDR` (unter Windows würde sonst ein *anderes*
-Programm denselben Port mitbenutzen dürfen). Nur wenn der Port als „belegt“ gemeldet wird
-(z. B. alte Plugin-Instanz nach einem Neustart), wird mit `SO_REUSEADDR` erneut
-versucht und `HTTP: WARNING port 52734 was in use - bound with SO_REUSEADDR` geloggt.
+**Seit 8.0.23 (102):** Gebunden wird **exklusiv** (`SO_EXCLUSIVEADDRUSE`). Der frühere zweite
+Versuch mit `SO_REUSEADDR` ist entfernt: Damit konnten sich zwei Prozesse denselben Port
+teilen. Ist der Port belegt, gilt Abschnitt 11.
+
+---
+
+## 11. Zwei Plugin-Instanzen, Ausweich-Port, Status (102, ab Plugin 8.0.23)
+
+Auf einem PC können zwei TeamSpeak-Prozesse laufen, die beide das Plugin laden. Damit die Mod
+die Instanz mit dem Conan-Server erreicht:
+
+| Route | Zweck | Antwort |
+|---|---|---|
+| `GET /v1/status` | Wer bist du? (fragt eine andere Instanz oder die Mod) | `{"ok":true,"service":"conan_exiles_ts","act":0\|1,"pid":N,"port":N,"ver":"…"}` |
+| `POST /v1/yield` | Eine neue Instanz bittet um den Hauptport | `{"ok":true,"yield":1}` nur, wenn der Befragte den Hauptport hält **und** nicht aktiv ist |
+| `POST /v1/position` | wie bisher | zusätzlich am Ende `,"act":0\|1` |
+
+- **`act`:** `1` = diese Instanz ist verbunden und hat ein aktives Conan-Server-Profil. Ein altes
+  Plugin sendet das Feld nicht; fehlt es, gilt die Antwort als in Ordnung.
+- **Ports:** Hauptport `52734`, Ausweich-Port `42734` (außerhalb des dynamischen Windows-Bereichs).
+  Eine Instanz auf dem Ausweich-Port kehrt von selbst auf den Hauptport zurück, sobald er frei ist.
+  Ist sie **aktiv**, fragt sie den Halter alle 5 s erneut (ein nicht aktiver gibt ab).
+- **Eingefrorenes TeamSpeak:** Antwortet der Halter dreimal über mindestens 8 s nicht, läuft er aus
+  derselben Programmdatei und hat er kein sichtbares oder ein nicht reagierendes Fenster, beendet
+  ihn eine aktive Instanz. Fremde Programme werden nie beendet.
+- **Regel für die Mod** (gebaut am 11.11.2026, im Spiel ungetestet; Doku 102 Abschnitt 9): auf dem
+  aktuellen Port weitersenden; nur solange dort `act=0` kommt, die Antwort kein `"ok":true` enthält
+  oder seit über 1 s keine Plugin-Antwort kam, `GET /v1/status` an den anderen Port schicken
+  (nach 2 s, 4 s, 8 s, dann alle 10 s; antwortet der eigene Port mit `act=0`, gestreckt bis
+  alle 60 s) und auf den Port wechseln, den die Antwort in `"port"` nennt — bei `act=1` immer,
+  bei `act=0` nur, wenn der eigene Port seit über 1 s schweigt. Antwortet der Ausweich-Port 5 s
+  lang nicht, geht die Mod zurück auf den Hauptport. Lief über 1 s keine Runde (keine Figur, Ladebild), startet die Zeitmessung neu.
+  Dafür steht `http://127.0.0.1:42734` in `modinfo.json` unter `requestedHttpOrigins` (das Spiel
+  fragt jeden Spieler einmal).
+- **Datei-Variante mit Passwort:** Kam 5 s lang keine Plugin-Antwort und scheiterte auch die
+  Status-Frage, schreibt die Mod alle 30 s für 3 s ` TSPWU=<Passwort>` als letztes Feld in die
+  `Pos.txt`, **URL-kodiert** (`ä` → `%C3%A4`, Leerzeichen → `%20`) und **mit Zeilenumbruch am
+  Ende**. Ohne Zeilenumbruch oder mit kaputtem `%`-Zeichen wird das Passwort verworfen (halb
+  geschriebene Datei). URL-kodiert, weil ein Umlaut im Klartext die ganze Datei auf UTF-16
+  umstellte (gemessen). Das Passwort steht in diesen Fenstern lesbar auf der Platte des Spielers —
+  deshalb nur in diesem Fall. Geht HTTP, schreibt die Mod es nie in die Datei.

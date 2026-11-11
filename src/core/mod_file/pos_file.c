@@ -2,6 +2,7 @@
 #include "core/mod_file/pos_parse.h"
 #include "core/mod_file/path_detect.h"
 #include "core/config/config.h"
+#include "core/hub/mod_password.h"
 #include "core/util/log.h"
 #include "core/util/poll_interval.h"
 
@@ -101,15 +102,21 @@ static int pos_read_raw(const wchar_t* filePath, char* buffer, size_t bufferSize
         }
 
         buffer[bytesRead] = '\0';
-        /* DE locale writes comma decimals — normalize for strtod. */
-        for (char* p = buffer; *p; ++p) {
-            if (*p == ',') {
-                *p = '.';
-            }
-        }
         return 1;
     }
     return 0;
+}
+
+/* 102: file variant with password. When no HTTP port works, the game mod
+   writes the ingame channel password behind the position (" TSPWU=<url-encoded
+   pw>", last field, line ends with a newline) for a few seconds at a time.
+   Cut it out before anything parses the line. It is only STORED when the line
+   is complete (ends with a newline and did not fill the buffer): the file is
+   rewritten 33 times a second and a half-written line would hand a cut-off
+   password to the channel move (mod_password.c does the work). */
+static void pos_take_file_password(char* text, size_t bufferSize) {
+    const size_t len = strlen(text);
+    mod_password_take_from_file_line(text, (int)len, len >= bufferSize - 1, GetTickCount64());
 }
 
 int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
@@ -117,9 +124,18 @@ int pos_file_read_once(const wchar_t* filePath, PosSample* out) {
         return 0;
     }
 
-    char buffer[256];
+    char buffer[512];
     if (!pos_read_raw(filePath, buffer, sizeof(buffer))) {
         return 0;
+    }
+    pos_take_file_password(buffer, sizeof(buffer));
+
+    /* DE locale writes comma decimals — normalize for strtod. Done AFTER the
+       password is cut out: a comma in the password must stay a comma. */
+    for (char* p = buffer; *p; ++p) {
+        if (*p == ',') {
+            *p = '.';
+        }
     }
 
     /* Pure parse (pos_parse.h): every field needs a real number, all five
