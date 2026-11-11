@@ -3,6 +3,10 @@
 **Nur Mod** (`Vo_PosStreamer_Actor`, nicht in Git), 2026-11-10. Das Plugin ist unveraendert (8.0.22).
 Die Mod-Pak ist **noch nicht gekocht und nicht hochgeladen** (der Besitzer kocht selbst).
 
+> **Stand 2026-11-11:** Der Befehl beim Start (`BeginPlay`) hat im Spiel-Client **nicht gewirkt**. Die Mod sendet
+> ihn jetzt erst, wenn die eigene Figur da ist, und schreibt Markierungszeilen ins Log. Siehe Abschnitt 9.
+> Die Konsolen-Korrektur (`Log String`) ist davon nicht betroffen.
+
 Meldungen des Besitzers:
 1. *„Log spam fixen das ist zu viel“* (`ConanSandbox.log` des Spiel-Clients).
 2. *„Das soll da nicht stehen“* — die `TSMOUTH`-Zeilen in der Admin-Konsole im Spiel.
@@ -97,6 +101,8 @@ Das Plugin bekam weiter Positionen (`AUDIO-STAT … localPos=ok`), Voice lief un
 
 Pruefung nach dem Kochen: kurz nach dem Einloggen steht in `ConanSandbox.log` eine Zeile
 `LogModHttp … Warning`, und es gibt keine Zeilen „Starting request from mod 'teamspeak'“ mehr.
+**Ergebnis am 11.11.: nicht bestanden** — der Befehl aus `BeginPlay` wirkte im Spiel-Client nicht. Der aktuelle
+Stand der Mod und die neue Pruefung stehen in Abschnitt 9.
 
 ---
 
@@ -130,3 +136,93 @@ greifen in den Ablauf der 33 Anfragen pro Sekunde ein, und der soll bleiben.
 Wer ein Log verkleinern will, muss zuerst wissen, **wer** die Zeilen schreibt. Hier war es nicht unser
 Blueprint, sondern das Spiel selbst — also hilft kein Umbau am eigenen Code, sondern die Log-Stufe der
 fremden Kategorie. Und: `Print String` ist zum Anzeigen gedacht, `Log String` zum Mitschreiben.
+
+---
+
+## 9. Nachtrag 2026-11-11 — Befehl beim Start wirkte im Spiel nicht; jetzt erst, wenn die Figur da ist
+
+### Was beobachtet wurde
+
+Mit der am 11.11. um 05:41 gekochten Pak liefen drei Sitzungen: zweimal Einzelspieler, einmal der echte Server.
+In allen dreien schrieb das Spiel weiter 66 `LogModHttp`-Zeilen pro Sekunde. Es gab **keine** Bestaetigungszeile
+`LogModHttp … Warning` und auch keine Fehlermeldung („Command not recognized“). Der Timer nach dem Knoten lief,
+die Positionen kamen an. Der Befehl wurde also weder abgelehnt noch hat er etwas zerstoert — das Spiel hat ihn
+schlicht nicht verarbeitet.
+
+### Was dazu geprueft wurde
+
+| Frage | Ergebnis |
+|---|---|
+| Steckt die Aenderung in der geladenen Pak? | Ja. Der Befehlstext steht in der gekochten Datei, und die vom Spiel entpackte Pak ist bytegleich mit der gekochten. |
+| Filtert das Spiel Konsolenbefehle aus Mods? | In der Spieldatei fand sich kein Hinweis darauf (Einschraenkungen fuer Mods gibt es dort nur bei HTTP). Ausgeschlossen ist es damit nicht. |
+| Wirkt der Knoten im DevKit? | Ja, in jedem Fall: ohne Spieler-Controller, beim Start der Spielwelt und spaeter. Jedes Mal erscheint die Bestaetigungszeile. |
+| Lag es am Einzelspieler? | Nein, auf dem Server war es genauso. |
+
+Die Ursache im fertigen Spiel-Client ist damit **nicht belegt**. Zwei Erklaerungen bleiben: Beim Start des
+Mod-Actors ist der Spieler-Controller im Spiel noch nicht vollstaendig eingerichtet (dann verwirft die Engine den
+Befehl stillschweigend), oder der Spiel-Client fuehrt Konsolenbefehle aus Blueprints gar nicht aus.
+
+### Was geaendert wurde
+
+| Wo | Aenderung |
+|---|---|
+| `EventGraph` | Der Knoten `Execute Console Command` ist wieder entfernt. An seiner Stelle schreibt `Log String` einmal `TSLOG teamspeak mod started pc=<true/false>` (ob beim Start schon ein Spieler-Controller da war). |
+| `UpdatePosition` | Hinter der vorhandenen Pruefung „eigene Figur gueltig?“ sitzt eine Einmal-Weiche (neue Variable `LogCmdDone`). Beim ersten Durchlauf: `Log String` mit `TSLOG teamspeak mod sets LogModHttp to Warning (undo: Log LogModHttp Log) pc=<true/false>`, dann `Execute Console Command` mit `Log LogModHttp Warning` und dem eigenen Spieler-Controller. Danach geht es weiter wie bisher. |
+
+Der Ablauf der Anfragen ist unveraendert: Bei jedem weiteren Durchlauf kommt nur eine einzelne Abfrage der
+Variable dazu, die sofort zum alten Weg fuehrt.
+
+```
+UpdatePosition (alle 0,03 s)
+  └─ eigene Figur gueltig?
+       └─ ja → LogCmdDone?
+                 ├─ ja   → weiter wie bisher (Position, Pos.txt, HTTP)
+                 └─ nein → LogCmdDone = true → Log String (TSLOG …)
+                           → Execute Console Command → weiter wie bisher
+```
+
+### Wie es getestet wurde (DevKit)
+
+- Beide Graphen kompilieren ohne Fehler und Warnungen; die Verdrahtung wurde Pin fuer Pin geprueft.
+- **Spieltest im Editor (PIE):** `TSLOG teamspeak mod started pc=true`, 1,4 s spaeter
+  `TSLOG teamspeak mod sets LogModHttp to Warning … pc=true`, direkt danach die Bestaetigungszeile
+  `LogModHttp … Warning`. Die Markierung erschien genau einmal. Die Anfragen liefen danach weiter.
+- Die Anfragen aus dem Editor erreichen das echte Plugin nicht: Das DevKit lehnt sie mangels Freigabe ab
+  (`NotApprovedByPlayer`). Der Test stoert also niemanden, der gerade spielt.
+- Editor-Test der Mundbewegung (9 Faelle) unveraendert bestanden.
+- Gespeichert wurde nur `Vo_PosStreamer_Actor.uasset`. Knotenzahl: `EventGraph` 22 → 26, `UpdatePosition` 77 → 86.
+
+**Nicht geprueft:** der Spiel-Client. Genau dort ist die erste Variante gescheitert.
+
+### So liest man das Ergebnis nach dem Kochen (`ConanSandbox.log`)
+
+Ob der Befehl wirkt, zeigen die Zeilen des Spiels selbst: die Bestaetigungszeile `LogModHttp … Warning` und ob
+die Anfragezeilen aufhoeren. Die `TSLOG`-Zeilen sind nur Zusatz. Ob die neue Pak geladen wurde, steht in den
+Zeilen `Mounting mod pak file` und `… correct hash` am Anfang des Logs.
+
+| Im Log steht | Bedeutung |
+|---|---|
+| Bestaetigungszeile `LogModHttp … Warning`, und keine Zeilen „Starting request from mod 'teamspeak'“ mehr | Es wirkt. |
+| `TSLOG … sets LogModHttp to Warning … pc=true`, aber keine Bestaetigungszeile, und die Anfragezeilen laufen weiter | Der Spiel-Client fuehrt Konsolenbefehle aus Blueprints nicht aus. Dann kommt der Knoten wieder heraus, und es bleibt nur der Weg ueber Plugin oder Filter. |
+| Gar keine `TSLOG`-Zeile, obwohl die neue Pak geladen wurde | `Log String` schreibt im Spiel-Client nicht ins Log. Dann fehlt dort auch die `TSMOUTH`-Zeile, und sie muss zurueck auf `Print String` (mit Anzeige in der Konsole) oder ganz entfallen. |
+
+**Noch offen:** `Log String` wurde im Spiel-Client bisher nicht beobachtet. In den Sitzungen vom 11.11. hat
+niemand in der Naehe gesprochen, es gab also keinen Anlass fuer eine `TSMOUTH`-Zeile. Die `TSLOG`-Zeilen klaeren
+das im selben Test mit.
+
+**Reihenfolge fuer den Test:** kochen, im Einzelspieler mit der lokalen Pak starten, Log pruefen lassen, und erst
+bei vorhandener Bestaetigungszeile in den Workshop hochladen. (Im Einzelspieler bleibt man im Root- oder
+Hub-Channel, siehe Nebenbefund; fuer den Log-Befehl spielt das keine Rolle.)
+
+Sicherung vor dieser Aenderung:
+`C:\Users\uwebu\Documents\Codex\CountEmporiumDragons-Backup-20260927\teamspeak-20261111-befehl`.
+
+### Nebenbefund: kein Channel-Wechsel im Einzelspieler
+
+Am 11.11. morgens blieb der Besitzer im Einzelspieler im Root-Channel haengen. Das lag nicht an der Mod-Aenderung:
+Das Ingame-Passwort liegt im Savegame des Servers (`dc tsvm <Passwort>`, Doku 077). Im Einzelspieler gibt es
+dieses Savegame nicht, also sendet die Mod kein Passwort, und das Plugin wartet. Auf dem echten Server kam das
+Passwort mit der neuen Pak um 06:09:18 an, eine halbe Sekunde spaeter folgte der Wechsel in den Ingame-Channel.
+
+Offen (Plugin, nicht gebaut): Wer bei laufendem Spiel neu auf den TeamSpeak-Server kommt und kein Passwort
+bekommt, bleibt im Root-Channel statt im Hub, bis das Spiel beendet wird.
