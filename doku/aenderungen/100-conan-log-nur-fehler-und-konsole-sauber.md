@@ -226,3 +226,43 @@ Passwort mit der neuen Pak um 06:09:18 an, eine halbe Sekunde spaeter folgte der
 
 Offen (Plugin, nicht gebaut): Wer bei laufendem Spiel neu auf den TeamSpeak-Server kommt und kein Passwort
 bekommt, bleibt im Root-Channel statt im Hub, bis das Spiel beendet wird.
+
+---
+
+## 10. Nachtrag 2026-11-11 abends — Log-Befehl vollstaendig entfernt
+
+### Ergebnis der Testvariante im Spiel
+
+Die Variante aus Abschnitt 9 lief am Abend im Spiel-Client, auf zwei verschiedenen PCs (Besitzer und ein
+weiterer Spieler), jeweils auf dem echten Server:
+
+- `TSLOG teamspeak mod started pc=true` und `TSLOG teamspeak mod sets LogModHttp to Warning … pc=true` stehen
+  im Log. Die Mod hat den Befehl also mit gueltigem Spieler-Controller abgeschickt.
+- Die Bestaetigungszeile `LogModHttp … Warning` fehlt, und die `LogModHttp`-Zeilen laufen weiter
+  (beim Besitzer 29 394 in sieben Minuten).
+
+**Damit ist entschieden:** Der fertige Spiel-Client fuehrt diesen Konsolenbefehl nicht aus, wenn ihn ein
+Blueprint ausloest. Von Hand getippt wirkt er weiterhin. Ueber die Mod laesst sich die Log-Menge des Spiels
+also nicht verringern. Es bleiben die Wege ausserhalb der Mod (Filterzeile in Trebuchet oder Engine.ini,
+Kompression des Log-Ordners).
+
+Nebenbei belegt: `Log String` schreibt im Spiel-Client ins Log (`TSLOG`- und `TSMOUTH`-Zeilen ohne den Vorsatz
+`[Vo_PosStreamer_Actor_C_…]`), die offene Frage aus Abschnitt 9 ist damit beantwortet.
+
+### Was geaendert wurde
+
+Der Besitzer hat entschieden, den Log-Befehl komplett aus der Mod zu nehmen. Die Datei wurde auf den Stand vom
+10.11. 19:58 zurueckgesetzt (`Log String` fuer `TSMOUTH`, Befehl noch in `BeginPlay`) und der Knoten
+`Execute Console Command` dort entfernt: `Branch (IsDedicatedServer).else → Set Timer`, wie vor Doku 100.
+Die Einmal-Weiche, die Variable `LogCmdDone` und beide `TSLOG`-Markierungen gibt es nicht mehr.
+
+### Geprueft (DevKit)
+
+- kompiliert ohne Fehler und Warnungen; `EventGraph` wieder 21 Knoten, `UpdatePosition` 77;
+- in der gespeicherten Datei kommen `ExecuteConsoleCommand`, der Befehlstext, `TSLOG` und `LogCmdDone` nicht
+  mehr vor; `LogString` und `TSMOUTH name=` sind noch da.
+
+Sicherung der Variante mit Einmal-Weiche:
+`C:\Users\uwebu\Documents\Codex\CountEmporiumDragons-Backup-20260927\teamspeak-20261111-vor-entfernen`.
+
+Der Debug-Schalter fuer die `TSMOUTH`-Zeile steht in Doku 101.
