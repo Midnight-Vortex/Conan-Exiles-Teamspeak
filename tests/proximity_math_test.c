@@ -3,6 +3,7 @@
    Exit code 0 = all checks passed. */
 
 #include "core/proximity/proximity_math.h"
+#include "core/proximity/voice_cap.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -314,6 +315,41 @@ static void test_hub_volume_context(void) {
         "listenAddDistance widens effective range (higher gain at same distance)");
 }
 
+/* 103: what the listener bonus does to the LOUDNESS (report 2026-11-13: with
+   the bonus a whisper was almost as loud as normal speech). 1 foundation =
+   2.56 m, whisper 1 F, normal 6 F, bonus 4 F, max volume 1.3. */
+static void test_listen_bonus_loudness(void) {
+    printf("[9b] listener bonus: a whisper stays a whisper (103)\n");
+    const float F = 2.56f, maxVol = 1.3f;
+    const float whisper = 1.0f * F, normal = 6.0f * F, add = 4.0f * F;
+    const float whisperRange = whisper + voice_listen_bonus(add, whisper, normal);
+    const float normalRange = normal + voice_listen_bonus(add, normal, normal);
+
+    const float before = prox_volume_from_distance(2.56f, whisper + add, maxVol);   /* old: range 12.8 m */
+    const float after = prox_volume_from_distance(2.56f, whisperRange, maxVol);
+    const float plain = prox_volume_from_distance(2.56f, whisper, maxVol);          /* listener without bonus */
+    const float normalAt = prox_volume_from_distance(2.56f, normalRange, maxVol);
+
+    CHECK(before > 0.80f * maxVol, "old rule: whisper at 2.56 m above 80 % (the reported effect)");
+    CHECK(after < 0.35f * maxVol, "new rule: whisper at 2.56 m below 35 %");
+    CHECK(after > plain, "the listener with the bonus still hears a whisper better than without");
+    CHECK(normalAt > 0.95f * maxVol, "normal speech at the same spot is far louder than the whisper");
+    CHECK(NEAR(normalRange, normal + add, 1e-4f), "normal keeps the full bonus (25.6 m)");
+    CHECK(prox_volume_from_distance(5.0f, whisperRange, maxVol) == 0.0f, "a whisper is silent at 5 m (was 70 %)");
+
+    /* At every distance: more than without the bonus, never more than normal speech. */
+    int ok = 1;
+    for (int i = 1; i <= 300; i++) {
+        const float d = (float)i * 0.1f;
+        const float w = prox_volume_from_distance(d, whisperRange, maxVol);
+        if (w + 1e-6f < prox_volume_from_distance(d, whisper, maxVol)
+            || w > prox_volume_from_distance(d, normalRange, maxVol) + 1e-6f) {
+            ok = 0;
+        }
+    }
+    CHECK(ok, "0.1..30 m: whisper with bonus >= whisper without, and <= normal with bonus");
+}
+
 static void test_apply_diffuse_samples(void) {
     printf("[10] prox_apply_diffuse_samples\n");
     short mono[4] = { 0, 1000, -1000, 2000 };
@@ -344,6 +380,7 @@ int main(void) {
     test_binaural_gains();
     test_front_back_and_listener();
     test_hub_volume_context();
+    test_listen_bonus_loudness();
     test_apply_diffuse_samples();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;

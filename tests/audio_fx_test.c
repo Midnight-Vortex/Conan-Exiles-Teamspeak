@@ -550,6 +550,60 @@ static void test_voice_cap(void) {
     CHECK(voice_distance_clamp(0.0f, 100.0f) == 0.0f, "0 stays 0");
 }
 
+/* 103: listener bonus - a range shorter than the hub's normal range gets only
+   its share of the bonus. Numbers of the report: 1 foundation = 2.56 m,
+   whisper 1 F, normal 6 F, shout 16 F, bonus 4 F. */
+static void test_listen_bonus(void) {
+    printf("[7b] listener bonus share for short ranges (103)\n");
+    const float F = 2.56f;
+    const float whisper = 1.0f * F, normal = 6.0f * F, shout = 16.0f * F, add = 4.0f * F;
+    static HubSettings hub;
+    memset(&hub, 0, sizeof(hub));
+
+    CHECK(voice_listen_reference(NULL) == 0.0f, "no hub -> no reference");
+    CHECK(voice_listen_reference(&hub) == 0.0f, "hub not valid -> no reference");
+    hub.valid = 1;
+    CHECK(voice_listen_reference(&hub) == 0.0f, "no normal limits -> no reference");
+    hub.maxNormal = normal;
+    CHECK(feq_abs(voice_listen_reference(&hub), normal), "only MaximumNormal -> that one");
+    hub.minNormal = 9.0f;
+    CHECK(feq_abs(voice_listen_reference(&hub), 9.0f), "MinimumNormal set -> the minimum (normal speech never loses bonus)");
+    hub.raceCount = 2;
+    hub.races[0].minNormal = 7.0f; hub.races[0].maxNormal = 30.0f;
+    hub.races[1].minNormal = 0.0f; hub.races[1].maxNormal = 12.0f;
+    CHECK(feq_abs(voice_listen_reference(&hub), 7.0f), "a race with a smaller MinimumNormal lowers the reference");
+    hub.minNormal = 0.0f; hub.races[0].minNormal = 0.0f;
+    CHECK(feq_abs(voice_listen_reference(&hub), 12.0f), "no minimum anywhere -> smallest MaximumNormal");
+    hub.raceCount = 0;
+    hub.minNormal = normal;
+    CHECK(feq_abs(voice_listen_reference(&hub), normal), "min == max (this server) -> 15.36 m");
+
+    CHECK(feq_abs(voice_listen_bonus(add, whisper, normal), add / 6.0f), "whisper 1 of 6 foundations -> one sixth of the bonus");
+    CHECK(feq_abs(whisper + voice_listen_bonus(add, whisper, normal), 4.266667f), "whisper carries 4.27 m (was 12.8 m)");
+    CHECK(voice_listen_bonus(add, normal, normal) == add, "normal -> full bonus, unchanged");
+    CHECK(voice_listen_bonus(add, shout, normal) == add, "shout -> full bonus, unchanged");
+    CHECK(feq_abs(voice_listen_bonus(add, normal * 0.5f, normal), add * 0.5f), "half the normal range -> half the bonus");
+    CHECK(voice_listen_bonus(add, whisper, 0.0f) == add, "no reference known -> full bonus (old behaviour)");
+    CHECK(voice_listen_bonus(0.0f, whisper, normal) == 0.0f, "no bonus -> 0");
+    CHECK(voice_listen_bonus(-3.0f, whisper, normal) == 0.0f, "negative bonus -> 0");
+    CHECK(voice_listen_bonus(add, 0.0f, normal) == 0.0f, "speaker without a range -> no bonus");
+    CHECK(voice_listen_bonus(add, -1.0f, normal) == 0.0f, "negative range -> no bonus");
+
+    /* Never more than the configured bonus, never negative, and a longer range
+       never gets a smaller total range (the order whisper < normal < shout stays). */
+    int ok = 1;
+    float prevTotal = 0.0f;
+    for (int i = 0; i <= 400; i++) {
+        const float r = (float)i * 0.25f;
+        const float b = voice_listen_bonus(add, r, normal);
+        if (b < 0.0f || b > add || r + b < prevTotal) {
+            ok = 0;
+        }
+        prevTotal = r + b;
+    }
+    CHECK(ok, "0..100 m: bonus within 0..add, total range grows with the announced range");
+}
+
 /* =========================================================================
  * Render helpers in ts3_proximity_audio.h (fix 3)
  * ========================================================================= */
@@ -576,6 +630,7 @@ int main(void) {
     test_snap_stress();
     test_orphans();
     test_voice_cap();
+    test_listen_bonus();
     test_render_helpers();
     printf("\n%s (%d failures)\n", g_failures == 0 ? "ALL PASSED" : "FAILED", g_failures);
     return g_failures == 0 ? 0 : 1;

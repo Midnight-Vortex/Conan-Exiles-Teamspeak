@@ -423,6 +423,7 @@ typedef struct AudioPass {
     int hubActive;
     int localZone;
     float listenAdd;
+    float listenRef;        /* 103: hub normal range the listener bonus is measured against, 0 = unknown */
     float maxVolume;
     int realisticOn;
     float filterIntensity;  /* 0..1 */
@@ -440,13 +441,17 @@ static void audio_pass_begin(AudioPass* pass) {
     pass->realisticOn = server_profile_get_realistic_audio();
     pass->filterIntensity = server_profile_get_filter_intensity() / 100.0f;
     pass->voiceCap = pass->hubActive ? voice_distance_cap(&pass->hub) : 0.0f;
+    pass->listenRef = pass->hubActive ? voice_listen_reference(&pass->hub) : 0.0f;
 }
 
 /* How far a speaker can be heard: his announced voice distance (clamped to what
    an unmodified client could announce under the hub limits, 084 #9) plus the
-   listener bonus. Shared by the cull test and the gain curve so both agree. */
+   listener bonus. Shared by the cull test and the gain curve so both agree.
+   103: a range shorter than the hub's normal range (whisper) gets only its
+   share of the bonus - see voice_listen_bonus. */
 static float audio_remote_hear_range(const AudioPass* pass, const PlayerEntry* remote) {
-    return voice_distance_clamp(remote->voiceDistance, pass->voiceCap) + pass->listenAdd;
+    const float announced = voice_distance_clamp(remote->voiceDistance, pass->voiceCap);
+    return announced + voice_listen_bonus(pass->listenAdd, announced, pass->listenRef);
 }
 
 /* Callback thread only (updates the per-client hysteresis latch). enter =
@@ -555,8 +560,8 @@ static void audio_log_audible(const AudioPass* pass, const PlayerEntry* remote,
     }
     if (nowMs - g_gainDbgMs[cid] >= 5000ULL) {
         g_gainDbgMs[cid] = nowMs;
-        log_debug("AUDIO-DBG cid=%u dist=%.1f m announced=%.1f m cap=%.1f listenAdd=%.1f -> range=%.1f gain=%.2f age=%.1f s",
-            (unsigned)cid, distance, remote->voiceDistance, pass->voiceCap, pass->listenAdd,
+        log_debug("AUDIO-DBG cid=%u dist=%.1f m announced=%.1f m cap=%.1f listenAdd=%.1f (ref %.1f) -> range=%.1f gain=%.2f age=%.1f s",
+            (unsigned)cid, distance, remote->voiceDistance, pass->voiceCap, pass->listenAdd, pass->listenRef,
             hearRange, gain, (double)ageMs / 1000.0);
     }
 }
@@ -1396,11 +1401,13 @@ static void audio_diag_write_snapshot(LONG reason) {
     audio_pass_begin(&pass);
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
-    log_write("AUDIO-SNAP[%s]: mode=%s localPos=%s hub=%s zone=%d listenAdd=%.1f m maxVolume=%.2f cap=%.1f m speakers=%d",
+    /* 103: listenRef = the range below which a speaker gets only his share of
+       listenAdd, so "range" in the lines below can be less than announced + listenAdd. */
+    log_write("AUDIO-SNAP[%s]: mode=%s localPos=%s hub=%s zone=%d listenAdd=%.1f m maxVolume=%.2f cap=%.1f m speakers=%d listenRef=%.1f m",
         reasonText[reason >= 0 && reason <= DIAG_SNAP_FLOOD ? reason : 0],
         audio_diag_mode_text(InterlockedCompareExchange(&g_audioMode, 0, 0)),
         pass.localValid ? "ok" : "none", pass.hubActive ? "yes" : "no", pass.localZone,
-        pass.listenAdd, pass.maxVolume, pass.voiceCap, count);
+        pass.listenAdd, pass.maxVolume, pass.voiceCap, count, pass.listenRef);
 
     const ULONGLONG nowMs = GetTickCount64();
     const float lx = (float)(pass.local.x / 100.0);

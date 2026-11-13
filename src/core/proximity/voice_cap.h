@@ -78,4 +78,70 @@ static inline float voice_distance_clamp(float voiceDistance, float cap) {
     return voiceDistance;
 }
 
+/* ---- 103: listener bonus ("weiter hoeren", race key listenAddDistance) ------
+ *
+ * The bonus is a fixed distance the LISTENER adds to a speaker's range. The
+ * loudness curve is scaled by that range (prox_volume_from_distance), so the
+ * same bonus does very different things to a short and to a long range: with
+ * whisper 2.56 m, normal 15.36 m and a bonus of 10.24 m a whisper carried
+ * 12.8 m (x5) and was almost as loud as normal speech at whisper distance,
+ * while normal only grew x1.7 (player report 2026-11-13).
+ *
+ * Rule: a speaker whose announced range is SHORTER than the reference gets only
+ * that share of the bonus (announced / reference); from the reference upwards
+ * the bonus is the full value, exactly as before. Whisper 1 of 6 foundations ->
+ * one sixth of the bonus.
+ *
+ * The reference is the SHORTEST range normal speech can have on this server, so
+ * that normal speech (and shout) never loses bonus: an unmodified client
+ * announces at least the MinimumNormal of its limits (global or its race, the
+ * min clamp in voice_mode_get_distance runs after the zone override). We do not
+ * know the speaker's race, so the smallest MinimumNormal counts. A server
+ * without any MinimumNormal lets players pick any normal range; then the
+ * smallest MaximumNormal is the best reference left (a normal range chosen
+ * below it gets its share only - there is nothing to tell it from a whisper).
+ *
+ * Header-only, pure, any thread. */
+
+/* Smallest value > 0 of `a` and `b` (0 = none of them is set). */
+static inline float voice_min_positive(float a, float b) {
+    if (!(a > 0.0f)) {
+        return (b > 0.0f) ? b : 0.0f;
+    }
+    return (b > 0.0f && b < a) ? b : a;
+}
+
+/* The range the listener bonus is measured against (see above), 0 = unknown:
+   then the bonus is never reduced (old behaviour). */
+static inline float voice_listen_reference(const HubSettings* hub) {
+    if (!hub || !hub->valid) {
+        return 0.0f;
+    }
+    float minRef = (hub->minNormal > 0.0f) ? hub->minNormal : 0.0f;
+    float maxRef = (hub->maxNormal > 0.0f) ? hub->maxNormal : 0.0f;
+    int races = hub->raceCount;
+    if (races > HUB_MAX_RACES) races = HUB_MAX_RACES;
+    for (int i = 0; i < races; i++) {
+        minRef = voice_min_positive(minRef, hub->races[i].minNormal);
+        maxRef = voice_min_positive(maxRef, hub->races[i].maxNormal);
+    }
+    return (minRef > 0.0f) ? minRef : maxRef;
+}
+
+/* Bonus (meters) for ONE speaker: listenAdd in full when the speaker's range
+   reaches the normal range (or no normal range is known), the proportional
+   share below it. Never negative, never more than listenAdd. */
+static inline float voice_listen_bonus(float listenAdd, float announcedRange, float normalRange) {
+    if (!(listenAdd > 0.0f)) {
+        return 0.0f;
+    }
+    if (!(normalRange > 0.0f) || !(announcedRange < normalRange)) {
+        return listenAdd;
+    }
+    if (!(announcedRange > 0.0f)) {
+        return 0.0f;
+    }
+    return listenAdd * (announcedRange / normalRange);
+}
+
 #endif /* CORE_PROXIMITY_VOICE_CAP_H */

@@ -89,6 +89,9 @@ int prox_hysteresis_in_range(float distanceMeters, float enterDistanceMeters,
     return prevInRange ? 1 : 0;
 }
 
+/* NOT used by the plugin (only by tests/proximity_math_test.c [9]). It still
+   adds the FULL listener bonus; the live path is audio_remote_hear_range in
+   ts3_proximity_audio.c, which gives short ranges only their share (103). */
 float proximity_calculate_volume_with_hub(float distanceMeters, float voiceDistanceMeters,
     const ProximityVolumeContext* ctx) {
     if (!ctx) {
