@@ -1,5 +1,8 @@
 # 103 — Hoer-Bonus („weiter hoeren“): Fluestern bekommt nur noch seinen Anteil (Plugin 8.0.24)
 
+> **Abgeloest durch [Doku 104](104-hoer-bonus-volle-reichweite-leises-fluestern.md) (Plugin 8.0.25):** Die
+> Reichweite ist wieder die einfache Summe; gebremst wird nur noch die Lautstaerke. Der Text unten beschreibt 8.0.24.
+
 **Plugin 8.0.24**, 2026-11-13. Gebaut und getestet, **nicht verteilt** (kein Commit, kein Release, nichts in
 TeamSpeak kopiert).
 

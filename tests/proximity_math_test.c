@@ -315,39 +315,66 @@ static void test_hub_volume_context(void) {
         "listenAddDistance widens effective range (higher gain at same distance)");
 }
 
-/* 103: what the listener bonus does to the LOUDNESS (report 2026-11-13: with
-   the bonus a whisper was almost as loud as normal speech). 1 foundation =
-   2.56 m, whisper 1 F, normal 6 F, bonus 4 F, max volume 1.3. */
+/* 104: loudness for a listener with the bonus (report 2026-11-13: a whisper was
+   almost as loud as normal speech). The RANGE is the plain sum again; only the
+   loudness the bonus adds is scaled for short ranges. 1 foundation = 2.56 m,
+   whisper 1 F, normal 6 F, bonus 4 F, max volume 1.3. */
 static void test_listen_bonus_loudness(void) {
-    printf("[9b] listener bonus: a whisper stays a whisper (103)\n");
+    printf("[9b] listener bonus: full range, but a whisper stays quiet (104)\n");
     const float F = 2.56f, maxVol = 1.3f;
     const float whisper = 1.0f * F, normal = 6.0f * F, add = 4.0f * F;
-    const float whisperRange = whisper + voice_listen_bonus(add, whisper, normal);
-    const float normalRange = normal + voice_listen_bonus(add, normal, normal);
+    const float share = voice_listen_share(whisper, normal);
 
-    const float before = prox_volume_from_distance(2.56f, whisper + add, maxVol);   /* old: range 12.8 m */
-    const float after = prox_volume_from_distance(2.56f, whisperRange, maxVol);
-    const float plain = prox_volume_from_distance(2.56f, whisper, maxVol);          /* listener without bonus */
-    const float normalAt = prox_volume_from_distance(2.56f, normalRange, maxVol);
+    const float old = prox_volume_from_distance(2.56f, whisper + add, maxVol);      /* before: full curve over 12.8 m */
+    const float now = prox_volume_listen_bonus(2.56f, whisper, add, share, maxVol);
+    CHECK(old > 0.80f * maxVol, "before: whisper at 2.56 m above 80 % (the reported effect)");
+    CHECK(now < 0.16f * maxVol && now > 0.12f * maxVol, "now: whisper at 2.56 m around 14 %");
+    CHECK(now > prox_volume_from_distance(2.56f, whisper, maxVol), "... still better than a listener without the bonus (1 %)");
 
-    CHECK(before > 0.80f * maxVol, "old rule: whisper at 2.56 m above 80 % (the reported effect)");
-    CHECK(after < 0.35f * maxVol, "new rule: whisper at 2.56 m below 35 %");
-    CHECK(after > plain, "the listener with the bonus still hears a whisper better than without");
-    CHECK(normalAt > 0.95f * maxVol, "normal speech at the same spot is far louder than the whisper");
-    CHECK(NEAR(normalRange, normal + add, 1e-4f), "normal keeps the full bonus (25.6 m)");
-    CHECK(prox_volume_from_distance(5.0f, whisperRange, maxVol) == 0.0f, "a whisper is silent at 5 m (was 70 %)");
+    /* Nearby: exactly what everybody hears. */
+    CHECK(prox_volume_listen_bonus(1.0f, whisper, add, share, maxVol) == prox_volume_from_distance(1.0f, whisper, maxVol),
+        "whisper at 1 m: same loudness as for everybody (54 %)");
+    /* Far: quietly audible up to the full range whisper + bonus = 5 foundations. */
+    CHECK(prox_volume_listen_bonus(8.0f, whisper, add, share, maxVol) > 0.03f * maxVol, "whisper at 8 m: still audible");
+    CHECK(prox_volume_listen_bonus(12.0f, whisper, add, share, maxVol) > 0.0f, "whisper at 12 m: last trace (range 12.8 m)");
+    CHECK(prox_volume_listen_bonus(15.0f, whisper, add, share, maxVol) == 0.0f, "whisper at 15 m: silent");
 
-    /* At every distance: more than without the bonus, never more than normal speech. */
-    int ok = 1;
-    for (int i = 1; i <= 300; i++) {
+    /* Normal speech and shout: exactly the old curve over range + bonus. */
+    int same = 1;
+    for (int i = 1; i <= 600; i++) {
         const float d = (float)i * 0.1f;
-        const float w = prox_volume_from_distance(d, whisperRange, maxVol);
-        if (w + 1e-6f < prox_volume_from_distance(d, whisper, maxVol)
-            || w > prox_volume_from_distance(d, normalRange, maxVol) + 1e-6f) {
-            ok = 0;
+        if (prox_volume_listen_bonus(d, normal, add, voice_listen_share(normal, normal), maxVol)
+                != prox_volume_from_distance(d, normal + add, maxVol)
+            || prox_volume_listen_bonus(d, 16.0f * F, add, voice_listen_share(16.0f * F, normal), maxVol)
+                != prox_volume_from_distance(d, 16.0f * F + add, maxVol)) {
+            same = 0;
         }
     }
-    CHECK(ok, "0.1..30 m: whisper with bonus >= whisper without, and <= normal with bonus");
+    CHECK(same, "0.1..60 m: normal and shout are bit-identical to before");
+
+    /* No bonus / share 0 -> the plain curve; share above 1 is cut to 1. */
+    CHECK(prox_volume_listen_bonus(2.0f, whisper, 0.0f, 1.0f, maxVol) == prox_volume_from_distance(2.0f, whisper, maxVol),
+        "no bonus -> plain curve");
+    CHECK(prox_volume_listen_bonus(5.0f, whisper, add, 0.0f, maxVol) == prox_volume_from_distance(5.0f, whisper, maxVol),
+        "share 0 -> plain curve");
+    CHECK(prox_volume_listen_bonus(5.0f, whisper, add, 3.0f, maxVol) == prox_volume_from_distance(5.0f, whisper + add, maxVol),
+        "share above 1 is treated as 1");
+
+    /* At every distance: never quieter than without the bonus, never louder than
+       normal speech at the same spot, and never louder when farther away. */
+    int ok = 1;
+    float prev = maxVol + 1.0f;
+    for (int i = 1; i <= 300; i++) {
+        const float d = (float)i * 0.1f;
+        const float w = prox_volume_listen_bonus(d, whisper, add, share, maxVol);
+        if (w + 1e-6f < prox_volume_from_distance(d, whisper, maxVol)
+            || w > prox_volume_listen_bonus(d, normal, add, 1.0f, maxVol) + 1e-6f
+            || w > prev + 1e-6f) {
+            ok = 0;
+        }
+        prev = w;
+    }
+    CHECK(ok, "0.1..30 m: >= without bonus, <= normal speech, falling with the distance");
 }
 
 static void test_apply_diffuse_samples(void) {

@@ -550,13 +550,13 @@ static void test_voice_cap(void) {
     CHECK(voice_distance_clamp(0.0f, 100.0f) == 0.0f, "0 stays 0");
 }
 
-/* 103: listener bonus - a range shorter than the hub's normal range gets only
-   its share of the bonus. Numbers of the report: 1 foundation = 2.56 m,
-   whisper 1 F, normal 6 F, shout 16 F, bonus 4 F. */
+/* 103/104: listener bonus - a range shorter than the server's normal range gets
+   only its share of the bonus LOUDNESS (the range stays the plain sum). Numbers
+   of the report: 1 foundation = 2.56 m, whisper 1 F, normal 6 F, shout 16 F. */
 static void test_listen_bonus(void) {
-    printf("[7b] listener bonus share for short ranges (103)\n");
+    printf("[7b] listener bonus: reference range and loudness share (103/104)\n");
     const float F = 2.56f;
-    const float whisper = 1.0f * F, normal = 6.0f * F, shout = 16.0f * F, add = 4.0f * F;
+    const float whisper = 1.0f * F, normal = 6.0f * F, shout = 16.0f * F;
     static HubSettings hub;
     memset(&hub, 0, sizeof(hub));
 
@@ -567,7 +567,7 @@ static void test_listen_bonus(void) {
     hub.maxNormal = normal;
     CHECK(feq_abs(voice_listen_reference(&hub), normal), "only MaximumNormal -> that one");
     hub.minNormal = 9.0f;
-    CHECK(feq_abs(voice_listen_reference(&hub), 9.0f), "MinimumNormal set -> the minimum (normal speech never loses bonus)");
+    CHECK(feq_abs(voice_listen_reference(&hub), 9.0f), "MinimumNormal set -> the minimum (normal speech is never affected)");
     hub.raceCount = 2;
     hub.races[0].minNormal = 7.0f; hub.races[0].maxNormal = 30.0f;
     hub.races[1].minNormal = 0.0f; hub.races[1].maxNormal = 12.0f;
@@ -578,30 +578,25 @@ static void test_listen_bonus(void) {
     hub.minNormal = normal;
     CHECK(feq_abs(voice_listen_reference(&hub), normal), "min == max (this server) -> 15.36 m");
 
-    CHECK(feq_abs(voice_listen_bonus(add, whisper, normal), add / 6.0f), "whisper 1 of 6 foundations -> one sixth of the bonus");
-    CHECK(feq_abs(whisper + voice_listen_bonus(add, whisper, normal), 4.266667f), "whisper carries 4.27 m (was 12.8 m)");
-    CHECK(voice_listen_bonus(add, normal, normal) == add, "normal -> full bonus, unchanged");
-    CHECK(voice_listen_bonus(add, shout, normal) == add, "shout -> full bonus, unchanged");
-    CHECK(feq_abs(voice_listen_bonus(add, normal * 0.5f, normal), add * 0.5f), "half the normal range -> half the bonus");
-    CHECK(voice_listen_bonus(add, whisper, 0.0f) == add, "no reference known -> full bonus (old behaviour)");
-    CHECK(voice_listen_bonus(0.0f, whisper, normal) == 0.0f, "no bonus -> 0");
-    CHECK(voice_listen_bonus(-3.0f, whisper, normal) == 0.0f, "negative bonus -> 0");
-    CHECK(voice_listen_bonus(add, 0.0f, normal) == 0.0f, "speaker without a range -> no bonus");
-    CHECK(voice_listen_bonus(add, -1.0f, normal) == 0.0f, "negative range -> no bonus");
+    CHECK(feq_abs(voice_listen_share(whisper, normal), 1.0f / 6.0f), "whisper 1 of 6 foundations -> share 1/6");
+    CHECK(voice_listen_share(normal, normal) == 1.0f, "normal -> share 1 (unchanged)");
+    CHECK(voice_listen_share(shout, normal) == 1.0f, "shout -> share 1 (unchanged)");
+    CHECK(feq_abs(voice_listen_share(normal * 0.5f, normal), 0.5f), "half the normal range -> share 1/2");
+    CHECK(voice_listen_share(whisper, 0.0f) == 1.0f, "no reference known -> share 1 (old behaviour)");
+    CHECK(voice_listen_share(0.0f, normal) == 0.0f, "speaker without a range -> share 0");
+    CHECK(voice_listen_share(-1.0f, normal) == 0.0f, "negative range -> share 0");
 
-    /* Never more than the configured bonus, never negative, and a longer range
-       never gets a smaller total range (the order whisper < normal < shout stays). */
+    /* Always within 0..1 and never smaller for a longer range. */
     int ok = 1;
-    float prevTotal = 0.0f;
+    float prev = 0.0f;
     for (int i = 0; i <= 400; i++) {
-        const float r = (float)i * 0.25f;
-        const float b = voice_listen_bonus(add, r, normal);
-        if (b < 0.0f || b > add || r + b < prevTotal) {
+        const float s = voice_listen_share((float)i * 0.25f, normal);
+        if (s < 0.0f || s > 1.0f || s < prev) {
             ok = 0;
         }
-        prevTotal = r + b;
+        prev = s;
     }
-    CHECK(ok, "0..100 m: bonus within 0..add, total range grows with the announced range");
+    CHECK(ok, "0..100 m: share within 0..1 and growing with the announced range");
 }
 
 /* =========================================================================

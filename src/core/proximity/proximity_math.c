@@ -78,6 +78,29 @@ float prox_volume_from_distance(float distanceMeters, float voiceDistanceMeters,
     return volume;
 }
 
+/* 104: loudness for a listener with the bonus ("weiter hoeren").
+   The louder of two curves:
+     - the plain curve over the speaker's own range (what everybody hears), and
+     - the curve over range + bonus, scaled by `share` (0..1).
+   share = 1 (normal speech, shout): the second curve wins everywhere - the
+   bonus works exactly as it always did. share < 1 (whisper): nearby the listener
+   hears the whisper as loud as everybody else, farther out it stays quietly
+   audible up to range + bonus instead of jumping to almost full volume. Both
+   curves fall with the distance, so the result does too. Pure, any thread. */
+float prox_volume_listen_bonus(float distanceMeters, float voiceDistanceMeters,
+    float listenAddMeters, float share, float maxVolume) {
+    const float plain = prox_volume_from_distance(distanceMeters, voiceDistanceMeters, maxVolume);
+    if (!(listenAddMeters > 0.0f) || !(share > 0.0f)) {
+        return plain;
+    }
+    if (share > 1.0f) {
+        share = 1.0f;
+    }
+    const float far = share * prox_volume_from_distance(distanceMeters,
+        voiceDistanceMeters + listenAddMeters, maxVolume);
+    return (far > plain) ? far : plain;
+}
+
 int prox_hysteresis_in_range(float distanceMeters, float enterDistanceMeters,
     float exitDistanceMeters, int prevInRange) {
     if (distanceMeters <= enterDistanceMeters) {
@@ -90,8 +113,8 @@ int prox_hysteresis_in_range(float distanceMeters, float enterDistanceMeters,
 }
 
 /* NOT used by the plugin (only by tests/proximity_math_test.c [9]). It still
-   adds the FULL listener bonus; the live path is audio_remote_hear_range in
-   ts3_proximity_audio.c, which gives short ranges only their share (103). */
+   adds the FULL listener bonus to range and loudness; the live path is
+   audio_remote_gain in ts3_proximity_audio.c (prox_volume_listen_bonus, 104). */
 float proximity_calculate_volume_with_hub(float distanceMeters, float voiceDistanceMeters,
     const ProximityVolumeContext* ctx) {
     if (!ctx) {

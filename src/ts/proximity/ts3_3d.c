@@ -221,9 +221,6 @@ static int ts3d_in_hear_range(const PosSample* local, const PlayerEntry* remote)
     const float ly = (float)(local->y / 100.0);
     const float lz = (float)(local->z / 100.0);
     const float dist = prox_distance(lx, ly, lz, remote->x, remote->y, remote->z);
-    /* The FULL listener bonus on purpose (103 reduces it for short ranges in the
-       gain, ts3_proximity_audio.c): this is only the outer bound for feeding
-       TeamSpeak's 3D positions, and a bound that is too wide costs nothing. */
     const float hearRange = remote->voiceDistance + server_profile_get_listen_add_distance();
     return dist <= hearRange * TS3D_CULL_MARGIN + TS3D_CULL_PAD_M;
 }

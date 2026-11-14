@@ -78,28 +78,32 @@ static inline float voice_distance_clamp(float voiceDistance, float cap) {
     return voiceDistance;
 }
 
-/* ---- 103: listener bonus ("weiter hoeren", race key listenAddDistance) ------
+/* ---- 103 / 104: listener bonus ("weiter hoeren", race key listenAddDistance) --
  *
  * The bonus is a fixed distance the LISTENER adds to a speaker's range. The
- * loudness curve is scaled by that range (prox_volume_from_distance), so the
- * same bonus does very different things to a short and to a long range: with
+ * loudness curve is scaled by the range (prox_volume_from_distance), so the
+ * same bonus did very different things to a short and to a long range: with
  * whisper 2.56 m, normal 15.36 m and a bonus of 10.24 m a whisper carried
  * 12.8 m (x5) and was almost as loud as normal speech at whisper distance,
  * while normal only grew x1.7 (player report 2026-11-13).
  *
- * Rule: a speaker whose announced range is SHORTER than the reference gets only
- * that share of the bonus (announced / reference); from the reference upwards
- * the bonus is the full value, exactly as before. Whisper 1 of 6 foundations ->
- * one sixth of the bonus.
+ * 103 (plugin 8.0.24) shortened the RANGE of a whisper for such listeners.
+ * That broke the admin's sum "whisper 1 + bonus 4 = 5 foundations", and the
+ * report was about loudness, not range. 104 (8.0.25): the range is the plain
+ * sum again; only the LOUDNESS of the bonus part is reduced for short ranges
+ * (prox_volume_listen_bonus in proximity_math.c): a listener with the bonus
+ * hears a whisperer as loud as everybody else nearby, and quietly on top of
+ * that out to the full range. The share below decides how quiet.
  *
  * The reference is the SHORTEST range normal speech can have on this server, so
- * that normal speech (and shout) never loses bonus: an unmodified client
+ * that normal speech (and shout) is never affected: an unmodified client
  * announces at least the MinimumNormal of its limits (global or its race, the
  * min clamp in voice_mode_get_distance runs after the zone override). We do not
  * know the speaker's race, so the smallest MinimumNormal counts. A server
  * without any MinimumNormal lets players pick any normal range; then the
  * smallest MaximumNormal is the best reference left (a normal range chosen
- * below it gets its share only - there is nothing to tell it from a whisper).
+ * below it is treated like a short range - there is nothing to tell it from a
+ * whisper).
  *
  * Header-only, pure, any thread. */
 
@@ -112,7 +116,7 @@ static inline float voice_min_positive(float a, float b) {
 }
 
 /* The range the listener bonus is measured against (see above), 0 = unknown:
-   then the bonus is never reduced (old behaviour). */
+   then the bonus loudness is never reduced (old behaviour). */
 static inline float voice_listen_reference(const HubSettings* hub) {
     if (!hub || !hub->valid) {
         return 0.0f;
@@ -128,20 +132,17 @@ static inline float voice_listen_reference(const HubSettings* hub) {
     return (minRef > 0.0f) ? minRef : maxRef;
 }
 
-/* Bonus (meters) for ONE speaker: listenAdd in full when the speaker's range
-   reaches the normal range (or no normal range is known), the proportional
-   share below it. Never negative, never more than listenAdd. */
-static inline float voice_listen_bonus(float listenAdd, float announcedRange, float normalRange) {
-    if (!(listenAdd > 0.0f)) {
-        return 0.0f;
-    }
+/* How much of the bonus LOUDNESS one speaker gets, 0..1: 1 when his announced
+   range reaches the reference (normal speech, shout) or no reference is known,
+   announced / reference below it (whisper 1 of 6 foundations -> 1/6). */
+static inline float voice_listen_share(float announcedRange, float normalRange) {
     if (!(normalRange > 0.0f) || !(announcedRange < normalRange)) {
-        return listenAdd;
+        return 1.0f;
     }
     if (!(announcedRange > 0.0f)) {
         return 0.0f;
     }
-    return listenAdd * (announcedRange / normalRange);
+    return announcedRange / normalRange;
 }
 
 #endif /* CORE_PROXIMITY_VOICE_CAP_H */

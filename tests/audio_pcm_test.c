@@ -658,11 +658,12 @@ static void test_voice_cap(void) {
     CHECK(t_target(75, &t), "no profile: unchanged");
 }
 
-/* 103: the listener bonus in the LIVE path (audio_pass_begin ->
-   audio_remote_hear_range -> gain). 1 foundation = 2.56 m: whisper 1 F, normal
-   6 F, shout 16 F, bonus 4 F. Fails when the rule is taken out of the path. */
+/* 104: the listener bonus in the LIVE path (audio_pass_begin ->
+   audio_remote_hear_range / audio_remote_gain -> published gain). 1 foundation =
+   2.56 m: whisper 1 F, normal 6 F, shout 16 F, bonus 4 F. Fails when the rule
+   is taken out of the path or the range is shortened again. */
 static void test_listen_bonus_live(void) {
-    printf("[13b] 103: listener bonus in the live path - whisper gets its share, normal and shout the full bonus\n");
+    printf("[13b] 104: listener bonus in the live path - full range, whisper loudness scaled\n");
     const float F = 2.56f, whisper = 1.0f * F, normal = 6.0f * F, shout = 16.0f * F, add = 4.0f * F;
     t_world_reset();
     t_limits_hub();
@@ -676,54 +677,58 @@ static void test_listen_bonus_live(void) {
     CHECK(fabsf(pass.listenRef - normal) < 1e-4f && fabsf(pass.listenAdd - add) < 1e-4f,
         "pass carries the bonus and the normal range as reference");
 
+    /* Range: the plain sum, as the admin configured it. */
     PlayerEntry p;
     memset(&p, 0, sizeof(p));
     p.voiceDistance = whisper;
-    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 4.266667f) < 1e-3f, "whisper: 4.27 m (was 12.8 m)");
+    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 12.8f) < 1e-3f, "whisper range: 1 + 4 = 5 foundations (12.8 m)");
     p.voiceDistance = normal;
-    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 25.6f) < 1e-3f, "normal: 25.6 m, unchanged");
+    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 25.6f) < 1e-3f, "normal range: 25.6 m");
     p.voiceDistance = shout;
-    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 51.2f) < 1e-3f, "shout: 51.2 m, unchanged");
+    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 51.2f) < 1e-3f, "shout range: 51.2 m");
     p.voiceDistance = 1000.0f;
-    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 51.2f) < 1e-3f, "1000 m announced: cut to the cap first, then the full bonus");
+    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - 51.2f) < 1e-3f, "1000 m announced: cut to the cap first, then the bonus");
 
-    /* The published gain follows: a whisperer 5 m away is silent now, a normal speaker is not. */
+    /* Loudness (max volume 1.0 in this test). */
     AudioTarget t;
-    t_put_and_publish(80, 5.0f, whisper);
-    CHECK(!t_target(80, &t) || t.gain < 0.001f, "whisper at 5 m: not audible (old rule: 54 %)");
+    t_put_and_publish(80, 1.0f, whisper);
+    CHECK(t_target(80, &t) && fabsf(t.gain - prox_volume_from_distance(1.0f, whisper, 1.0f)) < 1e-4f,
+        "whisper at 1 m: as loud as for everybody");
     t_put_and_publish(81, 2.56f, whisper);
-    CHECK(t_target(81, &t) && fabsf(t.gain - prox_volume_from_distance(2.56f, 4.266667f, 1.0f)) < 1e-4f,
-        "whisper at 2.56 m: gain of a 4.27 m range");
+    CHECK(t_target(81, &t) && fabsf(t.gain - prox_volume_from_distance(2.56f, 12.8f, 1.0f) / 6.0f) < 1e-4f,
+        "whisper at 2.56 m: one sixth of the old loudness (14 % instead of 82 %)");
+    t_put_and_publish(83, 8.0f, whisper);
+    CHECK(t_target(83, &t) && fabsf(t.gain - prox_volume_from_distance(8.0f, 12.8f, 1.0f) / 6.0f) < 1e-4f && t.gain > 0.03f,
+        "whisper at 8 m: quietly audible (range not shortened)");
+    t_put_and_publish(84, 15.0f, whisper);
+    CHECK(!t_target(84, &t) || t.gain < 0.001f, "whisper at 15 m: beyond 12.8 m, silent");
     t_put_and_publish(82, 20.0f, normal);
     CHECK(t_target(82, &t) && fabsf(t.gain - prox_volume_from_distance(20.0f, 25.6f, 1.0f)) < 1e-4f,
-        "normal at 20 m: gain of the full 25.6 m range");
+        "normal at 20 m: full old loudness over 25.6 m");
+    t_put_and_publish(85, 45.0f, shout);
+    CHECK(t_target(85, &t) && fabsf(t.gain - prox_volume_from_distance(45.0f, 51.2f, 1.0f)) < 1e-4f,
+        "shout at 45 m: full old loudness over 51.2 m");
 
     /* A server with a range of allowed normal distances: the MINIMUM is the reference,
-       so a player who set his normal voice to the minimum still gets the full bonus. */
+       so a player who set his normal voice to the minimum is not treated as a whisper. */
     g_testHub.minNormal = 10.0f;
     g_testHub.maxNormal = 20.0f;
     audio_pass_begin(&pass);
     p.voiceDistance = 10.0f;
-    CHECK(fabsf(pass.listenRef - 10.0f) < 1e-4f && fabsf(audio_remote_hear_range(&pass, &p) - (10.0f + add)) < 1e-3f,
-        "min 10 / max 20: normal speech at the minimum keeps the full bonus");
+    CHECK(fabsf(pass.listenRef - 10.0f) < 1e-4f
+        && audio_remote_gain(&pass, &p, 15.0f, 1.0f) == prox_volume_from_distance(15.0f, 10.0f + add, 1.0f),
+        "min 10 / max 20: normal speech at the minimum keeps the full loudness");
     p.voiceDistance = 13.0f;
-    CHECK(fabsf(audio_remote_hear_range(&pass, &p) - (13.0f + add)) < 1e-3f, "... and so does 13 m (plugin default)");
+    CHECK(audio_remote_gain(&pass, &p, 15.0f, 1.0f) == prox_volume_from_distance(15.0f, 13.0f + add, 1.0f),
+        "... and so does 13 m (plugin default)");
 
-    /* A race whose normal range is shorter lowers the reference for everybody. */
-    g_testHub.raceCount = 1;
-    g_testHub.races[0].minNormal = g_testHub.races[0].maxNormal = 6.0f;
-    audio_pass_begin(&pass);
-    p.voiceDistance = 6.0f;
-    CHECK(fabsf(pass.listenRef - 6.0f) < 1e-4f && fabsf(audio_remote_hear_range(&pass, &p) - (6.0f + add)) < 1e-3f,
-        "race with normal 6 m: its normal speech keeps the full bonus");
-    g_testHub.raceCount = 0;
-
-    /* No profile: the bonus is never reduced. */
+    /* No profile: bonus exactly as it always was. */
     g_testHubActive = 0;
     audio_pass_begin(&pass);
     p.voiceDistance = whisper;
-    CHECK(pass.listenRef == 0.0f && fabsf(audio_remote_hear_range(&pass, &p) - (whisper + add)) < 1e-4f,
-        "no profile: full bonus as before");
+    CHECK(pass.listenRef == 0.0f && fabsf(audio_remote_hear_range(&pass, &p) - (whisper + add)) < 1e-4f
+        && audio_remote_gain(&pass, &p, 5.0f, 1.0f) == prox_volume_from_distance(5.0f, whisper + add, 1.0f),
+        "no profile: range and loudness as before");
     g_testListenAdd = 0.0f;
 }
 

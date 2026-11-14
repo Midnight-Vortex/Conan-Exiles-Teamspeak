@@ -423,7 +423,7 @@ typedef struct AudioPass {
     int hubActive;
     int localZone;
     float listenAdd;
-    float listenRef;        /* 103: hub normal range the listener bonus is measured against, 0 = unknown */
+    float listenRef;        /* 103/104: hub normal range the bonus LOUDNESS is measured against, 0 = unknown */
     float maxVolume;
     int realisticOn;
     float filterIntensity;  /* 0..1 */
@@ -446,12 +446,22 @@ static void audio_pass_begin(AudioPass* pass) {
 
 /* How far a speaker can be heard: his announced voice distance (clamped to what
    an unmodified client could announce under the hub limits, 084 #9) plus the
-   listener bonus. Shared by the cull test and the gain curve so both agree.
-   103: a range shorter than the hub's normal range (whisper) gets only its
-   share of the bonus - see voice_listen_bonus. */
+   listener bonus - the plain sum, so the admin's "whisper 1 + bonus 4 = 5
+   foundations" holds (104; 103 had shortened it for whispers). Shared by the
+   cull test, the gain and the diagnostics so all agree. */
 static float audio_remote_hear_range(const AudioPass* pass, const PlayerEntry* remote) {
+    return voice_distance_clamp(remote->voiceDistance, pass->voiceCap) + pass->listenAdd;
+}
+
+/* Gain of one speaker by distance. Without a bonus this is the plain curve over
+   his range. With a bonus the range is longer, but for a range shorter than the
+   server's normal range (whisper) the extra loudness is scaled down - see
+   prox_volume_listen_bonus (104). */
+static float audio_remote_gain(const AudioPass* pass, const PlayerEntry* remote,
+    float distance, float maxVolume) {
     const float announced = voice_distance_clamp(remote->voiceDistance, pass->voiceCap);
-    return announced + voice_listen_bonus(pass->listenAdd, announced, pass->listenRef);
+    return prox_volume_listen_bonus(distance, announced, pass->listenAdd,
+        voice_listen_share(announced, pass->listenRef), maxVolume);
 }
 
 /* Callback thread only (updates the per-client hysteresis latch). enter =
@@ -614,7 +624,7 @@ static void audio_compute_client(const AudioPass* pass, const PlayerEntry* remot
     }
     const float hearRange = audio_remote_hear_range(pass, remote);
     float gain = soundproof ? 0.0f
-        : prox_volume_from_distance(distance, hearRange, maxVolume);
+        : audio_remote_gain(pass, remote, distance, maxVolume);
 
     const float yawRad = (float)(local->yaw * TS3_CEPOS_PI / 180.0);
     const float dirX = -cosf(yawRad);
@@ -1401,8 +1411,8 @@ static void audio_diag_write_snapshot(LONG reason) {
     audio_pass_begin(&pass);
     PlayerEntry players[PLAYER_TABLE_MAX_PLAYERS];
     const int count = player_table_snapshot(players, PLAYER_TABLE_MAX_PLAYERS);
-    /* 103: listenRef = the range below which a speaker gets only his share of
-       listenAdd, so "range" in the lines below can be less than announced + listenAdd. */
+    /* 104: range = announced + listenAdd. listenRef = the range below which a
+       speaker gets only his share of the bonus LOUDNESS (gain), not of the range. */
     log_write("AUDIO-SNAP[%s]: mode=%s localPos=%s hub=%s zone=%d listenAdd=%.1f m maxVolume=%.2f cap=%.1f m speakers=%d listenRef=%.1f m",
         reasonText[reason >= 0 && reason <= DIAG_SNAP_FLOOD ? reason : 0],
         audio_diag_mode_text(InterlockedCompareExchange(&g_audioMode, 0, 0)),

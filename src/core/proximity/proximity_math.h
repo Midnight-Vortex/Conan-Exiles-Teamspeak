@@ -19,6 +19,11 @@ float prox_distance(float x1, float y1, float z1, float x2, float y2, float z2);
 float prox_volume_from_distance(float distanceMeters, float voiceDistanceMeters,
     float maxVolume);
 
+/* 104: the same for a listener with a bonus distance; share 0..1 scales the
+   loudness the bonus adds (voice_listen_share in voice_cap.h). */
+float prox_volume_listen_bonus(float distanceMeters, float voiceDistanceMeters,
+    float listenAddMeters, float share, float maxVolume);
+
 /* Enter/exit hysteresis for the audible-range cull decision (pure, no state).
    A speaker becomes an audible candidate at enterDistanceMeters and is only
    culled again once past exitDistanceMeters; inside [enter, exit] the previous
