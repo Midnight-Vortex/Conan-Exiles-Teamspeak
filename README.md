@@ -25,6 +25,8 @@ As a security measure, compare the SHA-256 hash of the file you downloaded with 
 
 | Version | File | SHA-256 |
 |---|---|---|
+| 8.0.25 | `conan_exiles-win64.ts3_plugin` (installer package) | `a10c6c73a8e7569101d2204b66635f1378f83614e5b8d7831cc54bf195d90122` |
+| 8.0.25 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `1c9718439bc3ac2e0d21d2b060b2af4f4736be39c64213f201782e0b6807b550` |
 | 8.0.24 | `conan_exiles-win64.ts3_plugin` (installer package) | `14c996aa12656917009466711b4751723bfe6803958a804a0b6f9ad6726fd683` |
 | 8.0.24 | `conan_exiles.dll` (inside the package, installed to `%APPDATA%\TS3Client\plugins`) | `2c753fc2009cb64490099c78a155e2e2a013f090115aaa6cf19ab6ff8360c551` |
 | 8.0.23 | `conan_exiles-win64.ts3_plugin` (installer package) | `c753a85bc6265af2405cb153c287f1dbc6473ad7ab687a6bbedb78916c189107` |
