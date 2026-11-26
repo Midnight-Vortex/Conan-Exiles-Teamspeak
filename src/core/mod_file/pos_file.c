@@ -44,10 +44,11 @@ static volatile long g_watcherRunning = 0;
 static void (*g_updateCallback)(void) = NULL;
 static void (*g_tickCallback)(void) = NULL;
 static void (*g_injectNotifyCallback)(void) = NULL;
-/* Hold window: when an HTTP-injected position is active the watcher skips file
-   reads (only the file's timestamp is still looked at) and does not
-   invalidate coordinates. Written by any thread (x64 aligned
-   volatile ULONGLONG write is atomic); read only by the watcher thread. */
+/* Hold window: while an HTTP-injected position is active (now < this value) the
+   watcher does not touch Pos.txt at all (no path lookup, no stat, no read) and
+   does not invalidate coordinates; the file is used only once the hold is over.
+   Written by any thread (x64 aligned volatile ULONGLONG write is atomic); read
+   only by the watcher thread. */
 static volatile ULONGLONG g_httpHoldUntilMs = 0;
 static volatile long g_posSource = POS_SOURCE_NONE;
 
@@ -382,13 +383,18 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             pos_autodetect_saved_path();
         }
 
-        /* Pos.txt is used only when it is enabled AND a path is known. Without a
-           path the tick behaves exactly like HTTP-only mode (else branch below):
-           an active HTTP inject hold or its grace keeps the coordinates. It used
-           to invalidate them on every 30 ms tick, so with the game mod posting
-           over HTTP but no Saved path found, "valid" flapped against the inject. */
+        /* Pos.txt is used only when it is enabled, NO HTTP hold is active at the
+           start of the tick, AND a path is known. While HTTP positions arrive
+           (hold active) the tick does not touch Pos.txt at all - no path lookup,
+           no stat, no read - and behaves exactly like HTTP-only mode (else
+           branch below). Without a path it does the same: an active HTTP inject
+           hold or its grace keeps the coordinates. It used to invalidate them on
+           every 30 ms tick, so with the game mod posting over HTTP but no Saved
+           path found, "valid" flapped against the inject. Once the hold is over
+           (HTTP stopped for ~2 s) the file takes over as before. */
+        const ULONGLONG holdUntilAtStart = g_httpHoldUntilMs; /* read once per tick */
         int useFile = 0;
-        if (posFileEnabled) {
+        if (pos_tick_wants_file(posFileEnabled, now, holdUntilAtStart)) {
             pos_resolve_file_path(filePath, sizeof(filePath) / sizeof(filePath[0]));
             if (filePath[0]) {
                 useFile = 1;
@@ -397,6 +403,12 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                 lastMissingLog = now;
                 log_debug("POS: no Pos.txt path configured");
             }
+        }
+        else if (posFileEnabled && now < holdUntilAtStart
+            && now - lastHoldSkipLog >= POS_DEBUG_STATUS_MS) {
+            lastHoldSkipLog = now;
+            log_debug("POS: Pos.txt not checked while HTTP positions arrive (hold left=%llums)",
+                (unsigned long long)(holdUntilAtStart - now));
         }
 
         if (useFile) {
@@ -413,18 +425,12 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
             dbgFileAge = age;
             const int fileActive = (age != MAXULONGLONG && age <= POS_STALE_MS);
 
-            /* HTTP hold: the injected position is authoritative and any file
-               sample would be discarded below - do not even open/read Pos.txt
-               (its write time above is still tracked). */
-            const ULONGLONG holdUntil = g_httpHoldUntilMs;
-            const int httpHoldActive = (now < holdUntil);
-            if (httpHoldActive && fileActive
-                && now - lastHoldSkipLog >= POS_DEBUG_STATUS_MS) {
-                lastHoldSkipLog = now;
-                log_debug("POS: Pos.txt skipped (HTTP hold left=%llums age=%llums)",
-                    (unsigned long long)(holdUntil - now),
-                    (unsigned long long)age);
-            }
+            /* The hold was not active at the start of this tick (else we would not
+               be here). It can START during the tick, though (HTTP thread): the
+               stat above may have taken a moment. Re-read it so such a hold still
+               prevents the read; the check after the read below catches one that
+               starts later still. */
+            const int httpHoldActive = (now < g_httpHoldUntilMs);
 
             PosSample sample;
             memset(&sample, 0, sizeof(sample));
@@ -445,7 +451,8 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
                     || age <= POS_FRESH_ACCEPT_MS
                     || (lastSeq >= 0 && sample.seq != lastSeq);
             }
-            /* HTTP hold: injected position is authoritative; block file overwrites. */
+            /* A hold that started during this tick: the injected position is
+               authoritative; drop the file sample. */
             if (acceptRead && now < g_httpHoldUntilMs) {
                 if (now - lastHoldSkipLog >= POS_DEBUG_STATUS_MS) {
                     lastHoldSkipLog = now;

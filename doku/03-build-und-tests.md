@@ -87,7 +87,7 @@ ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 | `voice_cap_test` | `voice_cap.h` + echte `voice_modes.c` | Kein legaler Wert ueberschreitet die Empfangs-Obergrenze (084) |
 | `http_request_test` | `http_request.h` | Browser-Schutz (Origin/Host/Sec-Fetch-Site), Content-Length, Drossel, Backoff (085); Zeitmessung langsamer Antworten + Logtext (105) |
 | `pos_parse_test` | `pos_parse.h` | Pos.txt-/HTTP-Zeilen, leere/nicht-endliche/absurde Werte (085) |
-| `pos_tick_test` | `pos_tick.h` | Wartezeit des Pos-Watchers bis zur 30-ms-Frist, Takt bleibt bei vielen Injects bei 30 ms (105) |
+| `pos_tick_test` | `pos_tick.h` | Wartezeit des Pos-Watchers bis zur 30-ms-Frist, Takt bleibt bei vielen Injects bei 30 ms (105); kein Pos.txt-Zugriff waehrend des HTTP-Holds, 28 Pruefungen (107) |
 | `config_text_test` | `config_text.h` | `plugin.cfg` parsen, NaN/Inf, Dezimal-Komma, UTF-8/ANSI (085) |
 | `chan_move_backoff_test` | `chan_move_backoff.h` | 5/10/30/60-s-Wiederholplan nach abgelehntem Move (086) |
 | `channel_manage_test` | echte `channel_manage.c` gegen Stubs | Move-Fehler, Cooldown, Passwort-Regel, Neu-Aufloesen der Kanal-IDs (086) |
@@ -111,6 +111,9 @@ MinGW-Build ohne Warnungen.
 Stand nach 105: **36 Suiten** (+ `pos_tick_test`) und `layering_guard`, alle gruen. `build/build_mingw.sh` baut und
 linkt die DLL ohne Warnungen. (Zwischen 102 und 105 brach das Linken ab: `GetExtendedTcpTable` braucht
 `-liphlpapi`, das in der Bibliotheksliste des Skripts fehlte; mit 105 ergaenzt.)
+
+Stand nach 107: weiter **36 Suiten** + `layering_guard`, alle gruen; `pos_tick_test` hat 28 Pruefungen (+12 fuer
+`pos_tick_wants_file`). MinGW-Build ohne Warnungen.
 
 Handwerkzeuge (nicht Teil von `run_tests.sh`): `tests/slow_reply_standin.ps1` — Platzhalter fuer das Plugin, der
 absichtlich langsam antwortet, um am Windows-PC zu pruefen, ob das **Spiel** bei verspaeteten Antworten ruckelt —
