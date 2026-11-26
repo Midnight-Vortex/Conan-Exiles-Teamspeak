@@ -352,7 +352,7 @@ POS: method http -> file
 POS: method file -> none
 ```
 
-`http` = letzter Inject über `POST /v1/position` (Hold ~2 s, Datei wird nicht überschrieben).  
+`http` = letzter Inject über `POST /v1/position` (Hold ~2 s, die Datei wird währenddessen gar nicht angefasst).  
 `file` = Pos.txt-Notfall, nur wenn HTTP ~2 s nichts liefert.  
 `none` = Koordinaten ungültig (stale / Grace abgelaufen).
 
@@ -366,14 +366,18 @@ Mit **`debug=1`** zusätzlich ~1×/s:
 DBG POS: method=http valid=1 holdLeft=1800ms posFile=1 fileAge=19999ms seq=42
 ```
 
-und wenn eine frische Pos.txt während des HTTP-Holds liegt:
+und, solange HTTP-Positionen ankommen (Hold aktiv), höchstens 1×/s:
 
 ```text
-DBG POS: Pos.txt skipped (HTTP hold left=1800ms age=200ms)
+DBG POS: Pos.txt not checked while HTTP positions arrive (hold left=1800ms)
 ```
 
-Seit 085 wird die Datei während des Holds wirklich **nicht mehr geöffnet/gelesen**
-(nur ihr Zeitstempel wird verfolgt) — deshalb steht dort kein `seq=` mehr.
+Seit 107 fasst der Watcher `Pos.txt` während des Holds **gar nicht** mehr an: kein
+Pfad-Aufruf, keine Zeitstempel-Abfrage, kein Lesen (vorher, seit 085, nur kein Lesen).
+Deshalb zeigt die Statuszeile währenddessen `fileAge=n/a`. Die Datei kommt erst wieder
+dran, wenn der Hold vorbei ist, also ~2 s nach der letzten HTTP-Position
+(Änderung 107). Die Zeile `Pos.txt skipped (HTTP hold left=… seq=… age=…)` gibt es nur
+noch für einen Hold, der mitten in einem Takt begann, nachdem die Datei schon gelesen war.
 
 ### Listener-Wiederbelebung (085)
 

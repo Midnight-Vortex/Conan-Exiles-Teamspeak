@@ -75,7 +75,8 @@ int pos_coordinates_valid(void);
 /* Inject a position sample from an external source (e.g. HTTP thread).
    Callable from any thread; must NOT call the TS API.
    Returns 1 if accepted (sample is plausible and watcher is running).
-   Accepted injections suppress Pos.txt overwrite for ~2 s (HTTP hold window). */
+   Accepted injections suppress ALL Pos.txt file access (path lookup, stat and
+   read) for ~2 s (HTTP hold window); the file is used only when HTTP stops. */
 int pos_inject_sample(const PosSample* sample);
 
 /* Register a callback that runs after successful pos_inject_sample calls - on

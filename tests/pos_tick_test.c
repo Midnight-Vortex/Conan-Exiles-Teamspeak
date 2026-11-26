@@ -1,5 +1,6 @@
-/* Unit tests for src/core/mod_file/pos_tick.h (wait-time helper of the pos
-   watcher loop: wake at once on an inject, keep the 30 ms tick deadline).
+/* Unit tests for src/core/mod_file/pos_tick.h (pure helpers of the pos
+   watcher loop: wake at once on an inject, keep the 30 ms tick deadline, and
+   "no Pos.txt access while an HTTP hold is active").
    Build/run on Linux: bash tests/run_tests.sh. Windows (MSVC Developer prompt):
      cl /nologo /O2 /I. /Isrc tests\pos_tick_test.c /Fe:tests\out\pos_tick_test.exe */
 
@@ -84,10 +85,28 @@ static void test_cadence(void) {
     CHECK(ticks >= 99UL && ticks <= 100UL && notifies == 0UL, "a single late inject does not disturb the ticks");
 }
 
+static void test_wants_file(void) {
+    printf("[3] pos_tick_wants_file\n");
+    CHECK(pos_tick_wants_file(1, 5000, 0) == 1, "enabled, never held (holdUntil 0) -> file work");
+    CHECK(pos_tick_wants_file(0, 5000, 0) == 0, "disabled, never held -> no file work");
+    CHECK(pos_tick_wants_file(1, 5000, 6999) == 0, "enabled, hold active (1999 ms left) -> no file work");
+    CHECK(pos_tick_wants_file(1, 5000, 5001) == 0, "enabled, hold ends in 1 ms -> still held");
+    CHECK(pos_tick_wants_file(1, 5000, 5000) == 1, "now == holdUntil -> hold is over -> file work");
+    CHECK(pos_tick_wants_file(1, 5001, 5000) == 1, "hold just over (1 ms ago) -> file work");
+    CHECK(pos_tick_wants_file(1, 9000, 5000) == 1, "hold long over -> file work");
+    CHECK(pos_tick_wants_file(0, 9000, 5000) == 0, "disabled, hold over -> still no file work");
+    CHECK(pos_tick_wants_file(0, 5000, 6999) == 0, "disabled and held -> no file work");
+    CHECK(pos_tick_wants_file(2, 5000, 0) == 1, "any non-zero enable flag counts as enabled");
+    CHECK(pos_tick_wants_file(1, 0, 0) == 1, "clock at 0, never held -> file work (0 < 0 is false)");
+    CHECK(pos_tick_wants_file(1, 0xFFFFFFFFFFULL, 0xFFFFFFFFFFULL + 2000ULL) == 0,
+        "64-bit tick values (uptime > 49 days), hold active");
+}
+
 int main(void) {
     printf("pos_tick_test\n");
     test_wait_ms();
     test_cadence();
+    test_wants_file();
     printf(g_failures ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", g_failures);
     return g_failures ? 1 : 0;
 }
