@@ -1,18 +1,25 @@
-# 105 — Die HTTP-Antwort an das Spiel wartet nicht mehr auf Plugin-Arbeit + Messung langsamer Antworten (nach Plugin 8.0.25)
+# 105 — Die HTTP-Antwort an das Spiel wartet nicht mehr auf Plugin-Arbeit + Messung langsamer Antworten (Plugin 8.0.26)
 
-**Stand:** 2026-11-26, Arbeitsstand nach 8.0.25 (Versionsnummer **nicht** erhoeht). Gebaut und auf dem Host getestet,
-**nicht** im TeamSpeak-Client auf Windows geprueft, **nicht** verteilt: liegt auf dem Zweig
-`claude/bold-cray-dbfsjh`, nicht auf `tsmain`, kein Release.
+**Plugin 8.0.26**, 2026-11-26. Gebaut und auf dem Host getestet, **nicht** im TeamSpeak-Client auf Windows geprueft,
+**nicht** verteilt (kein Release; die Hashes im README kommen erst mit dem Windows-Build).
+
+> **Nachtrag vom selben Tag — wichtig fuer die Einordnung:** Der Messtest des Besitzers
+> ([Doku 106](106-ruckler-messung-mod-anfrage.md)) hat gezeigt: **Das Spiel wartet nicht auf die Antwort des
+> Plugins.** Mit absichtlich 300 ms verspaeteten Antworten ruckelte es nicht, selbst bei 69 gestauten Anfragen.
+> Die Ruckler vom 25.11. kommen also **nicht** von einer langsamen Plugin-Antwort, und **diese Aenderung behebt sie
+> nicht.** Was sie bringt: Die Antwort haengt nicht mehr an fremder Plugin-Arbeit, und das `plugin.log` eines
+> betroffenen Spielers zeigt kuenftig schwarz auf weiss, ob das Plugin spaet war (`HTTP: slow request ...`) oder
+> nicht (keine solche Zeile).
 
 **Ausloeser:** Spieler melden Ruckler im Spiel. Das Spiel schickt seine Position etwa 33-mal pro Sekunde an
 `POST http://127.0.0.1:52734/v1/position`. Normal dauert eine Anfrage rund 7 ms. Etwa alle 3 Sekunden dauerte eine
-80 ms, spaeter bis 480 ms — und das Spiel stand so lange.
+80 ms, spaeter bis 480 ms — und laut der ersten Meldung stand das Spiel so lange.
 
 **Ehrlich vorweg: Den Ausloeser dieser 3-Sekunden-Haenger kennen wir noch nicht.** Die Suche hat im Plugin keinen
 Auftrag gefunden, der alle 3 Sekunden laeuft. Gefunden wurden zwei Schwaechen auf dem Antwortweg. Diese Aenderung
 (1) beseitigt das **eigene Warten** des Plugins vor der Antwort und (2) **misst** jetzt, wie lange das Plugin
-braucht — damit man kuenftig sagen kann, ob die Zeit im Plugin oder im Spiel verloren geht. Ob das die Haenger
-behebt, zeigt erst ein Test auf Windows.
+braucht — damit man kuenftig sagen kann, ob die Zeit im Plugin oder im Spiel verloren geht. (Die Annahme beim
+Schreiben war noch „das Spiel wartet auf die Antwort“; siehe Nachtrag oben.)
 
 **Begriffe:** *Listener* = der eine HTTP-Thread des Plugins, der Verbindungen nacheinander annimmt (annehmen →
 bearbeiten → schliessen). *Watcher* = der Pos-Watcher-Thread, der alle 30 ms die Position prueft. *Inject* =
@@ -30,7 +37,7 @@ Windows-Zeitgeber.
 | `src/core/http/pos_http_server.c` | Zeitmessung mit QPC pro Verbindung (Annahme bis Ende der Bearbeitung; bei der Positions-Anfrage zusaetzlich `recv` / `work` / `reply` / `send` / `after`). Gedrosselte Logzeile bei langsamen Antworten. Dazu die Dauer von „zurueck auf den Hauptport“ und „Lauscher neu oeffnen“. |
 | `src/core/http/http_request.h` | Reine Hilfsfunktionen: Ticks → Millisekunden, „ist das langsam?“, Text der Logzeilen. |
 | `tests/pos_tick_test.c` (neu), `tests/http_request_test.c`, `tests/run_tests.sh` | Neue Suite `pos_tick_test`; `http_request_test` um Block [7] erweitert. |
-| `tests/slow_reply_server.ps1` (neu) | Handwerkzeug: Platzhalter fuer das Plugin, der absichtlich langsam antwortet (Abschnitt 5). **Ungetestet.** |
+| `src/ts/entry/ts3_entry.c` | Version 8.0.26. |
 | `src/ui/overlay/voice_overlay.h`, `src/ui/plugin_ui_compat.c/.h` | Nur Kommentare: `plugin_ui_on_position_tick` wird nicht mehr vom HTTP-Listener gerufen, nur noch vom Watcher. |
 | `build/build_mingw.sh` | `-liphlpapi` in der Bibliotheksliste ergaenzt. Seit 102 nutzt `pos_http_server.c` die Funktion `GetExtendedTcpTable`; im vcxproj stand `iphlpapi.lib` schon, im MinGW-Skript fehlte sie. Der Pruef-Build (und damit die CI) brach seitdem beim Linken ab. |
 
@@ -44,8 +51,8 @@ das Notify **sofort auf dem Listener-Thread** aus (`ts3_on_position_update_commo
 - `chan_signal_position_update()`, `cepos_signal_send_pending()`, `ts3_ceping_signal_send_pending()`,
 - `ts3_audio_on_local_position_update()`.
 
-Blieb irgendwo darin etwas haengen (eine Sperre, ein Fensteraufruf), wartete das **Spiel** auf die Antwort. Und weil
-der Listener nur **ein** Thread ist, wartete auch die **naechste** Anfrage. Ausserdem lief dasselbe Notify fuer
+Blieb irgendwo darin etwas haengen (eine Sperre, ein Fensteraufruf), kam die Antwort an das **Spiel** entsprechend
+spaeter. Und weil der Listener nur **ein** Thread ist, wartete auch die **naechste** Anfrage. Ausserdem lief dasselbe Notify fuer
 Pos.txt-Positionen auf dem Watcher — also von zwei Threads aus.
 
 Gemessen hat das Plugin die eigene Antwortzeit nie. Niemand konnte sagen, ob die Zeit im Plugin oder im Spiel
@@ -77,7 +84,7 @@ eigene Position erreicht die anderen Spieler dann einen Augenblick spaeter. Das 
 ```
 VORHER
  Spiel ──POST──▶ Listener-Thread:  lesen ─▶ ablegen ─▶ NOTIFY (Overlay, CEPOS, Audio ...) ─▶ ANTWORT
-                                                         ▲ haengt hier etwas, wartet das Spiel
+                                                         ▲ haengt hier etwas, kommt die Antwort spaet
 
 NACHHER
  Spiel ──POST──▶ Listener-Thread:  lesen ─▶ ablegen ─▶ Merker + Ereignis setzen ─▶ ANTWORT   (sofort)
@@ -169,38 +176,35 @@ bedient hat.
 
 **Nicht geprueft (offen):**
 
-- **Der Ablauf im echten TeamSpeak-Client auf Windows.** Ob das Notify vom Watcher aus wirklich sofort laeuft, ob die
-  Ruckler verschwinden, ob CEPOS an andere Spieler gleich schnell geht. Das Pos-Watcher-Verhalten selbst
+- **Der Ablauf im echten TeamSpeak-Client auf Windows.** Ob das Notify vom Watcher aus wirklich sofort laeuft und
+  ob CEPOS an andere Spieler gleich schnell geht (Pruefliste unten). Das Pos-Watcher-Verhalten selbst
   (`pos_file.c`) wird auf dem Host nicht ausgefuehrt (nur Windows).
 - **Der MSVC-Build** (`/W4 /WX`): hier nur durch die MinGW-Naeherung abgedeckt.
-- **`tests/slow_reply_server.ps1` ist UNGETESTET.** Es gibt hier keine PowerShell. Das Skript wurde nur Zeile fuer
-  Zeile durchgesehen (Windows PowerShell 5.1, keine Module, nur ASCII). Wer es nutzt, prueft zuerst, ob es startet
-  und auf `GET http://127.0.0.1:52734/v1/status` antwortet (z. B. im Browser).
-- **Die Mod-Seite.** Ob das Spiel ueberhaupt auf die Antwort wartet und was die Mod pro Runde im Spiel-Thread tut
-  (`Pos.txt` schreiben, Anfrage starten, anderen Port fragen), wird getrennt am PC mit DevKit und Logs geprueft.
-  Wartet das Spiel grundsaetzlich auf jede Antwort, braucht es zusaetzlich eine Aenderung in der Mod.
+- **Die Mod-Seite** wurde getrennt am PC geprueft: Ergebnis in [Doku 106](106-ruckler-messung-mod-anfrage.md).
+  Das Spiel wartet nicht auf die Antwort; an der Mod wurde nichts geaendert.
 
-**Handwerkzeug `tests/slow_reply_server.ps1`** — zur Frage „ruckelt das SPIEL, wenn eine Antwort spaet kommt?“:
+**Vor dem Verteilen im TeamSpeak-Client pruefen (Windows):**
 
-```text
-TeamSpeak schliessen (es haelt Port 52734) → in PowerShell:
-powershell -ExecutionPolicy Bypass -File tests\slow_reply_server.ps1 -DelayMs 300 -EveryMs 3000
-→ Spiel starten und spielen.
-```
+1. Verbinden, ins Spiel: Der Spieler wird in den Ingame-Channel verschoben, andere hoeren ihn richtungs- und
+   entfernungsabhaengig (das Notify laeuft jetzt ueber den Watcher — kommt es nicht an, bleiben die Positionen bei
+   den anderen stehen).
+2. Laufen und stehen bleiben: Die Stimme der anderen folgt ohne spuerbaren Verzug; das HUD zeigt Zone und
+   Sprechart wie vorher; die Mundbewegung im Spiel laeuft.
+3. `plugin.log`: im normalen Betrieb **keine** Zeile `HTTP: slow request`. Zum Gegentest TeamSpeak kurz anhalten
+   (z. B. ein Einstellungsfenster verschieben) — es darf hoechstens eine Zeile pro Sekunde erscheinen.
+4. Zwei TeamSpeak-Instanzen: Port-Uebergabe wie in Doku 102; dabei darf `HTTP: port check took N ms` erscheinen.
+5. TeamSpeak beenden waehrend das Spiel laeuft: kein Haenger beim Beenden.
 
-Das Skript antwortet auf `POST /v1/position` mit `{"ok":true,"talk":0,"talkers":"","act":1}`, auf
-`GET /v1/status` mit der Plugin-Antwort (damit der Mod keinen anderen Port sucht), alles andere mit 404. Es bedient
-Verbindungen nacheinander wie das Plugin und haelt **nur** Positions-Antworten zurueck: `-DelayMs` (Standard 300)
-lang, einmal alle `-EveryMs` (Standard 3000; `0` = jede Antwort). Pro langsamer Antwort eine Zeile, alle 5 s eine
-Zaehlerzeile, `Ctrl+C` beendet. Jede Verbindung hat eine Lese-Zeitgrenze, ein stummer Kunde haelt es nicht auf.
-
-- **Ruckelt das Spiel genau dann, wenn eine Zeile erscheint:** eine verspaetete Antwort allein reicht, das Plugin
-  muss nur schnell bleiben (dann zeigt `plugin.log`, ob es das tut).
-- **Ruckelt es nicht:** der Haenger liegt woanders (andere Ursache im Spiel, im Mod oder im Netz-Stack).
+**Werkzeug fuer die Frage „ruckelt das SPIEL, wenn eine Antwort spaet kommt?“:** `tests/slow_reply_standin.ps1`
+und `tests/modhttp_timing.py` aus [Doku 106](106-ruckler-messung-mod-anfrage.md) (vom Besitzer am 26.11. benutzt).
+Ein zuerst hier mitgeliefertes, ungetestetes Skript mit demselben Zweck (`tests/slow_reply_server.ps1`) wurde
+deshalb wieder entfernt.
 
 ## 6. Lerneffekt
 
 Ein Antwort-Thread darf nie fremde Arbeit erledigen, bevor er antwortet: Was „schnell sein sollte“ (ein Overlay-
-Aufruf, eine Sperre), ist es nicht immer, und der Schaden trifft den, der wartet — hier das Spiel. Die saubere Form
+Aufruf, eine Sperre), ist es nicht immer, und der Schaden trifft den, der auf die Antwort wartet. Die saubere Form
 ist „ablegen, Signal setzen, antworten“; die Arbeit macht ein anderer Thread. Und: **erst messen, dann raten.**
+Genau das hat sich hier gezeigt: Die Vermutung „das Spiel wartet auf das Plugin“ war plausibel, aber falsch — der
+Messtest (Doku 106) hat sie in fuenf Minuten widerlegt.
 Ohne die Zeitmessung im Plugin blieb offen, ob es das Plugin war — die Messung ist deshalb Teil derselben Aenderung.

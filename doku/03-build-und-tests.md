@@ -112,9 +112,9 @@ Stand nach 105: **36 Suiten** (+ `pos_tick_test`) und `layering_guard`, alle gru
 linkt die DLL ohne Warnungen. (Zwischen 102 und 105 brach das Linken ab: `GetExtendedTcpTable` braucht
 `-liphlpapi`, das in der Bibliotheksliste des Skripts fehlte; mit 105 ergaenzt.)
 
-Handwerkzeug (nicht Teil von `run_tests.sh`): `tests/slow_reply_server.ps1` — Platzhalter fuer das Plugin, der
-absichtlich langsam antwortet, um am Windows-PC zu pruefen, ob das **Spiel** bei verspaeteten Antworten ruckelt
-(Aenderung 105; **ungetestet**).
+Handwerkzeuge (nicht Teil von `run_tests.sh`): `tests/slow_reply_standin.ps1` — Platzhalter fuer das Plugin, der
+absichtlich langsam antwortet, um am Windows-PC zu pruefen, ob das **Spiel** bei verspaeteten Antworten ruckelt —
+und `tests/modhttp_timing.py`, das ein `ConanSandbox.log` dazu auswertet (Aenderung 106).
 
 **Warum `-ffp-contract=off` in `tests/run_tests.sh`?** Auf einem Prozessor mit FMA
 („fused multiply-add“) fasst gcc `a*b + c` standardmaessig zu **einer** Instruktion zusammen,
