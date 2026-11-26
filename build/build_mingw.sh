@@ -53,6 +53,10 @@ LDLIBS=(
     -lkernel32 -luser32 -lgdi32 -lcomctl32 -lcomdlg32 -luxtheme
     -lole32 -loleaut32 -luuid -lshell32 -lshlwapi -ladvapi32 -lwinmm
     -lws2_32
+    # 102: pos_http_server.c asks who holds the port (GetExtendedTcpTable).
+    # The vcxproj links iphlpapi.lib; without it this cross-build stopped at
+    # the link step ("undefined reference to GetExtendedTcpTable").
+    -liphlpapi
 )
 
 # Exact ClCompile list from project/Conan-Exiles-TeamSpeak.vcxproj (35 files).
