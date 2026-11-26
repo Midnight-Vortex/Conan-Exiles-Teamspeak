@@ -74,6 +74,7 @@ zeigen nur nach unten.
 
 ```
 Pos.txt ──(Watcher-Thread, 30ms)──▶ lokale Position (atomar)
+HTTP-POST ──(Listener-Thread: nur ablegen + antworten; weckt den Watcher per Ereignis, 105)──▶ dieselbe Stelle
                                        │  Kommando "Position neu" in Queue + Wakeup-Anforderung
                                        ▼
                  ┌—— Callback-Thread (einziger TS-API-Nutzer) ——┐

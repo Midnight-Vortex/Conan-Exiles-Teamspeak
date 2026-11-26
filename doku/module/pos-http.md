@@ -319,6 +319,29 @@ Abgebrochene Verbindungen: `HTTP: drop reason=recv|incomplete|deadline` (`deadli
 GET `/health` und unbekannte Pfade (404) loggen weiterhin eine `HTTP: IN … raw=` Zeile
 (jetzt ebenfalls gedrosselt). Erfolgreiche POSTs brauchen **`debug=1`** für Einzelzeilen (seit Änderung 047; vorher 042: immer sichtbar).
 
+### Langsame Antworten und Port-Pruefung (105)
+
+Der Listener misst mit `QueryPerformanceCounter`, wie lange jede Verbindung dauert (von `accept()` bis zum Ende der
+Antwort). Ab **20 ms** schreibt er **nach** der Antwort eine Zeile ueber `log_write` (immer sichtbar), hoechstens
+eine pro Sekunde, mit ` (+N suppressed)`. Feste Namen, nie Pfad oder Body:
+
+```text
+HTTP: slow request position status=200 total=312ms recv=305ms work=2ms reply=1ms send=4ms after=0ms
+HTTP: slow request health status=200 total=45ms
+HTTP: slow request drop total=500ms
+HTTP: port check took 250 ms
+```
+
+- `position` ist `POST /v1/position` (auch der Alias); nur dort gibt es die Teile `recv` (Annahme bis Header + Body
+  komplett), `work` (Passwort abschneiden, parsen, Verdeckung ablegen, Inject), `reply` (Antwort bauen), `send`, `after` (nach dem Senden: Statistik und Debug-Log). `recv`/`work`/`reply`
+  verzoegern diese Antwort, `send`/`after` die naechste Anfrage.
+- Weitere Namen: `health`, `status`, `yield`, `forbidden`, `notfound`, `drop` (Verbindung aufgegeben).
+- `port check` = der Listener war bei „zurueck auf den Hauptport“ oder „Lauscher neu oeffnen“ beschaeftigt.
+- Ist `recv` gross, kam die Anfrage spaet vom Spiel; sind `work`/`reply`/`send`/`after` gross, lag es im Plugin.
+- Wer arbeitet: der Listener-Thread liest, legt die Position ab (`pos_inject_sample`: nur speichern + Notify
+  anmelden) und **antwortet**. Das Notify (Overlay, CEPOS, Kanalwechsel, Audio) fuehrt danach der **Pos-Watcher**
+  aus, sofort geweckt durch ein Ereignis; mehrere Positionen davor ergeben **einen** Lauf (Aenderung 105).
+
 ## 10. Positionsquelle (HTTP vs Pos.txt)
 
 Der Pos-Watcher schreibt bei jedem **Wechsel** immer (`log_write`, Änderung 050):

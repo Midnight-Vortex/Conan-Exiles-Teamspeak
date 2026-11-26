@@ -1,5 +1,6 @@
 #include "core/mod_file/pos_file.h"
 #include "core/mod_file/pos_parse.h"
+#include "core/mod_file/pos_tick.h"
 #include "core/mod_file/path_detect.h"
 #include "core/config/config.h"
 #include "core/hub/mod_password.h"
@@ -33,6 +34,12 @@ static ULONGLONG g_lastFileWriteQuad = 0;
 
 static HANDLE g_watcherThread = NULL;
 static HANDLE g_stopEvent = NULL;
+/* Auto-reset event: "a sample was injected, run the notify callback". Signalled
+   by pos_inject_sample (any thread), waited on by the watcher thread together
+   with g_stopEvent. g_injectPending says whether a notify is already queued, so
+   a burst of injects costs one SetEvent and one callback run. */
+static HANDLE g_injectEvent = NULL;
+static volatile long g_injectPending = 0;
 static volatile long g_watcherRunning = 0;
 static void (*g_updateCallback)(void) = NULL;
 static void (*g_tickCallback)(void) = NULL;
@@ -149,6 +156,23 @@ void pos_inject_set_notify_callback(void (*callback)(void)) {
     g_injectNotifyCallback = callback;
 }
 
+/* Hand the notify over to the watcher thread. Never runs the callback here:
+   the caller (the HTTP listener) must answer the game right after storing the
+   sample, whatever the notify consumers take. Several injects before the
+   watcher wakes collapse into ONE callback run - every consumer is an
+   idempotent "something is pending" signal. Only the 0 -> 1 edge signals. */
+static void pos_inject_queue_notify(void) {
+    if (!g_injectNotifyCallback) {
+        return;
+    }
+    if (InterlockedExchange(&g_injectPending, 1) == 0) {
+        const HANDLE ev = g_injectEvent;
+        if (ev) {
+            SetEvent(ev);
+        }
+    }
+}
+
 int pos_inject_sample(const PosSample* sample) {
     if (!sample || !pos_sample_is_plausible(sample)) {
         return 0;
@@ -169,9 +193,7 @@ int pos_inject_sample(const PosSample* sample) {
     g_httpHoldUntilMs = now + 2000ULL;
     pos_set_source(POS_SOURCE_HTTP);
 
-    if (g_injectNotifyCallback) {
-        g_injectNotifyCallback();
-    }
+    pos_inject_queue_notify();
     return 1;
 }
 
@@ -298,6 +320,18 @@ static void pos_resolve_file_path(wchar_t* out, size_t outLen) {
     }
 }
 
+/* Watcher thread: run the queued inject notify, if any. The flag is cleared
+   BEFORE the callback runs, so an inject that lands while the callback runs
+   queues the next run instead of being lost. Not while stopping. */
+static void pos_run_inject_notify(void) {
+    if (InterlockedExchange(&g_injectPending, 0) == 0) {
+        return;
+    }
+    if (g_injectNotifyCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+        g_injectNotifyCallback();
+    }
+}
+
 static unsigned __stdcall pos_watcher_thread(void* arg) {
     (void)arg;
 
@@ -308,6 +342,14 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
     ULONGLONG lastStatusMs = 0;
     ULONGLONG lastHoldSkipLog = 0;
     int lastSeq = -1;
+    /* Wait on stop (index 0, wins when both are set) and on a queued inject
+       notify. The file/staleness tick keeps its own deadline: it runs about
+       every PLUGIN_POLL_INTERVAL_MS no matter how many injects wake the loop. */
+    HANDLE waitSet[2];
+    ULONGLONG nextTickMs = GetTickCount64() + (ULONGLONG)PLUGIN_POLL_INTERVAL_MS;
+
+    waitSet[0] = g_stopEvent;
+    waitSet[1] = g_injectEvent;
 
     log_write("POS: watcher started");
     if (!g_config.enablePosFile) {
@@ -315,7 +357,19 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
     }
 
     for (;;) {
-        if (WaitForSingleObject(g_stopEvent, PLUGIN_POLL_INTERVAL_MS) != WAIT_TIMEOUT) {
+        const DWORD waited = WaitForMultipleObjects(2, waitSet, FALSE,
+            (DWORD)pos_wait_ms(GetTickCount64(), nextTickMs, PLUGIN_POLL_INTERVAL_MS));
+        if (waited == WAIT_OBJECT_0) {
+            break; /* stop */
+        }
+        if (waited == WAIT_OBJECT_0 + 1) {
+            pos_run_inject_notify();
+            if (GetTickCount64() < nextTickMs) {
+                continue; /* the tick is not due yet - wait for the rest of its interval */
+            }
+        }
+        else if (waited != WAIT_TIMEOUT) {
+            log_write("POS: watcher wait failed (%lu) - stopping", (unsigned long)waited);
             break;
         }
 
@@ -520,6 +574,7 @@ static unsigned __stdcall pos_watcher_thread(void* arg) {
         if (g_tickCallback && WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
             g_tickCallback();
         }
+        nextTickMs = GetTickCount64() + (ULONGLONG)PLUGIN_POLL_INTERVAL_MS;
     }
 
     log_write("POS: watcher stopped");
@@ -547,10 +602,22 @@ void pos_watcher_start(void) {
         InterlockedExchange(&g_watcherRunning, 0);
         return;
     }
+    InterlockedExchange(&g_injectPending, 0);
+    g_injectEvent = CreateEventW(NULL, FALSE, FALSE, NULL); /* auto-reset */
+    if (!g_injectEvent) {
+        log_write("POS: failed to create inject event");
+        CloseHandle(g_stopEvent);
+        g_stopEvent = NULL;
+        DeleteCriticalSection(&g_posLock);
+        InterlockedExchange(&g_watcherRunning, 0);
+        return;
+    }
 
     g_watcherThread = (HANDLE)_beginthreadex(NULL, 0, pos_watcher_thread, NULL, 0, NULL);
     if (!g_watcherThread) {
         log_write("POS: failed to start watcher thread");
+        CloseHandle(g_injectEvent);
+        g_injectEvent = NULL;
         CloseHandle(g_stopEvent);
         g_stopEvent = NULL;
         DeleteCriticalSection(&g_posLock);
@@ -572,6 +639,15 @@ void pos_watcher_stop(void) {
     g_watcherThread = NULL;
     CloseHandle(g_stopEvent);
     g_stopEvent = NULL;
+    {
+        /* Take the handle out first: an injector that still reads g_injectEvent
+           sees NULL, never a closed handle. (The HTTP listener, the only
+           injector, is stopped before this function runs.) */
+        const HANDLE ev = g_injectEvent;
+        g_injectEvent = NULL;
+        CloseHandle(ev);
+    }
+    InterlockedExchange(&g_injectPending, 0);
 
     InterlockedExchange(&g_coordinatesValid, 0);
     InterlockedExchange(&g_watcherRunning, 0); /* readers bail before lock teardown */

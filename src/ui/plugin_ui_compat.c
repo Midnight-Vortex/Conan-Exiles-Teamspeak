@@ -315,7 +315,8 @@ void plugin_ui_sync_to_config(void) {
  * mirrors) that the overlay thread and the F10 dialog read. It therefore has
  * exactly ONE writer thread: the TS callback thread.
  *
- * Other threads (pos watcher, HTTP inject listener) must not run it. They go
+ * Other threads (the pos watcher: Pos.txt ticks and, since 105, the notify of
+ * HTTP-injected samples) must not run it. They go
  * through plugin_ui_on_position_tick(), which only raises g_pendingSync (and a
  * wakeup); the CEDRAIN dispatcher then calls plugin_ui_flush_pending_sync()
  * on the callback thread. g_pendingSync is a coalescing flag: any number of
@@ -538,8 +539,9 @@ float getVoiceDistanceForMode(uint8_t voiceMode) {
     }
 }
 
-/* Called from the pos-watcher and HTTP-listener threads (never the callback
-   thread in practice). Does only the thread-safe part itself: queue the
+/* Called from the pos watcher thread (never the callback thread in practice;
+   since 105 the HTTP listener no longer calls it - the watcher runs the notify
+   of an HTTP sample). Does only the thread-safe part itself: queue the
    live-state sync for the callback thread (plugin_ui_sync_live_state defers
    automatically off-thread) and post the overlay refresh. */
 void plugin_ui_on_position_tick(void) {

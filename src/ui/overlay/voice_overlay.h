@@ -30,7 +30,8 @@
  *    overlay thread was joined (class unregister).
  *  - updateVoiceOverlay, updateVoiceOverlayVisibility,
  *    voice_overlay_refresh_theme/_position/_size, repositionVoiceOverlay:
- *    ANY thread — pos watcher / HTTP listener (plugin_ui_on_position_tick),
+ *    ANY thread — pos watcher (plugin_ui_on_position_tick; since 105 also for
+ *    HTTP samples, the HTTP listener never runs it),
  *    key monitor (voice-mode hotkeys), settings-dialog thread, TS callback
  *    thread. Off the overlay thread they only PostMessage (never touch the
  *    window or GDI); on it they act directly. All are no-ops once

@@ -1,6 +1,6 @@
 /* Unit tests for src/core/http/http_request.h (pure HTTP request helpers of the
    localhost position server: header parsing, browser guard, Content-Length,
-   log throttle, accept() error class, rebind backoff).
+   log throttle, accept() error class, rebind backoff, slow-answer timing + log text).
    Build/run on Linux: bash tests/run_tests.sh. Windows (MSVC Developer prompt):
      cl /nologo /O2 /I. /Isrc tests\http_request_test.c /Fe:tests\out\http_request_test.exe */
 
@@ -263,6 +263,81 @@ static void test_accept_recovery(void) {
     CHECK(ok, "never decreases");
 }
 
+static void test_slow_timing(void) {
+    printf("[7] slow answers: ticks -> ms, slow decision, log text\n");
+    char line[256];
+    char tail[32];
+    HttpSlowParts parts;
+
+    /* QueryPerformanceFrequency on Windows is typically 10 MHz (10 000 000 ticks/s) */
+    CHECK(http_ticks_to_ms(10000000ULL, 10000000ULL) == 1000UL, "1 s = 1000 ms");
+    CHECK(http_ticks_to_ms(10000ULL, 10000000ULL) == 1UL && http_ticks_to_ms(19999ULL, 10000000ULL) == 1UL,
+        "rounded down to whole milliseconds");
+    CHECK(http_ticks_to_ms(0ULL, 10000000ULL) == 0UL, "0 ticks = 0 ms");
+    CHECK(http_ticks_to_ms(3120000ULL, 10000000ULL) == 312UL, "312 ms");
+    CHECK(http_ticks_to_ms(5000ULL, 1000ULL) == 5000UL, "other frequency (1 kHz)");
+    CHECK(http_ticks_to_ms(123ULL, 0ULL) == 0UL, "counter unavailable (freq 0) -> 0, never slow");
+    CHECK(http_ticks_to_ms(0xFFFFFFFFFFFFFFFFULL, 10000000ULL) == 0xFFFFFFFFUL,
+        "huge value is clamped to unsigned long, no overflow");
+    CHECK(http_ticks_to_ms(9223372036854775807ULL, 3000000ULL) > 0UL, "no overflow of ticks*1000 near INT64_MAX");
+
+    CHECK(http_ticks_between(100ULL, 350ULL) == 250ULL, "tick difference");
+    CHECK(http_ticks_between(350ULL, 100ULL) == 0ULL && http_ticks_between(5ULL, 5ULL) == 0ULL,
+        "wrong order / equal -> 0");
+
+    CHECK(!http_is_slow_ms(0) && !http_is_slow_ms(7) && !http_is_slow_ms(19), "7 ms (normal) and 19 ms are not slow");
+    CHECK(http_is_slow_ms(20) && http_is_slow_ms(80) && http_is_slow_ms(480), "20 ms and more is slow");
+
+    parts.recvMs = 305UL;
+    parts.workMs = 2UL;
+    parts.replyMs = 1UL;
+    parts.sendMs = 4UL;
+    parts.afterMs = 0UL;
+    http_format_slow_request(line, (int)sizeof(line), "position", 200, 312UL, &parts, "");
+    CHECK(strcmp(line, "HTTP: slow request position status=200 total=312ms recv=305ms work=2ms reply=1ms send=4ms after=0ms") == 0,
+        "position line with breakdown (exact text)");
+    http_suppressed_text(tail, (int)sizeof(tail), 7);
+    http_format_slow_request(line, (int)sizeof(line), "position", 200, 312UL, &parts, tail);
+    CHECK(strcmp(line, "HTTP: slow request position status=200 total=312ms recv=305ms work=2ms reply=1ms send=4ms after=0ms (+7 suppressed)") == 0,
+        "suppressed tail appended");
+    parts.recvMs = 1UL;
+    parts.workMs = 0UL;
+    parts.replyMs = 0UL;
+    parts.sendMs = 0UL;
+    parts.afterMs = 250UL;
+    http_format_slow_request(line, (int)sizeof(line), "position", 200, 251UL, &parts, "");
+    CHECK(strcmp(line, "HTTP: slow request position status=200 total=251ms recv=1ms work=0ms reply=0ms send=0ms after=250ms") == 0,
+        "time lost AFTER the reply (statistics / debug log) is named, not hidden in the total");
+    http_format_slow_request(line, (int)sizeof(line), "health", 200, 45UL, NULL, "");
+    CHECK(strcmp(line, "HTTP: slow request health status=200 total=45ms") == 0, "other outcome: label + total only");
+    http_format_slow_request(line, (int)sizeof(line), "drop", -1, 500UL, NULL, "");
+    CHECK(strcmp(line, "HTTP: slow request drop total=500ms") == 0, "dropped connection: no status");
+    http_format_slow_request(line, (int)sizeof(line), NULL, -1, 1UL, NULL, NULL);
+    CHECK(strcmp(line, "HTTP: slow request ? total=1ms") == 0, "NULL label / tail do not crash");
+
+    char small[24];
+    http_format_slow_request(small, (int)sizeof(small), "position", 200, 312UL, &parts, "");
+    CHECK(strlen(small) == sizeof(small) - 1, "a small buffer is cut, never overrun");
+
+    http_format_port_check(line, (int)sizeof(line), 250UL, "");
+    CHECK(strcmp(line, "HTTP: port check took 250 ms") == 0, "port check line");
+    http_format_port_check(line, (int)sizeof(line), 31UL, " (+2 suppressed)");
+    CHECK(strcmp(line, "HTTP: port check took 31 ms (+2 suppressed)") == 0, "port check line with tail");
+
+    /* a slow-answer line is limited to one per second, like the other HTTP lines */
+    HttpThrottle t;
+    int sup = 0;
+    int logged = 0;
+    unsigned long long now;
+    memset(&t, 0, sizeof(t));
+    for (now = 1000; now < 11000; now += 30) {
+        if (http_throttle_pass(&t, now, 1000, &sup)) {
+            logged++;
+        }
+    }
+    CHECK(logged >= 10 && logged <= 11, "game stuck for 10 s (every request slow) -> ~1 line per second");
+}
+
 int main(void) {
     printf("http_request_test\n");
     test_header_block();
@@ -271,6 +346,7 @@ int main(void) {
     test_guard();
     test_throttle();
     test_accept_recovery();
+    test_slow_timing();
     printf(g_failures ? "RESULT: %d FAILED\n" : "RESULT: ALL PASSED\n", g_failures);
     return g_failures ? 1 : 0;
 }
