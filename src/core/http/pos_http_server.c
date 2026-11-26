@@ -8,7 +8,9 @@
  * Thread contract:
  *   - start/stop:   TS callback thread.
  *   - Listener thread: never calls the TS API; calls pos_inject_sample()
- *     which is safe from any thread. No overlay, no UI.
+ *     which is safe from any thread and only stores the sample + queues the
+ *     notify for the pos watcher thread (pos_file.c). The listener never runs
+ *     plugin work (overlay, CEPOS, audio) before it replies. No overlay, no UI.
  *   - Logging (rate summary, POST success, errors, raw IN for GET/404): HTTP
  *     thread only, via log_write / log_debug (log module lock — never TS API).
  *     Successful POST /v1/position → http_send first, then log_debug per sample
@@ -18,6 +20,13 @@
  *     "+N suppressed" counter): a local client can no longer flood plugin.log.
  *     Dropped connections (recv fail / incomplete headers / deadline) →
  *     throttled drop log.
+ *   - Slow answers: the listener times every connection (QueryPerformanceCounter
+ *     only - no other syscall, no allocation) from accept() to the end of the
+ *     answer. >= HTTP_SLOW_MS -> one log_write line AFTER the reply was sent
+ *     ("HTTP: slow request <label> total=.. [recv/work/reply/send/after]", max 1 per
+ *     second, fixed labels - never the request path or body). The same for the
+ *     two places where the listener is busy without a client (return to the
+ *     primary port, reopening the listen socket): "HTTP: port check took N ms".
  *   - Per connection: every recv() waits at most HTTP_RECV_TMO_MS and the whole
  *     request must be complete within HTTP_CONN_DEADLINE_MS after accept(), so a
  *     slow-drip client cannot hold the single listener thread (and with it
@@ -115,6 +124,88 @@ static HttpThrottle g_thrPost400;   /* POST answered with 400 */
 static HttpThrottle g_thrIn;        /* raw IN line for 404 / unknown requests */
 static HttpThrottle g_thrAccept;    /* accept() failures */
 static HttpThrottle g_thrBind;      /* bind()/listen() failures */
+static HttpThrottle g_thrSlow;      /* slow answers */
+static HttpThrottle g_thrPortCheck; /* slow port checks */
+
+/* QueryPerformanceFrequency, read once in start() (before the listener thread
+   exists). 0 = counter unavailable: then nothing is ever reported as slow. */
+static ULONGLONG g_qpcFreq = 0;
+
+/* Timing of ONE connection, filled by http_handle_client() on the listener
+   thread and reported by the listener loop after the reply was sent. All times
+   are QueryPerformanceCounter ticks. */
+typedef struct HttpTrace {
+    ULONGLONG   t0;         /* just after accept() */
+    const char* label;      /* fixed word for the log line (never a request path) */
+    int         status;     /* HTTP status sent, -1 = none (connection dropped) */
+    int         hasParts;   /* served POST /v1/position: the four times below are set */
+    ULONGLONG   tRecvEnd;   /* headers + body complete */
+    ULONGLONG   tWorkEnd;   /* password cut, parse, occlusion store, inject done */
+    ULONGLONG   tReplyEnd;  /* reply built, about to send */
+    ULONGLONG   tSendEnd;   /* reply sent */
+} HttpTrace;
+
+static ULONGLONG http_qpc(void) {
+    LARGE_INTEGER t;
+    t.QuadPart = 0;
+    QueryPerformanceCounter(&t);
+    return (ULONGLONG)t.QuadPart;
+}
+
+/* Name the outcome of this connection (called right before the reply is sent). */
+static void http_trace_outcome(HttpTrace* tr, const char* label, int status) {
+    tr->label = label;
+    tr->status = status;
+}
+
+/* After the reply was sent: one throttled line when the connection was slow. */
+static void http_slow_report(const HttpTrace* tr, ULONGLONG tEnd) {
+    const unsigned long totalMs = http_ticks_to_ms(http_ticks_between(tr->t0, tEnd), g_qpcFreq);
+    char tail[32];
+    char line[320];
+    int suppressed = 0;
+    HttpSlowParts parts;
+
+    if (!http_is_slow_ms(totalMs)) {
+        return;
+    }
+    if (!http_throttle_pass(&g_thrSlow, GetTickCount64(), HTTP_LOG_THROTTLE_MS, &suppressed)) {
+        return;
+    }
+    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+    if (tr->hasParts) {
+        parts.recvMs = http_ticks_to_ms(http_ticks_between(tr->t0, tr->tRecvEnd), g_qpcFreq);
+        parts.workMs = http_ticks_to_ms(http_ticks_between(tr->tRecvEnd, tr->tWorkEnd), g_qpcFreq);
+        parts.replyMs = http_ticks_to_ms(http_ticks_between(tr->tWorkEnd, tr->tReplyEnd), g_qpcFreq);
+        parts.sendMs = http_ticks_to_ms(http_ticks_between(tr->tReplyEnd, tr->tSendEnd), g_qpcFreq);
+        parts.afterMs = http_ticks_to_ms(http_ticks_between(tr->tSendEnd, tEnd), g_qpcFreq);
+    }
+    else {
+        memset(&parts, 0, sizeof(parts));
+    }
+    http_format_slow_request(line, (int)sizeof(line), tr->label, tr->status, totalMs,
+        tr->hasParts ? &parts : NULL, tail);
+    log_write("%s", line);
+}
+
+/* Port handling without a client (return to primary / reopen the listen
+   socket): one throttled line when it kept the listener busy for long. */
+static void http_port_check_report(ULONGLONG tStart) {
+    const unsigned long ms = http_ticks_to_ms(http_ticks_between(tStart, http_qpc()), g_qpcFreq);
+    char tail[32];
+    char line[96];
+    int suppressed = 0;
+
+    if (!http_is_slow_ms(ms)) {
+        return;
+    }
+    if (!http_throttle_pass(&g_thrPortCheck, GetTickCount64(), HTTP_LOG_THROTTLE_MS, &suppressed)) {
+        return;
+    }
+    http_suppressed_text(tail, (int)sizeof(tail), suppressed);
+    http_format_port_check(line, (int)sizeof(line), ms, tail);
+    log_write("%s", line);
+}
 
 /* ---- helpers ----------------------------------------------------------- */
 
@@ -443,8 +534,10 @@ static void http_post_fail(SOCKET client, const char* reason, long contentLength
     }
 }
 
-/* Handle one accepted client connection. */
-static void http_handle_client(SOCKET client) {
+/* Handle one accepted client connection. tr collects the timing (the listener
+   loop starts it with t0 and label "drop"; every path that sends a reply names
+   its outcome first). */
+static void http_handle_client(SOCKET client, HttpTrace* tr) {
     /* The whole request must be in within HTTP_CONN_DEADLINE_MS of accept():
        the single listener thread must not be held by a slow-drip client. */
     const ULONGLONG deadline = GetTickCount64() + (ULONGLONG)HTTP_CONN_DEADLINE_MS;
@@ -503,6 +596,7 @@ static void http_handle_client(SOCKET client) {
         const int guard = http_request_guard(buf, header_end, ownPort ? ownPort : POS_HTTP_PORT,
             what, (int)sizeof(what));
         if (guard != HTTP_GUARD_OK) {
+            http_trace_outcome(tr, "forbidden", 403);
             http_send(client, 403, "{\"ok\":false,\"error\":\"forbidden\"}");
             http_forbidden_log(guard, what);
             return;
@@ -512,6 +606,7 @@ static void http_handle_client(SOCKET client) {
     /* GET /health */
     if (strcmp(method, "GET") == 0 && strcmp(path, "/health") == 0) {
         char body[160];
+        http_trace_outcome(tr, "health", 200);
         http_log_raw_in(method, path, "", 0, 200);
         snprintf(body, sizeof(body),
             "{\"ok\":true,\"service\":\"" HTTP_SERVICE_NAME "\",\"url\":\"http://127.0.0.1:%d\"}",
@@ -523,6 +618,7 @@ static void http_handle_client(SOCKET client) {
     /* 102: GET /v1/status - who is this instance (another instance or the mod asks). */
     if (strcmp(method, "GET") == 0 && strcmp(path, "/v1/status") == 0) {
         char body[192];
+        http_trace_outcome(tr, "status", 200);
         if (!http_status_json(body, (int)sizeof(body), active, (unsigned long)GetCurrentProcessId(),
                 ownPort, g_pluginVersion)) {
             strcpy_s(body, sizeof(body), "{\"ok\":true,\"service\":\"" HTTP_SERVICE_NAME "\"}");
@@ -536,6 +632,7 @@ static void http_handle_client(SOCKET client) {
        loop closes the socket after this reply and reopens on a fallback port. */
     if (strcmp(method, "POST") == 0 && strcmp(path, "/v1/yield") == 0) {
         const int yield = http_yield_allowed(ownPort, active);
+        http_trace_outcome(tr, "yield", 200);
         if (yield) {
             InterlockedExchange(&g_yieldPending, 1);
         }
@@ -549,6 +646,9 @@ static void http_handle_client(SOCKET client) {
     /* POST /v1/position  (or alias /position) */
     if (strcmp(method, "POST") == 0
         && (strcmp(path, "/v1/position") == 0 || strcmp(path, "/position") == 0)) {
+
+        /* Until the position is parsed every way out is a 400 (post_fail). */
+        http_trace_outcome(tr, "position", 400);
 
         /* Body length from the Content-Length HEADER (header block only). */
         long content_length = 0;
@@ -582,6 +682,7 @@ static void http_handle_client(SOCKET client) {
             http_post_fail(client, "body-incomplete", content_length);
             return;
         }
+        tr->tRecvEnd = http_qpc();
 
         {
             char* body = buf + header_end;
@@ -600,6 +701,7 @@ static void http_handle_client(SOCKET client) {
                 && occlusion_store_from_text(body, GetTickCount64()) >= 0;
             const int injected = parsed && pos_inject_sample(&sample);
             const int status = injected ? 200 : 400;
+            tr->tWorkEnd = http_qpc();
             const ULONGLONG now = GetTickCount64();
             ULONGLONG dtMs = 0;
 
@@ -625,11 +727,16 @@ static void http_handle_client(SOCKET client) {
                 /* 102: tell the mod whether THIS instance is the one with the Conan
                    server (two TeamSpeak processes: the mod then looks for the other). */
                 http_reply_append_act(reply, (int)sizeof(reply), active);
+                tr->tReplyEnd = http_qpc();
                 http_send(client, 200, reply);
             }
             else {
+                tr->tReplyEnd = http_qpc();
                 http_send(client, 400, "{\"ok\":false,\"error\":\"invalid position\"}");
             }
+            tr->tSendEnd = http_qpc();
+            tr->status = status;
+            tr->hasParts = 1;
 
             http_post_rate_tick(injected, dtMs, injected ? &sample : NULL);
 
@@ -666,6 +773,7 @@ static void http_handle_client(SOCKET client) {
         return;
     }
 
+    http_trace_outcome(tr, "notfound", 404);
     http_log_raw_in(method, path, "", 0, 404);
     http_send(client, 404, "{\"ok\":false,\"error\":\"not found\"}");
 }
@@ -1256,7 +1364,10 @@ static unsigned __stdcall http_server_thread(void* arg) {
            was torn down after a hard accept() error, or the primary port was
            handed over to another instance (102). */
         if (g_listenSocket == INVALID_SOCKET) {
-            if (!http_open_listen_socket(1)) {
+            const ULONGLONG tOpen = http_qpc();
+            const int opened = http_open_listen_socket(1);
+            http_port_check_report(tOpen);
+            if (!opened) {
                 failStreak++;
                 if (WaitForSingleObject(g_stopEvent, http_backoff_ms(failStreak)) != WAIT_TIMEOUT) {
                     break;
@@ -1293,8 +1404,12 @@ static unsigned __stdcall http_server_thread(void* arg) {
             tv.tv_usec = 0;
             ready = select(0, &readable, NULL, NULL, &tv);
             if (GetTickCount64() - lastPrimaryTry >= 5000ULL) {
+                const ULONGLONG tCheck = http_qpc();
+                int moved;
                 lastPrimaryTry = GetTickCount64();
-                if (http_try_return_to_primary()) {
+                moved = http_try_return_to_primary();
+                http_port_check_report(tCheck);
+                if (moved) {
                     continue; /* new socket: wait on that one */
                 }
             }
@@ -1335,8 +1450,17 @@ static unsigned __stdcall http_server_thread(void* arg) {
         }
         transientStreak = 0;
         failStreak = 0;
-        http_handle_client(client);
-        closesocket(client);
+        {
+            HttpTrace trace;
+            memset(&trace, 0, sizeof(trace));
+            trace.t0 = http_qpc();
+            trace.label = "drop"; /* until a reply is sent: the connection was given up */
+            trace.status = -1;
+            http_handle_client(client, &trace);
+            const ULONGLONG tEnd = http_qpc();
+            closesocket(client);
+            http_slow_report(&trace, tEnd);
+        }
 
         /* 102: this request was POST /v1/yield and we agreed - give the primary
            port away now. The top of the loop reopens on the fallback port; the
@@ -1363,6 +1487,12 @@ void pos_http_server_start(void) {
         log_write("HTTP: WSAStartup failed (%d)", WSAGetLastError());
         InterlockedExchange(&g_httpRunning, 0);
         return;
+    }
+
+    {
+        LARGE_INTEGER f;
+        f.QuadPart = 0;
+        g_qpcFreq = QueryPerformanceFrequency(&f) ? (ULONGLONG)f.QuadPart : 0ULL;
     }
 
     g_stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);

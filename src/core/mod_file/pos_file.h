@@ -13,8 +13,14 @@
  *  - pos_watcher_start/stop: called on the TS callback thread (init/shutdown).
  *  - pos_get_current / pos_coordinates_valid: callable from any thread; the
  *    snapshot is guarded by a private lock inside this module.
- *  - pos_inject_sample: any thread; logs POS method http->… via log_write
- *    (log lock only, never TS API).
+ *  - pos_inject_sample: any thread; only STORES the sample and queues the
+ *    notify (a flag + an auto-reset event); logs POS method http->… via
+ *    log_write (log lock only, never TS API). It never runs the notify
+ *    callback itself, so the HTTP listener answers the game without waiting
+ *    for any plugin work.
+ *  - The inject notify callback runs on the WATCHER thread (woken at once by
+ *    the event, not at its next 30 ms tick), coalesced: several injects
+ *    before the watcher wakes give ONE call.
  *  - Watcher logs POS method file/none (log_write on change) and, with
  *    debug=1, a 1 Hz status line.
  */
@@ -72,8 +78,12 @@ int pos_coordinates_valid(void);
    Accepted injections suppress Pos.txt overwrite for ~2 s (HTTP hold window). */
 int pos_inject_sample(const PosSample* sample);
 
-/* Register a callback invoked once after each successful pos_inject_sample.
-   Must be fast and must NOT call the TS API. Register before pos_watcher_start. */
+/* Register a callback that runs after successful pos_inject_sample calls - on
+   the WATCHER thread, not on the injecting thread, and coalesced: injects that
+   arrive before the watcher wakes give one call. It runs on the same thread as
+   the update callback, so the two never run at the same time. Every consumer
+   must therefore be an idempotent "pending" signal. Must be fast and must NOT
+   call the TS API. Not called while the watcher stops. */
 void pos_inject_set_notify_callback(void (*callback)(void));
 
 #endif /* CORE_MOD_FILE_POS_FILE_H */

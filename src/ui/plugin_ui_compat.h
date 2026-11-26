@@ -26,7 +26,7 @@ void plugin_ui_sync_live_state(void);
 
 /* Deferred sync (review-fix 088, C6).
    plugin_ui_has_pending_sync(): any thread, lock-free — true when a foreign
-   thread (pos watcher / HTTP listener tick) asked for a sync that has not run
+   thread (pos watcher tick, also for HTTP samples since 105) asked for a sync that has not run
    yet. It belongs in ts3_pending_work_any().
    plugin_ui_flush_pending_sync(): CALLBACK THREAD ONLY (CEDRAIN dispatcher);
    runs the requested sync once (ticks coalesce) and refreshes the HUD. No-op
@@ -53,8 +53,8 @@ void overlay_ui_mark_thread(void);
 void overlay_ui_clear_thread(void);
 void overlay_ui_signal_quit(void);
 
-/* Called from the pos watcher or HTTP inject notify thread to keep legacy flags
-   fresh. Thread-safe part only: it queues the live-state sync for the callback
+/* Called from the pos watcher thread (Pos.txt tick and, since 105, the notify
+   of HTTP-injected samples) to keep legacy flags fresh. Thread-safe part only: it queues the live-state sync for the callback
    thread (plugin_ui_has_pending_sync / plugin_ui_flush_pending_sync) and
    refreshes the overlay by PostMessage when not on the overlay thread. */
 void plugin_ui_on_position_tick(void);

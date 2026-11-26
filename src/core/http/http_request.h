@@ -11,7 +11,8 @@
  *   - the browser guard (Origin / Sec-Fetch-Site / Host),
  *   - Content-Length parsing and body-length clamping,
  *   - log throttling with a "suppressed" counter,
- *   - accept() error classification and the rebind backoff.
+ *   - accept() error classification and the rebind backoff,
+ *   - timing of slow answers (ticks -> ms, slow decision, log line text).
  *
  * Why a guard: the listener answers on 127.0.0.1 without any credentials.
  * A browser on the same PC can reach that address too - any web page can do
@@ -422,6 +423,82 @@ static inline unsigned long http_backoff_ms(int streak) {
         ms *= 2UL;
     }
     return (ms > HTTP_BACKOFF_MAX_MS) ? HTTP_BACKOFF_MAX_MS : ms;
+}
+
+/* ---- slow answers (timing) -------------------------------------------------- */
+
+/* The listener is ONE thread: a connection that takes long delays the answer
+   to the game and the next request. From this duration (accept to end of the
+   answer, or of the port check) a log line is written. */
+#define HTTP_SLOW_MS 20
+
+/* Performance-counter ticks -> whole milliseconds (rounded down). freq = ticks
+   per second; 0 (counter unavailable) gives 0, the result is clamped to
+   unsigned long. Split so the multiplication cannot overflow. */
+static inline unsigned long http_ticks_to_ms(unsigned long long ticks, unsigned long long freq) {
+    unsigned long long ms;
+
+    if (freq == 0ULL) {
+        return 0UL;
+    }
+    ms = (ticks / freq) * 1000ULL + ((ticks % freq) * 1000ULL) / freq;
+    return (ms > 0xFFFFFFFFULL) ? 0xFFFFFFFFUL : (unsigned long)ms;
+}
+
+/* Tick difference end - start; 0 when the clock was read in the wrong order. */
+static inline unsigned long long http_ticks_between(unsigned long long start, unsigned long long end) {
+    return (end > start) ? (end - start) : 0ULL;
+}
+
+/* 1 when a duration is slow enough to be logged (>= HTTP_SLOW_MS). */
+static inline int http_is_slow_ms(unsigned long ms) {
+    return ms >= (unsigned long)HTTP_SLOW_MS;
+}
+
+/* The parts of a served POST /v1/position, in milliseconds. */
+typedef struct HttpSlowParts {
+    unsigned long recvMs;  /* accept until headers + body are complete */
+    unsigned long workMs;  /* password cut, parse, occlusion store, inject */
+    unsigned long replyMs; /* building the reply (occlusion probes, talkers) */
+    unsigned long sendMs;  /* send() of the reply */
+    unsigned long afterMs; /* after the reply: rate statistics + debug log line */
+} HttpSlowParts;
+
+/* "HTTP: slow request <label> [status=N] total=Nms [recv=.. work=.. reply=.. send=.. after=..]<tail>".
+   Only recv/work/reply delay THIS answer; send and after keep the listener busy
+   and so delay the NEXT request.
+   label is a FIXED word chosen by the caller (position / health / status /
+   yield / forbidden / notfound / drop) - never a request path, never body text.
+   status < 0 leaves "status=" out, parts == NULL leaves the breakdown out.
+   tail = http_suppressed_text() or "". Returns snprintf's result. */
+static inline int http_format_slow_request(char* out, int outSize, const char* label,
+    int status, unsigned long totalMs, const HttpSlowParts* parts, const char* tail) {
+    char st[24];
+    char pt[200];
+
+    if (!out || outSize <= 0) {
+        return 0;
+    }
+    st[0] = '\0';
+    pt[0] = '\0';
+    if (status >= 0) {
+        snprintf(st, sizeof(st), " status=%d", status);
+    }
+    if (parts) {
+        snprintf(pt, sizeof(pt), " recv=%lums work=%lums reply=%lums send=%lums after=%lums",
+            parts->recvMs, parts->workMs, parts->replyMs, parts->sendMs, parts->afterMs);
+    }
+    return snprintf(out, (size_t)outSize, "HTTP: slow request %s%s total=%lums%s%s",
+        label ? label : "?", st, totalMs, pt, tail ? tail : "");
+}
+
+/* "HTTP: port check took N ms<tail>" - the listener was busy with its port
+   handling (return to the primary port / reopening the listen socket). */
+static inline int http_format_port_check(char* out, int outSize, unsigned long ms, const char* tail) {
+    if (!out || outSize <= 0) {
+        return 0;
+    }
+    return snprintf(out, (size_t)outSize, "HTTP: port check took %lu ms%s", ms, tail ? tail : "");
 }
 
 #endif /* CORE_HTTP_HTTP_REQUEST_H */

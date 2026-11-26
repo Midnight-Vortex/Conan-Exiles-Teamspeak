@@ -216,6 +216,10 @@ run_suite http_request_test \
 run_suite http_ports_test \
     tests/http_ports_test.c
 
+# 105 — pos watcher wait helper (wake on inject, keep the 30 ms tick; header-only pos_tick.h).
+run_suite pos_tick_test \
+    tests/pos_tick_test.c
+
 # 085 — Pos.txt / legacy HTTP line parser + sample sanity (header-only pos_parse.h).
 run_suite pos_parse_test \
     tests/pos_parse_test.c

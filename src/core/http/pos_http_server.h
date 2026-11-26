@@ -22,7 +22,9 @@
  *
  * Thread contract:
  *   - pos_http_server_start / pos_http_server_stop: TS callback thread only.
- *   - HTTP listener thread: calls pos_inject_sample only (any-thread safe).
+ *   - HTTP listener thread: calls pos_inject_sample only (any-thread safe; it
+ *     stores the sample and hands the notify to the pos watcher thread, so the
+ *     reply to the game never waits for plugin work).
  *     Never calls the TS API; never touches UI.
  *
  * Lifecycle:

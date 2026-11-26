@@ -170,10 +170,14 @@ static void overlay_request_immediate_start(void) {
     overlay_schedule_start();
 }
 
-/* Pos tick (watcher or HTTP inject notify thread): refresh HUD zone via
-   plugin_ui_on_position_tick (pos/hub atomics only; overlay uses PostMessage
-   when not on the overlay thread), then queue CEPOS and audio snapshots.
-   No TS API calls in here. */
+/* Pos tick, ALWAYS on the pos watcher thread: for Pos.txt samples from its own
+   30 ms tick, for HTTP samples because the watcher is woken by the inject
+   event (pos_inject_sample only stores; the HTTP listener never runs this, so a
+   slow call in here cannot delay the reply to the game). Several HTTP injects
+   before the watcher wakes give ONE call, so everything below must stay an
+   idempotent "pending" signal. Refresh HUD zone via plugin_ui_on_position_tick
+   (pos/hub atomics only; overlay uses PostMessage when not on the overlay
+   thread), then queue CEPOS and audio snapshots. No TS API calls in here. */
 static void ts3_on_position_update_common(void) {
     plugin_ui_on_position_tick();
     chan_signal_position_update();
@@ -263,7 +267,7 @@ const char* ts3plugin_name(void) {
 }
 
 const char* ts3plugin_version(void) {
-    return "8.0.25";
+    return "8.0.26";
 }
 
 int ts3plugin_apiVersion(void) {
