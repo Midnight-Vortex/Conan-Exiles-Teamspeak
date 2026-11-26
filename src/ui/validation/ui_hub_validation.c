@@ -1,4 +1,5 @@
 #include "plugin_internal.h"
+#include "ui/config/ui_config_logic.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +8,11 @@
  * Hub-enforced distance limits for the F10 dialog (ui_dynamic, ui_messages).
  * Zone polygon tests live in core/proximity/zone_resolve.c — not here.
  * UI / settings thread only.
+ *
+ * 108: a hub limit of 0 means "not set" (only one side of a range given in the
+ * Root description, or none). The comparison itself lives in
+ * ui/config/ui_config_logic.h (ui_hub_below_min / ui_hub_above_max /
+ * ui_hub_required_digits) so the host test runs the exact rule used here.
  */
 
 extern int countSignificantDigits(float value);
@@ -51,11 +57,8 @@ BOOL shouldValidateValue(float value, float minimum, float maximum, const char* 
     const int digitCount = countSignificantDigits(value);
     const int minDigits = countSignificantDigits(minimum);
     const int maxDigits = countSignificantDigits(maximum);
-    int requiredDigits = (maxDigits > minDigits) ? maxDigits : minDigits;
-
-    if (maximum >= 10.0f) {
-        requiredDigits = 2;
-    }
+    // 108: a missing maximum (0) no longer counts like a one-digit maximum.
+    const int requiredDigits = ui_hub_required_digits(minimum, maximum, minDigits, maxDigits);
 
     if (digitCount < requiredDigits) {
         if (enableLogGeneral) {
@@ -84,7 +87,10 @@ float validateDistanceValue(float value, float minimum, float maximum, const cha
         return value;
     }
 
-    if (value < minimum) {
+    // 108: 0 = limit not set, the same rule as the runtime (voice_mode_get_distance)
+    // and the Save check (ui_dist_parse). Comparing against the raw 0 pulled every
+    // value to "maximum 0" when the Root description set only a minimum.
+    if (ui_hub_below_min(value, minimum)) {
         if (enableLogGeneral) {
             char logMsg[128];
             snprintf(logMsg, sizeof(logMsg), "%s distance auto-corrected: %.1f -> %.1f (below minimum)",
@@ -93,7 +99,7 @@ float validateDistanceValue(float value, float minimum, float maximum, const cha
         }
         return minimum;
     }
-    if (value > maximum) {
+    if (ui_hub_above_max(value, maximum)) {
         if (enableLogGeneral) {
             char logMsg[128];
             snprintf(logMsg, sizeof(logMsg), "%s distance auto-corrected: %.1f -> %.1f (above maximum)",

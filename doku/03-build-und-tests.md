@@ -94,7 +94,7 @@ ausgefuehrt — ganz ohne TS-SDK und ohne Windows:
 | `server_profile_test` | echte `ts3_server_profile.c` gegen Stubs | Root-Wahl, atomare Getter, Passwort wischen (086) |
 | `nick_anonymize_test` | echte `nick_anonymize.c` gegen Stubs | Bindung an die Verbindung, UTF-8-Puffer, kein Klarname im Log (086) |
 | `voice_keys_test` | `voice_modes.c` | Tasten-Reset und Hotkey-Meldung nur auf dem Poller-Thread (086) |
-| `ui_config_logic_test` | `ui_config_logic.h` | Pfad-Kopien, Distanz-Parser, `voice_presets.cfg`-Pruefung, Dialog-eigene Felder (087) |
+| `ui_config_logic_test` | `ui_config_logic.h` | Pfad-Kopien, Distanz-Parser, `voice_presets.cfg`-Pruefung, Dialog-eigene Felder (087); Hub-Grenze 0 = "nicht gesetzt" in der Sofort-Korrektur des Dialogs, Ziffern-Regel beim Tippen (108) |
 | `ui_chat_ring_test` | `ui_chat_ring.h` + `ui_spin_lock.h` | Mehrere Erzeuger gleichzeitig (pthreads, TSan sauber) (088) |
 | `ui_worker_slot_test` | `ui_worker_slot.h` | Overlay-Monitor wird genau einmal gejoint, auch bei Start/Stop-Rennen (088) |
 | `range_units_test` | `range_units.h` | Reichweiten in Conan-Fundamenten (1 = 2,56 m): Umrechnung, Hub-Grenzen nach innen runden, "Zahl veraendert?"-Test, Einheiten-Namen (091) |
@@ -114,6 +114,9 @@ linkt die DLL ohne Warnungen. (Zwischen 102 und 105 brach das Linken ab: `GetExt
 
 Stand nach 107: weiter **36 Suiten** + `layering_guard`, alle gruen; `pos_tick_test` hat 28 Pruefungen (+12 fuer
 `pos_tick_wants_file`). MinGW-Build ohne Warnungen.
+
+Stand nach 108: weiter **36 Suiten** + `layering_guard`, alle gruen; `ui_config_logic_test` hat 212 Pruefungen (+35
+fuer `ui_hub_below_min` / `ui_hub_above_max` / `ui_hub_required_digits`). MinGW-Build ohne Warnungen.
 
 Handwerkzeuge (nicht Teil von `run_tests.sh`): `tests/slow_reply_standin.ps1` — Platzhalter fuer das Plugin, der
 absichtlich langsam antwortet, um am Windows-PC zu pruefen, ob das **Spiel** bei verspaeteten Antworten ruckelt —

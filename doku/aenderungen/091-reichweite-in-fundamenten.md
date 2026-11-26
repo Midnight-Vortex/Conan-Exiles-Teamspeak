@@ -234,12 +234,11 @@ behoben sind, und eine Kleinigkeit gefunden: `"%.9g"` an allen vier Stellen haet
 12,3). Deshalb gilt `"%.9g"` jetzt nur im Fundamente-Modus. Steht ein Minimum ueber dem
 Maximum (Tippfehler des Admins), wird ein unveraendertes Feld wie vorher abgelehnt.
 
-> **Bekannt, aber nicht Teil von 091 (war schon vorher so):** Setzt ein Admin mit
-> `ForceDistanceBasedMuting=True` nur ein Minimum **ohne** Maximum, behandelt die
-> Dialog-Korrektur (`validateDistanceValue`) das fehlende Maximum als "0 m" — der Wert im
-> Feld springt. Im Spiel selbst gilt 0 richtig als "keine Grenze". Das betrifft auch den
-> reinen Meter-Modus und wird deshalb getrennt behoben. Bis dahin: immer Minimum **und**
-> Maximum setzen.
+> **Behoben mit [Doku 108](108-hub-grenze-0-heisst-keine-grenze.md) (war schon vor 091 so):**
+> Setzte ein Admin mit `ForceDistanceBasedMuting=True` nur ein Minimum **ohne** Maximum,
+> behandelte die Dialog-Korrektur (`validateDistanceValue`) das fehlende Maximum als "0 m" —
+> der Wert im Feld sprang. Im Spiel selbst galt 0 schon immer als "keine Grenze"; seit 108
+> gilt das auch im Dialog (Meter- und Fundamente-Modus). Einseitige Grenzen sind damit erlaubt.
 
 ## 6. Server-Admins: Root-Beschreibung in Fundamenten
 

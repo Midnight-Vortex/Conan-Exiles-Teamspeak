@@ -3,6 +3,8 @@
      [1] ui_wcs_copy            bounded copy (no CRT invalid-parameter abort)
      [2] ui_game_folder_fits    "\ConanSandbox\Saved" must still fit in MAX_PATH
      [3] ui_dist_parse          strict distance parsing (empty / nan / limits)
+     [3g] ui_hub_*              108: a hub limit of 0 is "not set" in the live
+                                correction too (one-sided / missing limits)
      [4] ui_preset_*            voice_presets.cfg line validation
      [5] ui_cfg_merge_*         which PluginConfig fields the dialog commits
 
@@ -351,6 +353,156 @@ static void test_save_text_round_trip(void) {
     CHECK(pa == pb, "meter mode: a 0.1 m value gives the same float as the old \"%.1f\" text");
 }
 
+/* ---- [3g] 108: a hub limit of 0 is "not set" in the live correction ---------- */
+
+/* validateDistanceValue (src/ui/validation/ui_hub_validation.c) without its log
+   lines and its "limits active" gate: the same two predicates in the same order.
+   That file needs the Win32 dialog globals, so the comparison lives in the
+   header and is tested here. */
+static float hub_correct(float value, float minimum, float maximum) {
+    if (ui_hub_below_min(value, minimum)) {
+        return minimum;
+    }
+    if (ui_hub_above_max(value, maximum)) {
+        return maximum;
+    }
+    return value;
+}
+
+static void test_hub_limit_zero_is_not_set(void) {
+    printf("[3g] 108: hub limit 0 = not set (live correction, status lines)\n");
+
+    /* Both limits set: exactly the old comparison. */
+    CHECK(ui_hub_below_min(4.9f, 5.0f) && !ui_hub_above_max(4.9f, 15.0f), "5..15: 4.9 is below the minimum");
+    CHECK(!ui_hub_below_min(5.0f, 5.0f) && !ui_hub_above_max(5.0f, 15.0f), "5..15: 5 (== min) is inside");
+    CHECK(!ui_hub_below_min(15.0f, 5.0f) && !ui_hub_above_max(15.0f, 15.0f), "5..15: 15 (== max) is inside");
+    CHECK(!ui_hub_below_min(15.1f, 5.0f) && ui_hub_above_max(15.1f, 15.0f), "5..15: 15.1 is above the maximum");
+    CHECK(hub_correct(4.9f, 5.0f, 15.0f) == 5.0f && hub_correct(15.1f, 5.0f, 15.0f) == 15.0f
+        && hub_correct(10.0f, 5.0f, 15.0f) == 10.0f, "5..15: corrected to min / max / untouched");
+
+    /* THE BUG: MinimumShout=10, no MaximumShout -> the maximum arrives as 0. */
+    CHECK(!ui_hub_above_max(30.0f, 0.0f), "min only: 30 is NOT above a maximum of 0");
+    CHECK(hub_correct(30.0f, 10.0f, 0.0f) == 30.0f, "min only: 30 stays 30 (was corrected to 0.0)");
+    CHECK(hub_correct(10.0f, 10.0f, 0.0f) == 10.0f, "min only: the minimum itself stays (was 0.0)");
+    CHECK(hub_correct(500.0f, 10.0f, 0.0f) == 500.0f, "min only: no upper limit at all");
+    CHECK(hub_correct(5.0f, 10.0f, 0.0f) == 10.0f, "min only: 5 is still pulled up to 10");
+
+    /* Every refresh of the dialog corrects the working copy again. It flipped
+       30 -> 0 -> 10 -> 0 -> ...; now it must not move at all. */
+    float shout = 30.0f;
+    int moved = 0;
+    for (int refresh = 0; refresh < 6; refresh++) {
+        const float next = hub_correct(shout, 10.0f, 0.0f);
+        if (next != shout) {
+            moved++;
+        }
+        shout = next;
+    }
+    CHECK(moved == 0 && shout == 30.0f, "min only: 6 dialog refreshes leave 30 at 30 (no flipping)");
+
+    /* The other side: only a maximum. */
+    CHECK(!ui_hub_below_min(1.0f, 0.0f), "max only: 1 is not below a minimum of 0");
+    CHECK(hub_correct(1.0f, 0.0f, 15.0f) == 1.0f && hub_correct(20.0f, 0.0f, 15.0f) == 15.0f,
+        "max only: 1 stays, 20 is pulled down to 15");
+
+    /* ForceDistanceBasedMuting=True without any Min/Max key: every distance
+       became 0 and Save refused the fields ("must be greater than 0"). */
+    const float personal[3] = { 2.0f, 10.0f, 30.0f };
+    int kept = 0;
+    for (int i = 0; i < 3; i++) {
+        if (hub_correct(personal[i], 0.0f, 0.0f) == personal[i]) {
+            kept++;
+        }
+    }
+    CHECK(kept == 3, "no limit keys at all: whisper / normal / shout stay as they are");
+    float v = 0.0f;
+    CHECK(ui_dist_parse(L"30.0", 1, 0.0f, 0.0f, &v) == UI_DIST_OK && v == hub_correct(30.0f, 0.0f, 0.0f),
+        "no limit keys at all: the field still reads back > 0, Save accepts it");
+
+    /* "Not set" is anything that is not a positive number (same as range_units.h). */
+    CHECK(!ui_hub_below_min(1.0f, -5.0f) && !ui_hub_above_max(30.0f, -5.0f), "negative limit = not set");
+    CHECK(!ui_hub_below_min(1.0f, NAN) && !ui_hub_above_max(30.0f, NAN), "NaN limit = not set");
+
+    /* The status lines pass the double hub globals, the correction passes floats:
+       both must give the same answer for the same numbers. */
+    const double hubMinD = 10.0, hubMaxD = 0.0;
+    CHECK(ui_hub_below_min(5.0f, hubMinD) == ui_hub_below_min(5.0f, (float)hubMinD)
+        && ui_hub_above_max(30.0f, hubMaxD) == ui_hub_above_max(30.0f, (float)hubMaxD)
+        && !ui_hub_above_max(30.0f, hubMaxD), "status line (double limits) agrees with the correction (float)");
+
+    /* ONE rule everywhere. For every combination of limits (0 = not set):
+       - the live correction equals range_clamp_meters (the foundation-mode clamp),
+       - a corrected value is stable (correcting it again changes nothing),
+       - a corrected value passes the Save check (ui_dist_parse),
+       - a value the Save check accepts is never touched by the live correction. */
+    const float mins[5] = { 0.0f, 2.0f, 5.0f, 10.0f, 12.5f };
+    const float maxs[5] = { 0.0f, 5.0f, 15.0f, 50.0f, 100.0f };
+    int combos = 0, sameAsClamp = 0, stable = 0, saveOk = 0, untouched = 0, accepted = 0;
+    for (int a = 0; a < 5; a++) {
+        for (int b = 0; b < 5; b++) {
+            const float mn = mins[a], mx = maxs[b];
+            if (mn > 0.0f && mx > 0.0f && mn > mx) {
+                continue;   /* minimum above maximum = admin typo, not this rule */
+            }
+            for (int i = 1; i <= 240; i++) {         /* 0.5 .. 120 m in 0.5 m steps */
+                const float value = (float)i * 0.5f;
+                const float fixed = hub_correct(value, mn, mx);
+                combos++;
+                if (fixed == range_clamp_meters(value, mn, mx)) sameAsClamp++;
+                if (hub_correct(fixed, mn, mx) == fixed) stable++;
+                wchar_t text[32];
+                float parsed = 0.0f;
+                swprintf(text, 32, L"%.1f", (double)fixed);
+                if (ui_dist_parse(text, 1, mn, mx, &parsed) == UI_DIST_OK && parsed == fixed) saveOk++;
+                swprintf(text, 32, L"%.1f", (double)value);
+                if (ui_dist_parse(text, 1, mn, mx, &parsed) == UI_DIST_OK) {
+                    accepted++;
+                    if (fixed == value) untouched++;
+                }
+            }
+        }
+    }
+    CHECK(combos > 4000 && sameAsClamp == combos, "live correction == range_clamp_meters for all limit combinations");
+    CHECK(stable == combos, "a corrected value is never corrected again (no flipping)");
+    CHECK(saveOk == combos, "a corrected value always passes the Save check");
+    CHECK(accepted > 0 && untouched == accepted, "a value Save accepts is never touched by the live correction");
+}
+
+/* shouldValidateValue: how many digits must be typed before a value is judged.
+   The digit counts are what countSignificantDigits returns for the two limits
+   (a limit of 0 counts as 1). */
+static void test_hub_required_digits(void) {
+    printf("[3h] 108: digits needed before a typed value is judged\n");
+
+    /* Both limits set: unchanged. */
+    CHECK(ui_hub_required_digits(1.0f, 5.0f, 1, 1) == 1, "1..5: one digit");
+    CHECK(ui_hub_required_digits(5.0f, 15.0f, 1, 2) == 2, "5..15: two digits");
+    CHECK(ui_hub_required_digits(15.0f, 50.0f, 2, 2) == 2, "15..50: two digits");
+    CHECK(ui_hub_required_digits(100.0f, 500.0f, 3, 3) == 2, "100..500: two digits (old rule, unchanged)");
+    /* Only a maximum: unchanged (a minimum of 0 counts as one digit). */
+    CHECK(ui_hub_required_digits(0.0f, 5.0f, 1, 1) == 1, "max 5 only: one digit");
+    CHECK(ui_hub_required_digits(0.0f, 50.0f, 1, 2) == 2, "max 50 only: two digits");
+
+    /* Only a minimum: the missing maximum is no longer a one-digit maximum. */
+    CHECK(ui_hub_required_digits(10.0f, 0.0f, 2, 1) == 2, "min 10 only: two digits (as before)");
+    CHECK(ui_hub_required_digits(5.0f, 0.0f, 1, 1) == 2, "min 5 only: two digits (was one)");
+    CHECK(ui_hub_required_digits(0.5f, 0.0f, 1, 1) == 2, "min 0.5 only: two digits (was one)");
+    CHECK(ui_hub_required_digits(100.0f, 0.0f, 3, 1) == 3, "min 100 only: stays at three, not lowered");
+    CHECK(ui_hub_required_digits(5.0f, -1.0f, 1, 1) == 2 && ui_hub_required_digits(5.0f, NAN, 1, 1) == 2,
+        "negative / NaN maximum = not set");
+
+    /* No limit at all: nothing can be corrected, so nothing has to wait. */
+    CHECK(ui_hub_required_digits(0.0f, 0.0f, 1, 1) == 1, "no limits: one digit, every keystroke counts");
+
+    /* Typing "15" against MinimumNormal=5 without a maximum, key by key:
+       "1" has to wait (it was corrected to 5.0 at once), "15" is then accepted. */
+    const int need = ui_hub_required_digits(5.0f, 0.0f, 1, 1);
+    const int firstKeyWaits = (1 < need);                       /* "1"  = one digit  */
+    const int secondKeyJudged = (2 >= need);                    /* "15" = two digits */
+    CHECK(firstKeyWaits && secondKeyJudged && hub_correct(15.0f, 5.0f, 0.0f) == 15.0f,
+        "min 5 only: \"1\" waits, \"15\" is accepted as 15");
+}
+
 /* ---- [4] voice_presets.cfg validation --------------------------------------- */
 
 static void test_preset_header(void) {
@@ -524,6 +676,8 @@ int main(void) {
     test_dist_parse_display();
     test_dist_parse_display_review();
     test_save_text_round_trip();
+    test_hub_limit_zero_is_not_set();
+    test_hub_required_digits();
     test_preset_header();
     test_preset_values();
     test_preset_file_simulation();

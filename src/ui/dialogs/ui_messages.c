@@ -1,5 +1,6 @@
 #include "plugin_internal.h"
 #include "ui/config/ui_config_state.h"
+#include "ui/config/ui_config_logic.h"
 #include "ui/plugin_ui_compat.h"
 #include "resource.h"
 #ifdef CONAN_EXILES_TS_EXPORTS
@@ -31,6 +32,11 @@
 // printed are converted. Hub limits are shown rounded inward (min up, max down) so
 // every shown value is also valid in meters. In meter mode all three are identities.
 // 091 : seuls les nombres AFFICHES sont convertis ; les comparaisons restent en metres.
+//
+// 108: "below minimum" / "above maximum" is decided by ui_hub_below_min / ui_hub_above_max
+// (ui_config_logic.h), the same rule the correction itself uses (validateDistanceValue):
+// a hub limit of 0 is "not set". A missing maximum used to read "above maximum 0.0".
+// 108 : une limite a 0 n'est pas definie - meme regle que la correction elle-meme.
 static float ui_shown(float meters) {
     return range_from_meters(meters, ui_ranges_in_foundations());
 }
@@ -218,12 +224,12 @@ void updateConsolidatedDistanceMessages() {
                 ui_shown(ui_cfg()->distanceWhisper), unit);
         }
         else {
-            if (ui_cfg()->distanceWhisper < hubMinimumWhisper) {
+            if (ui_hub_below_min(ui_cfg()->distanceWhisper, hubMinimumWhisper)) {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
                     ui_shown(ui_cfg()->distanceWhisper), ui_shown_min(hubMinimumWhisper, hubMaximumWhisper), unit,
                     ui_shown_min(hubMinimumWhisper, hubMaximumWhisper));
             }
-            else if (ui_cfg()->distanceWhisper > hubMaximumWhisper) {
+            else if (ui_hub_above_max(ui_cfg()->distanceWhisper, hubMaximumWhisper)) {
                 swprintf(whisperMsg, 300, L"Whisper: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
                     ui_shown(ui_cfg()->distanceWhisper), ui_shown_max(hubMinimumWhisper, hubMaximumWhisper), unit,
                     ui_shown_max(hubMinimumWhisper, hubMaximumWhisper));
@@ -257,12 +263,12 @@ void updateConsolidatedDistanceMessages() {
                 ui_shown(ui_cfg()->distanceNormal), unit);
         }
         else {
-            if (ui_cfg()->distanceNormal < hubMinimumNormal) {
+            if (ui_hub_below_min(ui_cfg()->distanceNormal, hubMinimumNormal)) {
                 swprintf(normalMsg, 300, L"Normal: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
                     ui_shown(ui_cfg()->distanceNormal), ui_shown_min(hubMinimumNormal, hubMaximumNormal), unit,
                     ui_shown_min(hubMinimumNormal, hubMaximumNormal));
             }
-            else if (ui_cfg()->distanceNormal > hubMaximumNormal) {
+            else if (ui_hub_above_max(ui_cfg()->distanceNormal, hubMaximumNormal)) {
                 swprintf(normalMsg, 300, L"Normal: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
                     ui_shown(ui_cfg()->distanceNormal), ui_shown_max(hubMinimumNormal, hubMaximumNormal), unit,
                     ui_shown_max(hubMinimumNormal, hubMaximumNormal));
@@ -296,12 +302,12 @@ void updateConsolidatedDistanceMessages() {
                 ui_shown(ui_cfg()->distanceShout), unit);
         }
         else {
-            if (ui_cfg()->distanceShout < hubMinimumShout) {
+            if (ui_hub_below_min(ui_cfg()->distanceShout, hubMinimumShout)) {
                 swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f %ls (Auto-corrected: below minimum %.1f)",
                     ui_shown(ui_cfg()->distanceShout), ui_shown_min(hubMinimumShout, hubMaximumShout), unit,
                     ui_shown_min(hubMinimumShout, hubMaximumShout));
             }
-            else if (ui_cfg()->distanceShout > hubMaximumShout) {
+            else if (ui_hub_above_max(ui_cfg()->distanceShout, hubMaximumShout)) {
                 swprintf(shoutMsg, 300, L"Shout: %.1f→%.1f %ls (Auto-corrected: above maximum %.1f)",
                     ui_shown(ui_cfg()->distanceShout), ui_shown_max(hubMinimumShout, hubMaximumShout), unit,
                     ui_shown_max(hubMinimumShout, hubMaximumShout));

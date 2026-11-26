@@ -4,6 +4,7 @@
 /*
  * EN: Pure (Win32-free, header-only) helper logic of the F10 settings dialog:
  *     bounded string copy, game-folder length check, strict distance parsing,
+ *     the hub-limit rule of the live correction (0 = not set, 108),
  *     voice_presets.cfg line validation and the "which PluginConfig fields does
  *     the dialog own" merge used by ui_cfg_commit(). Kept free of Windows
  *     headers so tests/ui_config_logic_test.c can compile it with plain gcc.
@@ -212,6 +213,51 @@ static inline UiDistStatus ui_dist_parse_display(const wchar_t* text, int inFoun
         *outMeters = limitsActive ? range_clamp_meters(meters, hubMinMeters, hubMaxMeters) : meters;
     }
     return UI_DIST_OK;
+}
+
+/* ---- 108: hub limits in the LIVE correction - 0 means "not set" -------------
+   A Root description may set only one side of a range (MinimumShout=10, no
+   MaximumShout); the missing side arrives as 0. The runtime
+   (voice_mode_get_distance), the Save check (ui_dist_parse above) and
+   range_clamp_meters read 0 as "no limit". The live correction of the dialog
+   (validateDistanceValue) and its status lines compared against the raw 0, so
+   every value was "above the maximum 0" and pulled to 0.
+
+   These two predicates are the ONE place where the dialog asks "is this value
+   outside a hub limit?". A limit that is 0, negative or NaN is not set and is
+   never violated. double on purpose: the status lines compare a float distance
+   with the double hub globals, validateDistanceValue passes floats; a float
+   widened to double compares exactly as before, so no caller needs a cast. */
+static inline int ui_hub_below_min(double value, double hubMin) {
+    return hubMin > 0.0 && value < hubMin;
+}
+
+static inline int ui_hub_above_max(double value, double hubMax) {
+    return hubMax > 0.0 && value > hubMax;
+}
+
+/* How many digits (before the decimal point) a typed value needs before the
+   dialog judges it against the hub limits (shouldValidateValue). The wait keeps
+   a number that is still being typed from being corrected: with a minimum of 5,
+   the "1" of "15" must not turn into "5.0" on the first keystroke.
+
+   minDigits / maxDigits are the digit counts of the two limits
+   (countSignificantDigits); a limit that is not set counts as 1, the smallest
+   possible, so it never raises the need.
+   - maximum >= 10: two digits (rule unchanged).
+   - 108: NO maximum but a minimum: 10 and more is allowed too, so one digit is
+     not enough here either -> at least two; a three-digit minimum keeps three.
+     The missing maximum used to count like a one-digit maximum.
+   - neither limit set: nothing can be corrected, one digit is enough. */
+static inline int ui_hub_required_digits(float minimum, float maximum, int minDigits, int maxDigits) {
+    int required = (maxDigits > minDigits) ? maxDigits : minDigits;
+    if (maximum >= 10.0f) {
+        required = 2;
+    }
+    else if (!(maximum > 0.0f) && minimum > 0.0f && required < 2) {
+        required = 2;
+    }
+    return required;
 }
 
 /* ---- voice_presets.cfg validation ------------------------------------------
